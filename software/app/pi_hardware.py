@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 @dataclass
 class LaserController:
     left_gpio_pin: int
@@ -19,7 +18,7 @@ class SensorRig:
     usb_camera_id: str
     dsi_camera_id: str
 
-    def capture_frame(self) -> dict:
+    def capture_frame(self) -> dict[str, float | bytes | None]:
         # Point d'intégration matériel: TF-Luna + Logitech USB + Pi Cam V3 DSI.
         return {
             "lidar_distance_mm": None,

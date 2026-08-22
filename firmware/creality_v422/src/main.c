@@ -1,5 +1,6 @@
 #include <stdbool.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -17,16 +18,31 @@ static void motor_move(char axis, int32_t steps, int32_t speed) {
     (void)speed;
 }
 
-static void motor_home_y(void) {
+static bool motor_home_y(void) {
     // Homing simplifié: avance/recul jusqu'à endstop Y (point 0 lidar).
+    const int32_t max_homing_steps = 200000;
+    int32_t traveled = 0;
     while (!y_endstop_triggered()) {
+        if (traveled >= max_homing_steps) {
+            return false;
+        }
         motor_move('Y', -1, 200);
+        traveled++;
     }
+    return true;
 }
 
 static void usb_write_line(const char *line) {
     // À connecter à la pile USB CDC STM32.
     (void)line;
+}
+
+static bool usb_read_line(char *buffer, size_t size) {
+    // À connecter à la réception USB CDC STM32.
+    // Contrat attendu: buffer est toujours null-terminé si true est renvoyé.
+    (void)buffer;
+    (void)size;
+    return false;
 }
 
 static void respond_ok(const char *suffix) {
@@ -50,7 +66,7 @@ static void handle_command(const char *line) {
     char axis = 0;
     int32_t steps = 0;
     int32_t speed = 0;
-    if (sscanf(line, "MOVE %c %ld %ld", &axis, &steps, &speed) == 3) {
+    if (sscanf(line, "MOVE %c %" SCNd32 " %" SCNd32, &axis, &steps, &speed) == 3) {
         if (axis == 'X' || axis == 'Y' || axis == 'Z') {
             motor_move(axis, steps, speed);
             respond_ok("MOVE");
@@ -61,7 +77,10 @@ static void handle_command(const char *line) {
     }
 
     if (strcmp(line, "HOME Y") == 0) {
-        motor_home_y();
+        if (!motor_home_y()) {
+            respond_err("HOME_TIMEOUT");
+            return;
+        }
         respond_ok("HOME");
         return;
     }
@@ -73,7 +92,7 @@ static void handle_command(const char *line) {
 
     char token[48];
     if (sscanf(line, "SYNC %47s", token) == 1) {
-        char sync_payload[64];
+        char sync_payload[CMD_BUF_SIZE];
         snprintf(sync_payload, sizeof(sync_payload), "SYNC %s", token);
         respond_ok(sync_payload);
         return;
@@ -83,8 +102,12 @@ static void handle_command(const char *line) {
 }
 
 int main(void) {
-    // Boucle firmware simplifiée (la réception USB doit remplir cmd_buffer).
+    // Boucle firmware simplifiée: la réception USB alimente cmd_buffer.
     char cmd_buffer[CMD_BUF_SIZE];
-    (void)cmd_buffer;
-    return 0;
+    while (true) {
+        if (usb_read_line(cmd_buffer, sizeof(cmd_buffer))) {
+            cmd_buffer[CMD_BUF_SIZE - 1] = '\0';
+            handle_command(cmd_buffer);
+        }
+    }
 }

@@ -1,18 +1,7 @@
 import unittest
 
 from software.app.usb_driver import CrealityUsbDriver
-
-
-class FakeTransport:
-    def __init__(self, responses):
-        self.responses = list(responses)
-        self.writes = []
-
-    def write(self, payload: bytes) -> None:
-        self.writes.append(payload)
-
-    def read_line(self) -> bytes:
-        return self.responses.pop(0)
+from software.tests.helpers import FakeTransport
 
 
 class TestCrealityUsbDriver(unittest.TestCase):
@@ -37,6 +26,11 @@ class TestCrealityUsbDriver(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             driver.ping()
+
+    def test_sync_token_with_space_rejected(self):
+        driver = CrealityUsbDriver(transport=FakeTransport([]))
+        with self.assertRaises(ValueError):
+            driver.sync("bad token")
 
 
 if __name__ == "__main__":

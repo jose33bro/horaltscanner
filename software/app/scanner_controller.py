@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional, TypedDict, cast
 
 from .pi_hardware import LaserController, SensorRig
 from .usb_driver import CrealityUsbDriver
+
+
+class ScanStepPayload(TypedDict):
+    lidar_distance_mm: Optional[float]
+    usb_camera_frame: Optional[bytes]
+    dsi_camera_frame: Optional[bytes]
+    sync: str
 
 
 @dataclass
@@ -24,9 +32,13 @@ class ScanController:
     def home_y_to_lidar_zero(self) -> str:
         return self.usb.home_y()
 
-    def acquire_scan_step(self, x_steps: int, sync_token: str) -> dict:
+    def acquire_scan_step(self, x_steps: int, sync_token: str) -> ScanStepPayload:
         self.move_x(x_steps)
-        sync_response = self.usb.sync(sync_token)
-        payload = self.sensors.capture_frame()
+        self.lasers.set_state(True, True)
+        try:
+            sync_response = self.usb.sync(sync_token)
+            payload = self.sensors.capture_frame()
+        finally:
+            self.lasers.set_state(False, False)
         payload["sync"] = sync_response
-        return payload
+        return cast(ScanStepPayload, payload)

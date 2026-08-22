@@ -1,0 +1,35 @@
+# Requirements pour Horaltscanner
+
+# Communication USB
+pyserial>=3.5
+
+# GPIO Raspberry Pi
+gpiozero>=1.6.0
+RPi.GPIO>=0.7.0
+
+# Vision par ordinateur
+opencv-python>=4.5.0
+opencv-contrib-python>=4.5.0
+
+# Calcul scientifique
+numpy>=1.21.0
+scipy>=1.7.0
+
+# Images
+Pillow>=8.3.0
+
+# Caméra Raspberry Pi
+picamera2>=0.1.0  # optionnel
+
+# 3D et géométrie
+open3d>=0.12.0  # pour la reconstruction 3D
+
+# Tests
+pytest>=7.0.0
+pytest-cov>=3.0.0
+
+# Logging et monitoring
+python-dateutil>=2.8.0
+
+# JSON/YAML
+pyyaml>=5.4.0

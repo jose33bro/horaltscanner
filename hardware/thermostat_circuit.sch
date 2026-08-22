@@ -82,4 +82,4 @@ Text Label 4200 3150 0 50  ~ 0
 PA0_ADC0
 Text Notes 2000 2500 0    50   ~ 0
 Thermostat NTC 100K pour Creality V4.2.2\nBroche PA0 (ADC0) - Résistance pull-up 4.7K\nTension: 3.3V - Plage: 0-100°C
-$EndSCHEMATC
+$EndSCHEMATIC

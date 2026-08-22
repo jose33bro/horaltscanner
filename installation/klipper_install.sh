@@ -76,6 +76,10 @@ echo "[3/8] Installation de Moonraker..."
 if [ ! -d "${KLIPPER_HOME}/moonraker" ]; then
     cd "${KLIPPER_HOME}"
     git clone https://github.com/Arksine/moonraker.git
+else
+    echo "  Moonraker déjà installé, mise à jour..."
+    cd "${KLIPPER_HOME}/moonraker"
+    git pull
 fi
 
 cd "${KLIPPER_HOME}/moonraker"

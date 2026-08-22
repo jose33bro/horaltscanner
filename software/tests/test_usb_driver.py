@@ -46,6 +46,24 @@ class USBDriverTests(unittest.TestCase):
         with self.assertRaises(USBProtocolError):
             driver.get_status()
 
+    def test_home_and_set_speed_commands(self):
+        transport = FakeTransport(build_response())
+        driver = USBScannerDriver(transport)
+
+        driver.home_x()
+        self.assertEqual(transport.last_payload[0], 0x10)
+
+        driver.set_speed("Y", 1200)
+        self.assertEqual(transport.last_payload[0], 0x20)
+        self.assertEqual(transport.last_payload[1], 1)
+
+    def test_set_speed_invalid_axis_raises(self):
+        transport = FakeTransport(build_response())
+        driver = USBScannerDriver(transport)
+
+        with self.assertRaises(ValueError):
+            driver.set_speed("Q", 1200)
+
 
 if __name__ == "__main__":
     unittest.main()

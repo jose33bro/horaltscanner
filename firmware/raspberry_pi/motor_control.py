@@ -41,11 +41,17 @@ class MotorController:
         on_capture: Callable[[ScanPoint], None],
     ) -> None:
         self.home_all()
+        current_x = 0
+        current_z = 0
 
-        for x_idx, x_delta in enumerate(x_offsets):
+        for x_idx, x_target in enumerate(x_offsets):
+            x_delta = x_target - current_x
             x_status = self.set_translation(x_delta)
-            for z_idx, z_delta in enumerate(z_offsets):
+            current_x = x_target
+            for z_idx, z_target in enumerate(z_offsets):
+                z_delta = z_target - current_z
                 z_status = self.set_height(z_delta)
+                current_z = z_target
                 for y_idx in range(rotation_steps):
                     y_status = self.rotate_step(step_per_rotation)
                     on_capture(

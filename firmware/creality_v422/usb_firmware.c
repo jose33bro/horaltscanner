@@ -33,7 +33,7 @@ typedef enum {
     CMD_STOP = 0x40
 } command_id_t;
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint8_t command;
     uint8_t axis;
     int32_t value;
@@ -41,7 +41,7 @@ typedef struct {
     uint8_t checksum;
 } usb_packet_t;
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint8_t status;
     uint8_t error;
     int32_t pos_x;
@@ -68,6 +68,11 @@ void motor_stepper_move(axis_id_t axis, int32_t delta_steps, int32_t speed_steps
 
 __attribute__((weak))
 void motor_stepper_stop_all(void) {}
+
+__attribute__((weak))
+void motor_stepper_home(axis_id_t axis) {
+    (void)axis;
+}
 
 static uint8_t checksum_xor(const uint8_t *data, uint32_t len) {
     uint8_t result = 0;
@@ -160,14 +165,17 @@ void firmware_handle_packet(const usb_packet_t *packet, usb_response_t *response
             error = axis_move(AXIS_Z, packet->value, packet->speed);
             break;
         case CMD_HOME_X:
+            motor_stepper_home(AXIS_X);
             g_axes[AXIS_X].position_steps = 0;
             axis_refresh_endstop(AXIS_X);
             break;
         case CMD_HOME_Y:
+            motor_stepper_home(AXIS_Y);
             g_axes[AXIS_Y].position_steps = 0;
             axis_refresh_endstop(AXIS_Y);
             break;
         case CMD_HOME_Z:
+            motor_stepper_home(AXIS_Z);
             g_axes[AXIS_Z].position_steps = 0;
             axis_refresh_endstop(AXIS_Z);
             break;

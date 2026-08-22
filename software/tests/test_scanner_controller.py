@@ -84,6 +84,24 @@ class ScannerControllerTests(unittest.TestCase):
         self.assertIn(("move_y", 90, 0), driver.calls)
         self.assertEqual(frames[-1].point.status.pos_y, 360)
 
+    def test_scan_sequence_uses_absolute_offsets(self):
+        driver = FakeDriver()
+        controller = MotorController(driver)
+        events = []
+
+        controller.perform_scan_sequence(
+            x_offsets=[10, 20],
+            z_offsets=[5, 15],
+            rotation_steps=1,
+            step_per_rotation=90,
+            on_capture=events.append,
+        )
+
+        move_x_calls = [c for c in driver.calls if isinstance(c, tuple) and c[0] == "move_x"]
+        move_z_calls = [c for c in driver.calls if isinstance(c, tuple) and c[0] == "move_z"]
+        self.assertEqual(move_x_calls, [("move_x", 10, 0), ("move_x", 10, 0)])
+        self.assertEqual(move_z_calls, [("move_z", 5, 0), ("move_z", 10, 0), ("move_z", -10, 0), ("move_z", 10, 0)])
+
 
 if __name__ == "__main__":
     unittest.main()

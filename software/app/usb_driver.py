@@ -33,6 +33,8 @@ class CrealityUsbDriver:
         return response.endswith("1")
 
     def sync(self, token: str) -> str:
+        if any(ch.isspace() for ch in token):
+            raise ValueError("sync token must not contain whitespace")
         return self._send(f"SYNC {token}")
 
     def _send(self, command: str) -> str:

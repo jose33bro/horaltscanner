@@ -20,4 +20,5 @@ Transport attendu: USB CDC (liaison série virtuelle).
 
 5. `SYNC <TOKEN>`
    - Barrière de synchronisation moteurs/capteurs
+   - `TOKEN` ne doit pas contenir d'espaces
    - Réponse: `OK SYNC <TOKEN>`

@@ -7,7 +7,7 @@ import serial
 import logging
 import re
 import time
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ class USBDriver:
             logger.error(f"Erreur lecture réponse: {e}")
             return None
 
-    def _parse_response(self, response: str) -> tuple[CommandStatus, str]:
+    def _parse_response(self, response: str) -> Tuple[CommandStatus, str]:
         """
         Parser la réponse du firmware
         

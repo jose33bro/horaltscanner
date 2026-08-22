@@ -1,6 +1,6 @@
 """
 Scanner App - Application principale pour orchestration du scan 3D
-Coordonne motion, lasers et capture caméra
+Coordonné motion, lasers et capture caméra
 """
 
 import logging

@@ -101,7 +101,7 @@ LIDAR = {
 # ============================================================
 
 LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR
-LOG_FILE = "/var/log/horaltscanner.log"
+LOG_FILE = "/home/pi/horaltscanner_logs/horaltscanner.log"
 
 # ============================================================
 #   SCAN PARAMETERS

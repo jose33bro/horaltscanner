@@ -1,17 +1,16 @@
 # Horaltscanner
 
-A modular 3D scanner and reconstruction project for a Raspberry Pi + Klipper based machine inspired by Horus-style acquisition workflows.
+Projet de scanner 3D modulaire pour Raspberry Pi 4 + carte mère Creality V4.2.2 avec firmware USB personnalisé (sans Marlin/Klipper).
 
-## Purpose
-- Control a scanner platform with X/Y/Z motion
-- Drive fixed lasers and cameras
-- Capture LiDAR and image data
-- Reconstruct a 3D model from scans
-- Export usable geometry for FreeCAD and CAD workflows
+## Objectif
+- Piloter les moteurs X/Y/Z via USB
+- Gérer l'endstop Y (point 0 côté lidar)
+- Contrôler 2 lasers via GPIO du Raspberry Pi
+- Intégrer les capteurs: lidar TF-Luna, caméra USB Logitech, caméra Pi V3 (DSI)
+- Orchestrer l'acquisition et préparer la reconstruction de nuage de points
 
-## Repository structure
-- `scanner/` � motion and acquisition logic
-- `config/` � scanner configuration files
-- `scripts/` � capture and calibration helpers
-- `docs/` � project notes and design docs
-- `tests/` � validation scripts
+## Structure du dépôt
+- `firmware/` : firmware USB custom STM32F103 (Creality V4.2.2)
+- `software/` : application Python côté Raspberry Pi (drivers + orchestration)
+- `hardware/` : documentation matérielle / câblage
+- `docs/` : documentation technique et protocole

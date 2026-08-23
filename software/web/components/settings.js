@@ -55,7 +55,7 @@ const SettingsUI = (() => {
     _setStatus(result.ok ? '✅ Settings saved' : `❌ ${result.error}`);
 
     if (url) localStorage.setItem('moonraker_url', url);
-    if (key) localStorage.setItem('moonraker_key', key);
+    // Note: API key is NOT stored in localStorage for security reasons
   }
 
   async function _testMoonraker() {

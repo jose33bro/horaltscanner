@@ -121,6 +121,7 @@ const Viewer3D = (() => {
     if (_mesh) {
       _scene.remove(_mesh);
       _mesh.geometry.dispose();
+      _mesh.material.dispose();
       _mesh = null;
     }
     const loader = new THREE.STLLoader();

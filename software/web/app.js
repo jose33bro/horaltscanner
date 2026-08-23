@@ -89,7 +89,7 @@ const App = (() => {
   // -----------------------------------------------------------------------
   function reconstruct() {
     _setText('stat-quality', 'Reconstructing…');
-    fetch('/api/model/reconstruct')
+    fetch('/api/model/reconstruct', { method: 'POST' })
       .then(r => r.json())
       .then(d => {
         if (d.ok) {

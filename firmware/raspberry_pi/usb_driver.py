@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
+import logging
+import re
+import serial
 import struct
 from typing import Protocol
 
@@ -19,6 +23,8 @@ STATUS_OK = 0x00
 
 PACKET_FORMAT = "<BBiiB"
 RESPONSE_FORMAT = "<BBiiiBB"
+
+logger = logging.getLogger(__name__)
 
 
 class USBProtocolError(RuntimeError):

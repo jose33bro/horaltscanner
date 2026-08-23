@@ -1,40 +1,30 @@
 """
-GPIO Driver - Raspberry Pi GPIO control for HoralScanner.
-
-Controls (all BCM pin numbers, from printer.cfg / hardware config):
-  - Laser left:  GPIO27
-  - Laser right: GPIO22
-  - LED RGB:     R=GPIO18, G=GPIO13, B=GPIO19  (PWM)
-  - Pi fan:      GPIO23                         (PWM)
-
-Uses gpiozero library; falls back to simulation mode when not available
-(e.g., when running on a development machine).
+GPIO driver for Raspberry Pi lasers, RGB LED, and the Pi fan.
 """
+
+from __future__ import annotations
 
 import logging
 import threading
 import time
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
+
+from software.api import config_manager
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Pin definitions (BCM, from printer.cfg)
-# ---------------------------------------------------------------------------
-
-PIN_LASER_LEFT = 27
-PIN_LASER_RIGHT = 22
-PIN_LED_R = 18
-PIN_LED_G = 13
-PIN_LED_B = 19
-PIN_FAN_PI = 23
-
-# ---------------------------------------------------------------------------
-# Try to import gpiozero
-# ---------------------------------------------------------------------------
+DEFAULT_PINS = {
+    "laser_left": 27,
+    "laser_right": 22,
+    "led_r": 18,
+    "led_g": 13,
+    "led_b": 19,
+    "fan_pi": 23,
+}
 
 try:
     from gpiozero import LED as _GpioLED, PWMOutputDevice as _PWM
+
     _GPIOZERO_AVAILABLE = True
 except Exception:
     _GPIOZERO_AVAILABLE = False
@@ -42,15 +32,13 @@ except Exception:
 
 
 class GPIODriver:
-    """
-    High-level GPIO driver for lasers, LED RGB, and the Pi fan.
+    """High-level GPIO driver with simulation fallback."""
 
-    Instantiate with ``simulation=True`` to skip real hardware
-    (automatic when gpiozero is not installed).
-    """
-
-    def __init__(self, simulation: bool = False):
+    def __init__(self, simulation: bool = False, hardware_config: Optional[dict] = None):
+        self._hardware_config = hardware_config or config_manager.load_hardware_config()
+        self.pins = self._load_pins(self._hardware_config)
         self._sim = simulation or not _GPIOZERO_AVAILABLE
+        self._hardware_available = False
 
         self._laser_left: Optional[object] = None
         self._laser_right: Optional[object] = None
@@ -59,180 +47,197 @@ class GPIODriver:
         self._led_b: Optional[object] = None
         self._fan: Optional[object] = None
 
-        # Soft state (used both in simulation and to cache real state)
         self._laser_left_on = False
         self._laser_right_on = False
         self._rgb: Tuple[float, float, float] = (0.0, 0.0, 0.0)
-        self._fan_speed: float = 0.0
+        self._fan_speed = 0.0
+        self._animation_thread: Optional[threading.Thread] = None
+        self._animation_stop = threading.Event()
 
         if not self._sim:
             self._init_gpio()
 
+    @staticmethod
+    def _load_pins(hardware_config: dict) -> Dict[str, int]:
+        lasers = hardware_config.get("lasers", {})
+        led = hardware_config.get("led_rgb", {})
+        fans = hardware_config.get("fans", {})
+        return {
+            "laser_left": int(lasers.get("left", {}).get("gpio", DEFAULT_PINS["laser_left"])),
+            "laser_right": int(lasers.get("right", {}).get("gpio", DEFAULT_PINS["laser_right"])),
+            "led_r": int(led.get("red", {}).get("gpio", DEFAULT_PINS["led_r"])),
+            "led_g": int(led.get("green", {}).get("gpio", DEFAULT_PINS["led_g"])),
+            "led_b": int(led.get("blue", {}).get("gpio", DEFAULT_PINS["led_b"])),
+            "fan_pi": int(fans.get("pi_fan", {}).get("gpio", DEFAULT_PINS["fan_pi"])),
+        }
+
+    @property
+    def simulation(self) -> bool:
+        return self._sim
+
+    @property
+    def hardware_available(self) -> bool:
+        return self._hardware_available
+
     def _init_gpio(self) -> None:
         """Initialise gpiozero device objects."""
         try:
-            self._laser_left = _GpioLED(PIN_LASER_LEFT)
-            self._laser_right = _GpioLED(PIN_LASER_RIGHT)
-            self._led_r = _PWM(PIN_LED_R)
-            self._led_g = _PWM(PIN_LED_G)
-            self._led_b = _PWM(PIN_LED_B)
-            self._fan = _PWM(PIN_FAN_PI)
+            self._laser_left = _GpioLED(self.pins["laser_left"])
+            self._laser_right = _GpioLED(self.pins["laser_right"])
+            self._led_r = _PWM(self.pins["led_r"])
+            self._led_g = _PWM(self.pins["led_g"])
+            self._led_b = _PWM(self.pins["led_b"])
+            self._fan = _PWM(self.pins["fan_pi"])
+            self._hardware_available = True
             logger.info("GPIO driver initialised (hardware mode)")
         except Exception as exc:
-            logger.error("GPIO init error: %s – falling back to simulation", exc)
             self._sim = True
+            self._hardware_available = False
+            logger.error("GPIO init error: %s – falling back to simulation", exc)
 
-    # ------------------------------------------------------------------
-    # Laser control
-    # ------------------------------------------------------------------
+    def _stop_animation(self) -> None:
+        self._animation_stop.set()
+        thread = self._animation_thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=0.2)
+        self._animation_thread = None
+        self._animation_stop.clear()
+
+    def _start_animation(self, target) -> None:
+        self._stop_animation()
+        self._animation_thread = threading.Thread(target=target, daemon=True)
+        self._animation_thread.start()
 
     def laser_left_on(self) -> None:
-        """Turn the left laser (GPIO27) on."""
         self._laser_left_on = True
-        if not self._sim and self._laser_left:
+        if self._hardware_available and self._laser_left:
             self._laser_left.on()
-        logger.debug("Laser left ON")
 
     def laser_left_off(self) -> None:
-        """Turn the left laser off."""
         self._laser_left_on = False
-        if not self._sim and self._laser_left:
+        if self._hardware_available and self._laser_left:
             self._laser_left.off()
-        logger.debug("Laser left OFF")
 
     def laser_right_on(self) -> None:
-        """Turn the right laser (GPIO22) on."""
         self._laser_right_on = True
-        if not self._sim and self._laser_right:
+        if self._hardware_available and self._laser_right:
             self._laser_right.on()
-        logger.debug("Laser right ON")
 
     def laser_right_off(self) -> None:
-        """Turn the right laser off."""
         self._laser_right_on = False
-        if not self._sim and self._laser_right:
+        if self._hardware_available and self._laser_right:
             self._laser_right.off()
-        logger.debug("Laser right OFF")
 
     def laser_status(self) -> dict:
-        """Return current laser state."""
         return {
             "left": self._laser_left_on,
             "right": self._laser_right_on,
+            "simulation": self.simulation,
+            "hardware_available": self.hardware_available,
         }
 
-    # ------------------------------------------------------------------
-    # LED RGB control
-    # ------------------------------------------------------------------
-
-    def led_set_rgb(self, r: int, g: int, b: int) -> None:
-        """
-        Set LED RGB colour.
-
-        *r*, *g*, *b* are 0–255 integers.
-        """
+    def _apply_rgb(self, r: int, g: int, b: int) -> None:
         r_f = max(0.0, min(1.0, r / 255.0))
         g_f = max(0.0, min(1.0, g / 255.0))
         b_f = max(0.0, min(1.0, b / 255.0))
         self._rgb = (r_f, g_f, b_f)
-        if not self._sim:
+        if self._hardware_available:
             if self._led_r:
                 self._led_r.value = r_f
             if self._led_g:
                 self._led_g.value = g_f
             if self._led_b:
                 self._led_b.value = b_f
-        logger.debug("LED RGB (%d, %d, %d)", r, g, b)
+
+    def led_set_rgb(self, r: int, g: int, b: int) -> None:
+        self._stop_animation()
+        self._apply_rgb(r, g, b)
 
     def led_off(self) -> None:
-        """Turn the LED off."""
         self.led_set_rgb(0, 0, 0)
 
     def led_set_mode(self, mode: str) -> None:
-        """
-        Apply a named colour mode (rainbow, pulse, red, green, blue, white, off).
-
-        ``rainbow`` and ``pulse`` run in a background thread so they do not
-        block the calling thread (e.g. a Flask worker).
-        """
         mode = mode.lower()
         presets = {
-            "red":   (255, 0,   0),
-            "green": (0,   255, 0),
-            "blue":  (0,   0,   255),
+            "red": (255, 0, 0),
+            "green": (0, 255, 0),
+            "blue": (0, 0, 255),
             "white": (255, 255, 255),
-            "off":   (0,   0,   0),
+            "off": (0, 0, 0),
         }
         if mode in presets:
             self.led_set_rgb(*presets[mode])
-        elif mode == "pulse":
-            threading.Thread(target=self._led_pulse_bg, daemon=True).start()
-        elif mode == "rainbow":
-            threading.Thread(target=self._led_rainbow_bg, daemon=True).start()
-        else:
-            logger.warning("Unknown LED mode: %s", mode)
+            return
+        if mode == "pulse":
+            self._start_animation(self._led_pulse_bg)
+            return
+        if mode == "rainbow":
+            self._start_animation(self._led_rainbow_bg)
+            return
+        raise ValueError(f"unknown LED mode: {mode}")
 
     def _led_pulse_bg(self) -> None:
-        """Background pulse animation (blue fade in/out)."""
         for v in range(0, 256, 16):
-            self.led_set_rgb(0, 0, v)
+            if self._animation_stop.is_set():
+                return
+            self._apply_rgb(0, 0, v)
             time.sleep(0.02)
         for v in range(255, -1, -16):
-            self.led_set_rgb(0, 0, v)
+            if self._animation_stop.is_set():
+                return
+            self._apply_rgb(0, 0, v)
             time.sleep(0.02)
-        self.led_off()
+        self._apply_rgb(0, 0, 0)
 
     def _led_rainbow_bg(self) -> None:
-        """Background rainbow animation."""
         for hue in range(0, 360, 10):
+            if self._animation_stop.is_set():
+                return
             r, g, b = _hsv_to_rgb(hue / 360.0, 1.0, 1.0)
-            self.led_set_rgb(r, g, b)
+            self._apply_rgb(r, g, b)
             time.sleep(0.03)
-        self.led_off()
+        self._apply_rgb(0, 0, 0)
 
     def led_status(self) -> dict:
-        """Return current LED state."""
         r_f, g_f, b_f = self._rgb
         return {
             "r": round(r_f * 255),
             "g": round(g_f * 255),
             "b": round(b_f * 255),
+            "simulation": self.simulation,
+            "hardware_available": self.hardware_available,
         }
 
-    # ------------------------------------------------------------------
-    # Pi fan control
-    # ------------------------------------------------------------------
-
     def fan_on(self, speed: float = 1.0) -> None:
-        """Turn the Pi fan (GPIO23) on at *speed* (0.0–1.0)."""
         speed = max(0.0, min(1.0, speed))
         self._fan_speed = speed
-        if not self._sim and self._fan:
+        if self._hardware_available and self._fan:
             self._fan.value = speed
-        logger.debug("Pi fan ON speed=%.2f", speed)
 
     def fan_off(self) -> None:
-        """Turn the Pi fan off."""
         self._fan_speed = 0.0
-        if not self._sim and self._fan:
+        if self._hardware_available and self._fan:
             self._fan.value = 0.0
-        logger.debug("Pi fan OFF")
 
     def fan_status(self) -> dict:
-        """Return current fan state."""
         return {"speed": self._fan_speed, "on": self._fan_speed > 0}
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
+    def status(self) -> dict:
+        return {
+            "simulation": self.simulation,
+            "hardware_available": self.hardware_available,
+            "pins": dict(self.pins),
+            "lasers": self.laser_status(),
+            "led": self.led_status(),
+            "fan": self.fan_status(),
+        }
 
     def shutdown(self) -> None:
-        """Turn off all outputs."""
+        self._stop_animation()
         self.laser_left_off()
         self.laser_right_off()
-        self.led_off()
         self.fan_off()
-        logger.info("GPIO driver shutdown")
+        self.led_off()
 
     def __enter__(self):
         return self
@@ -241,12 +246,8 @@ class GPIODriver:
         self.shutdown()
 
 
-# ---------------------------------------------------------------------------
-# Utility
-# ---------------------------------------------------------------------------
-
 def _hsv_to_rgb(h: float, s: float, v: float) -> Tuple[int, int, int]:
-    """Convert HSV (all 0–1) to RGB (0–255)."""
     import colorsys
+
     r_f, g_f, b_f = colorsys.hsv_to_rgb(h, s, v)
     return int(r_f * 255), int(g_f * 255), int(b_f * 255)

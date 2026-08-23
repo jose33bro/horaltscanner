@@ -48,7 +48,7 @@ def led_set():
         return jsonify({"ok": False, "error": "r, g, b must be in range 0-255"}), 400
 
     driver.led_set_rgb(r, g, b)
-    return jsonify({"ok": True, "r": r, "g": g, "b": b})
+    return jsonify({"ok": True, **driver.led_status()})
 
 
 @led_bp.route("/api/led/mode", methods=["POST"])
@@ -60,8 +60,11 @@ def led_mode():
 
     data = request.get_json(silent=True) or {}
     mode = str(data.get("mode", "off"))
-    driver.led_set_mode(mode)
-    return jsonify({"ok": True, "mode": mode})
+    try:
+        driver.led_set_mode(mode)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "mode": mode, **driver.led_status()})
 
 
 @led_bp.route("/api/led/status", methods=["GET"])

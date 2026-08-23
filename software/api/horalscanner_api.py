@@ -8,6 +8,7 @@ Run:  python software/api/horalscanner_api.py
 
 import base64
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -25,6 +26,7 @@ _API_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _API_DIR.parent.parent
 _WEB_DIR = _REPO_ROOT / "software" / "web"
 
+sys.path.insert(0, str(_REPO_ROOT))
 sys.path.insert(0, str(_API_DIR))
 
 import config_manager
@@ -56,12 +58,13 @@ logger = logging.getLogger(__name__)
 # Global state (singletons)
 # ---------------------------------------------------------------------------
 _cfg = config_manager.load()
+_hardware_cfg = config_manager.load_hardware_config()
 
 _scan_session = ScanSession()
 _reconstruction = ReconstructionEngine(_scan_session)
 _logitech = LogitechCamera(device_id=0)
 _picam = PiCamera()
-_lidar = LidarDriver(port="/dev/ttyUSB0")
+_lidar = LidarDriver(port=_hardware_cfg.get("serial", {}).get("lidar_port", "/dev/ttyUSB0"))
 _slicer = SlicerBridge()
 
 # New hardware drivers (connect on startup; non-fatal if unavailable)
@@ -124,79 +127,83 @@ def _safe_error(exc: Exception, context: str = "") -> str:
     return f"{context} error" if context else "Internal error"
 
 
-def _send_gcode(cmd: str) -> str:
-    """Send a raw G-code command to the Creality board via serial."""
+def _legacy_error_response(exc: Exception, *, bad_request: bool = False):
+    status = 400 if bad_request else 503
+    return jsonify({"ok": False, "error": str(exc)}), status
+
+
+def _legacy_turntable_mm_from_degrees(degrees: float) -> float:
+    if not math.isfinite(degrees):
+        raise ValueError("degrees must be a finite number")
+    full_rotation_mm = float(_hardware_cfg.get("motors", {}).get("y", {}).get("position_max", 628.32))
+    return (degrees / 360.0) * full_rotation_mm
+
+
+def _motor_driver_required():
     try:
-        import serial
-        port = _cfg.get("scanner", {}).get("serial_port", "/dev/ttyUSB1")
-        with serial.Serial(port, 115200, timeout=2) as ser:
-            ser.write((cmd + "\n").encode())
-            time.sleep(0.05)
-            resp = ser.read(ser.in_waiting or 64).decode(errors="replace").strip()
-        return resp
-    except Exception as exc:
-        logger.error("send_gcode error: %s", exc)
-        return "error: serial communication failed"
+        _stm32.ensure_connected()
+        return _stm32
+    except ConnectionError as exc:
+        raise ConnectionError(str(exc)) from exc
 
 
 @app.route("/api/move/<axis>", methods=["POST"])
 def move_axis(axis: str):
     axis = axis.upper()
     if axis not in ("X", "Y", "Z"):
-        return jsonify({"error": "Invalid axis"}), 400
+        return jsonify({"ok": False, "error": "Invalid axis"}), 400
     data = request.get_json(silent=True) or {}
-    mm = float(data.get("mm", 10))
-    resp = _send_gcode(f"G91\nG1 {axis}{mm} F3000\nG90")
-    return jsonify({"ok": True, "response": resp})
+    try:
+        mm = float(data.get("mm", 10))
+        result = _motor_driver_required().motor_move(axis, mm)
+        return jsonify({"ok": True, "legacy": True, **result})
+    except ValueError as exc:
+        return _legacy_error_response(exc, bad_request=True)
+    except (RuntimeError, ConnectionError) as exc:
+        return _legacy_error_response(exc)
 
 
 @app.route("/api/rotate", methods=["POST"])
 def rotate():
     data = request.get_json(silent=True) or {}
-    degrees = float(data.get("degrees", 10))
-    resp = _send_gcode(f"M120 S{degrees}")
-    return jsonify({"ok": True, "response": resp})
+    try:
+        degrees = float(data.get("degrees", 10))
+        distance_mm = _legacy_turntable_mm_from_degrees(degrees)
+        result = _motor_driver_required().motor_move("Y", distance_mm)
+        return jsonify({"ok": True, "legacy": True, "degrees": degrees, **result})
+    except ValueError as exc:
+        return _legacy_error_response(exc, bad_request=True)
+    except (RuntimeError, ConnectionError) as exc:
+        return _legacy_error_response(exc)
 
 
 @app.route("/api/home/<target>", methods=["POST"])
 def home(target: str):
-    if target == "all":
-        resp = _send_gcode("G28")
-    else:
-        axis = target.upper()
-        if axis not in ("X", "Y", "Z"):
-            return jsonify({"error": "Invalid axis"}), 400
-        resp = _send_gcode(f"G28 {axis}")
-    return jsonify({"ok": True, "response": resp})
+    try:
+        if target == "all":
+            result = _motor_driver_required().motor_home_all()
+        else:
+            axis = target.upper()
+            if axis not in ("X", "Y", "Z"):
+                return jsonify({"ok": False, "error": "Invalid axis"}), 400
+            result = _motor_driver_required().motor_home(axis)
+        return jsonify({"ok": True, "legacy": True, "result": result})
+    except (RuntimeError, ConnectionError) as exc:
+        return _legacy_error_response(exc)
 
 # ---------------------------------------------------------------------------
 # Laser endpoints
 # ---------------------------------------------------------------------------
 
-try:
-    from gpiozero import LED as GpioLED
-    _laser_left = GpioLED(17)
-    _laser_right = GpioLED(27)
-    _GPIO_OK = True
-except Exception:
-    _GPIO_OK = False
-    _laser_left = None
-    _laser_right = None
-
-
 @app.route("/api/laser/<side>", methods=["POST"])
 def laser_control(side: str):
     if side not in ("left", "right"):
-        return jsonify({"error": "side must be left or right"}), 400
+        return jsonify({"ok": False, "error": "side must be left or right"}), 400
     data = request.get_json(silent=True) or {}
     state = bool(data.get("state", False))
-    if _GPIO_OK:
-        target = _laser_left if side == "left" else _laser_right
-        if state:
-            target.on()
-        else:
-            target.off()
-    return jsonify({"ok": True, "gpio_available": _GPIO_OK, "state": state})
+    target = getattr(_gpio, f"laser_{side}_{'on' if state else 'off'}")
+    target()
+    return jsonify({"ok": True, "legacy": True, "state": state, **_gpio.laser_status()})
 
 # ---------------------------------------------------------------------------
 # LIDAR endpoints
@@ -230,10 +237,15 @@ def lidar_move(direction: str):
     if direction not in ("up", "down"):
         return jsonify({"error": "direction must be up or down"}), 400
     data = request.get_json(silent=True) or {}
-    mm = float(data.get("mm", 5))
-    mm = mm if direction == "up" else -mm
-    resp = _send_gcode(f"G91\nG1 Z{mm} F500\nG90")
-    return jsonify({"ok": True, "response": resp})
+    try:
+        mm = float(data.get("mm", 5))
+        mm = mm if direction == "up" else -mm
+        result = _motor_driver_required().motor_move("Z", mm)
+        return jsonify({"ok": True, **result})
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except (RuntimeError, ConnectionError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
 
 # ---------------------------------------------------------------------------
 # Camera endpoints
@@ -271,24 +283,19 @@ def camera_capture(cam: str):
 # LED endpoints
 # ---------------------------------------------------------------------------
 
-try:
-    from gpiozero import RGBLED
-    _led = RGBLED(red=22, green=23, blue=24)
-    _LED_OK = True
-except Exception:
-    _LED_OK = False
-    _led = None
-
-
 @app.route("/api/led/color", methods=["POST"])
 def led_color():
     data = request.get_json(silent=True) or {}
-    r = int(data.get("r", 0)) / 255
-    g = int(data.get("g", 0)) / 255
-    b = int(data.get("b", 0)) / 255
-    if _LED_OK:
-        _led.color = (r, g, b)
-    return jsonify({"ok": True, "gpio_available": _LED_OK})
+    try:
+        r = int(data.get("r", 0))
+        g = int(data.get("g", 0))
+        b = int(data.get("b", 0))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "r, g, b must be integers 0-255"}), 400
+    if not (0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255):
+        return jsonify({"ok": False, "error": "r, g, b must be in range 0-255"}), 400
+    _gpio.led_set_rgb(r, g, b)
+    return jsonify({"ok": True, "legacy": True, **_gpio.led_status()})
 
 # ---------------------------------------------------------------------------
 # 3D Model endpoints
@@ -485,7 +492,14 @@ def status():
         "logitech_open": _logitech.is_open,
         "picam_open": _picam.is_open,
         "slicer_available": _slicer.is_available(),
-        "gpio_available": _GPIO_OK,
+        "gpio_available": _gpio.hardware_available,
+        "gpio_simulation": _gpio.simulation,
+        "stm32_connected": _stm32.is_connected,
+        "stm32_protocol": _stm32.protocol,
+        "hardware": {
+            "stm32": _stm32.hardware_status(),
+            "gpio": _gpio.status(),
+        },
     })
 
 

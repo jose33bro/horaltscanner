@@ -3,6 +3,8 @@
  */
 
 const App = (() => {
+  const FULL_ROTATION_MM = 628.32;
+
   // -----------------------------------------------------------------------
   // Tab navigation
   // -----------------------------------------------------------------------
@@ -116,35 +118,37 @@ const App = (() => {
   // -----------------------------------------------------------------------
   function moveAxis(axis) {
     const mm = parseFloat(document.getElementById(`move-${axis}-mm`)?.value || '10');
-    fetch(`/api/move/${axis}`, {
+    fetch(`/api/motor/${axis}/move`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mm }),
+      body: JSON.stringify({ distance: mm }),
     });
   }
 
   function rotate() {
     const deg = parseFloat(document.getElementById('rotate-deg')?.value || '10');
-    fetch('/api/rotate', {
+    const distance = (deg / 360) * FULL_ROTATION_MM;
+    fetch('/api/motor/y/move', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ degrees: deg }),
+      body: JSON.stringify({ distance }),
     });
   }
 
   function home(target) {
-    fetch(`/api/home/${target}`, { method: 'POST' });
+    const axis = target === 'all' ? 'all' : target.toUpperCase();
+    fetch('/api/motor/home', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ axis }),
+    });
   }
 
   // -----------------------------------------------------------------------
   // Laser
   // -----------------------------------------------------------------------
   function laser(side, state) {
-    fetch(`/api/laser/${side}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ state }),
-    });
+    fetch(`/api/laser/${side}/${state ? 'on' : 'off'}`, { method: 'POST' });
   }
 
   // -----------------------------------------------------------------------
@@ -156,7 +160,7 @@ const App = (() => {
     const b = parseInt(document.getElementById('led-b')?.value || '0', 10);
     const preview = document.getElementById('led-preview');
     if (preview) preview.style.background = `rgb(${r},${g},${b})`;
-    fetch('/api/led/color', {
+    fetch('/api/led/set', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ r, g, b }),

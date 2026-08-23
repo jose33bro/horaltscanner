@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
+import logging
+import re
+import serial
 import struct
 from typing import Protocol
 
@@ -19,6 +23,8 @@ STATUS_OK = 0x00
 
 PACKET_FORMAT = "<BBiiB"
 RESPONSE_FORMAT = "<BBiiiBB"
+
+logger = logging.getLogger(__name__)
 
 
 class USBProtocolError(RuntimeError):
@@ -138,3 +144,111 @@ class USBScannerDriver:
 
     def stop(self) -> ScannerStatus:
         return self._exchange(CMD_STOP)
+
+
+class CommandStatus(Enum):
+    SUCCESS = "OK"
+    ERROR = "ERR"
+    UNKNOWN = "UNKNOWN"
+
+
+class USBDriver:
+    """Backward-compatible text USB driver kept for legacy tests."""
+
+    def __init__(self, port: str = "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0", baudrate: int = 115200, timeout: float = 5.0):
+        self.port = port
+        self.baudrate = baudrate
+        self.timeout = timeout
+        self.ser = None
+        self.connected = False
+
+    def connect(self) -> bool:
+        try:
+            self.ser = serial.Serial(
+                port=self.port,
+                baudrate=self.baudrate,
+                timeout=self.timeout,
+                write_timeout=self.timeout,
+            )
+            self.connected = True
+            return self.ping()
+        except Exception as exc:
+            logger.error("USB connect error: %s", exc)
+            self.connected = False
+            return False
+
+    def disconnect(self) -> None:
+        if self.ser and self.ser.is_open:
+            self.ser.close()
+        self.connected = False
+
+    def send_command(self, command: str):
+        if not self.connected or not self.ser:
+            return None
+        try:
+            self.ser.write((command + "\n").encode("utf-8"))
+            return self._read_response()
+        except Exception as exc:
+            logger.error("USB command error: %s", exc)
+            self.connected = False
+            return None
+
+    def _read_response(self):
+        try:
+            line = self.ser.readline().decode("utf-8").strip()
+            return line if line else None
+        except Exception as exc:
+            logger.error("USB read error: %s", exc)
+            return None
+
+    def _parse_response(self, response):
+        if not response:
+            return CommandStatus.UNKNOWN, ""
+        parts = response.split(maxsplit=1)
+        status_str = parts[0]
+        payload = parts[1] if len(parts) > 1 else ""
+        if status_str == "OK":
+            return CommandStatus.SUCCESS, payload
+        if status_str == "ERR":
+            return CommandStatus.ERROR, payload
+        return CommandStatus.UNKNOWN, response
+
+    def ping(self) -> bool:
+        response = self.send_command("PING")
+        status, payload = self._parse_response(response)
+        return status == CommandStatus.SUCCESS and "PONG" in payload
+
+    def move(self, axis: str, steps: int, speed: int) -> bool:
+        axis = axis.upper()
+        if axis not in {"X", "Y", "Z"}:
+            return False
+        response = self.send_command(f"MOVE {axis} {steps} {speed}")
+        status, _ = self._parse_response(response)
+        return status == CommandStatus.SUCCESS
+
+    def home(self, axis: str) -> bool:
+        axis = axis.upper()
+        if axis not in {"X", "Y", "Z"}:
+            return False
+        response = self.send_command(f"HOME {axis}")
+        status, _ = self._parse_response(response)
+        return status == CommandStatus.SUCCESS
+
+    def get_endstop(self, axis: str):
+        axis = axis.upper()
+        if axis not in {"X", "Y", "Z"}:
+            return None
+        response = self.send_command(f"ENDSTOP {axis}")
+        status, payload = self._parse_response(response)
+        if status != CommandStatus.SUCCESS:
+            return None
+        match = re.search(r"ENDSTOP\s+([01])", payload)
+        return bool(int(match.group(1))) if match else None
+
+    def sync(self, token: str):
+        response = self.send_command(f"SYNC {token}")
+        status, payload = self._parse_response(response)
+        if status != CommandStatus.SUCCESS:
+            return None
+        match = re.search(r"SYNC\s+(.+)", payload)
+        return match.group(1) if match else None

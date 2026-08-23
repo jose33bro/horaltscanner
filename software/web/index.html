@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HoralScanner Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1117; --surface: #1a1d27; --border: #2d3148;
+      --accent: #4f8ef7; --success: #34d399; --warning: #fbbf24;
+      --danger: #f87171; --text: #e2e8f0; --muted: #64748b;
+    }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+    header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
+    header h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: .5px; }
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: background .4s; }
+    .status-dot.ok { background: var(--success); box-shadow: 0 0 6px var(--success); }
+    .status-dot.err { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+    #conn-label { font-size: .8rem; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; padding: 20px; max-width: 1400px; margin: 0 auto; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+    .card h2 { font-size: .9rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+    .row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    label { font-size: .85rem; min-width: 80px; color: var(--text); }
+    /* Toggle */
+    .toggle { position: relative; width: 44px; height: 24px; cursor: pointer; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; inset: 0; background: var(--border); border-radius: 12px; transition: background .3s; }
+    .slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: white; border-radius: 50%; transition: transform .3s; }
+    .toggle input:checked + .slider { background: var(--accent); }
+    .toggle input:checked + .slider::before { transform: translateX(20px); }
+    /* Range */
+    input[type=range] { flex: 1; accent-color: var(--accent); cursor: pointer; height: 6px; border-radius: 4px; }
+    .val { font-size: .8rem; color: var(--accent); min-width: 38px; text-align: right; }
+    /* Color picker */
+    .color-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .color-swatch { width: 32px; height: 32px; border-radius: 8px; border: 2px solid var(--border); flex-shrink: 0; }
+    /* Temp display */
+    .temp-big { font-size: 2.2rem; font-weight: 700; color: var(--warning); text-align: center; padding: 10px 0 4px; }
+    .temp-label { font-size: .75rem; color: var(--muted); text-align: center; }
+    /* Positions */
+    .pos-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 4px; }
+    .pos-box { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; text-align: center; }
+    .pos-box span { display: block; font-size: .7rem; color: var(--muted); }
+    .pos-box strong { font-size: 1rem; color: var(--accent); }
+    /* Buttons */
+    .btn { padding: 7px 18px; border-radius: 8px; border: none; cursor: pointer; font-size: .85rem; font-weight: 600; transition: opacity .2s; }
+    .btn:hover { opacity: .8; }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-danger { background: var(--danger); color: white; }
+    .btn-muted { background: var(--border); color: var(--text); }
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    /* Toast */
+    #toast { position: fixed; bottom: 20px; right: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; font-size: .85rem; max-width: 300px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 100; }
+    #toast.show { opacity: 1; }
+    #toast.ok { border-left: 4px solid var(--success); }
+    #toast.err { border-left: 4px solid var(--danger); }
+    /* Laser indicators */
+    .laser-ind { width: 14px; height: 14px; border-radius: 50%; background: var(--border); transition: background .3s; }
+    .laser-ind.on { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+    @media (max-width: 480px) {
+      .grid { padding: 10px; gap: 10px; }
+      .card { padding: 12px; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="status-dot" id="dot"></div>
+  <h1>🔬 HoralScanner</h1>
+  <span id="conn-label">Connecting…</span>
+  <span style="flex:1"></span>
+  <button class="btn btn-muted" onclick="refreshAll()">↻ Refresh</button>
+</header>
+
+<div class="grid">
+
+  <!-- Lasers -->
+  <div class="card" id="card-laser">
+    <h2>🔴 Lasers</h2>
+    <div class="row">
+      <label>Left</label>
+      <div class="laser-ind" id="ind-left"></div>
+      <label class="toggle" title="Toggle left laser">
+        <input type="checkbox" id="laser-left" onchange="setLaser('left', this.checked)" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="row">
+      <label>Right</label>
+      <div class="laser-ind" id="ind-right"></div>
+      <label class="toggle" title="Toggle right laser">
+        <input type="checkbox" id="laser-right" onchange="setLaser('right', this.checked)" />
+        <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <!-- LED -->
+  <div class="card" id="card-led">
+    <h2>🟡 LED RGB</h2>
+    <div class="color-row">
+      <div class="color-swatch" id="led-swatch"></div>
+      <div style="flex:1">
+        <div class="row"><label>R</label><input type="range" id="led-r" min="0" max="255" value="0" oninput="updateSwatch();debounceLed()"><span class="val" id="v-r">0</span></div>
+        <div class="row"><label>G</label><input type="range" id="led-g" min="0" max="255" value="0" oninput="updateSwatch();debounceLed()"><span class="val" id="v-g">0</span></div>
+        <div class="row"><label>B</label><input type="range" id="led-b" min="0" max="255" value="0" oninput="updateSwatch();debounceLed()"><span class="val" id="v-b">0</span></div>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-muted" onclick="setLed(255,0,0)">Red</button>
+      <button class="btn btn-muted" onclick="setLed(0,255,0)">Green</button>
+      <button class="btn btn-muted" onclick="setLed(0,0,255)">Blue</button>
+      <button class="btn btn-muted" onclick="setLed(255,255,255)">White</button>
+      <button class="btn btn-muted" onclick="setLed(0,0,0)">Off</button>
+    </div>
+  </div>
+
+  <!-- Motors -->
+  <div class="card" id="card-motor">
+    <h2>⚙️ Motors</h2>
+    <div class="row">
+      <label>X (mm)</label>
+      <input type="range" id="move-x" min="-100" max="100" value="0" step="0.5">
+      <span class="val" id="v-mx">0</span>
+    </div>
+    <div class="row">
+      <label>Y (mm)</label>
+      <input type="range" id="move-y" min="-100" max="100" value="0" step="0.5">
+      <span class="val" id="v-my">0</span>
+    </div>
+    <div class="row">
+      <label>Z (mm)</label>
+      <input type="range" id="move-z" min="-100" max="100" value="0" step="0.5">
+      <span class="val" id="v-mz">0</span>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="moveMotors()">Move</button>
+      <button class="btn btn-muted" onclick="homeMotors('all')">Home All</button>
+      <button class="btn btn-danger" onclick="stopMotors()">⏹ Stop</button>
+    </div>
+    <div class="pos-grid" id="positions">
+      <div class="pos-box"><span>X</span><strong id="pos-x">—</strong></div>
+      <div class="pos-box"><span>Y</span><strong id="pos-y">—</strong></div>
+      <div class="pos-box"><span>Z</span><strong id="pos-z">—</strong></div>
+    </div>
+  </div>
+
+  <!-- Fans -->
+  <div class="card" id="card-fan">
+    <h2>💨 Fans</h2>
+    <div class="row">
+      <label>Pi Fan</label>
+      <input type="range" id="fan-pi" min="0" max="100" value="0" oninput="sliderVal('fan-pi','v-fpi')">
+      <span class="val" id="v-fpi">0%</span>
+    </div>
+    <div class="row">
+      <label>Creality</label>
+      <input type="range" id="fan-creality" min="0" max="100" value="0" oninput="sliderVal('fan-creality','v-fcr')">
+      <span class="val" id="v-fcr">0%</span>
+    </div>
+    <div class="row">
+      <label>Temp Fan</label>
+      <input type="range" id="fan-temperature" min="0" max="100" value="0" oninput="sliderVal('fan-temperature','v-ftp')">
+      <span class="val" id="v-ftp">0%</span>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="setFans()">Apply Fans</button>
+      <button class="btn btn-muted" onclick="setAllFans(0)">All Off</button>
+      <button class="btn btn-muted" onclick="setAllFans(100)">All Max</button>
+    </div>
+  </div>
+
+  <!-- Temperature -->
+  <div class="card" id="card-temp">
+    <h2>🌡️ Temperature</h2>
+    <div class="temp-big" id="temp-board">—</div>
+    <div class="temp-label">Board (PC5 · EPCOS 100K)</div>
+  </div>
+
+  <!-- Status / Health -->
+  <div class="card" id="card-status">
+    <h2>📡 Status</h2>
+    <div id="status-body" style="font-size:.82rem;line-height:1.8;color:var(--muted);">Loading…</div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+  const API = '';  // same origin
+
+  // ---------- helpers ----------
+  function toast(msg, ok = true) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'show ' + (ok ? 'ok' : 'err');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.className = '', 3000);
+  }
+
+  async function apiFetch(path, opts = {}) {
+    try {
+      const res = await fetch(API + path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...opts
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || 'API error');
+      return json;
+    } catch (e) {
+      toast('❌ ' + e.message, false);
+      throw e;
+    }
+  }
+
+  // ---------- connection / health ----------
+  async function checkHealth() {
+    try {
+      const j = await apiFetch('/api/status');
+      setConn(true);
+      return j;
+    } catch {
+      setConn(false);
+    }
+  }
+
+  function setConn(ok) {
+    const dot = document.getElementById('dot');
+    const lbl = document.getElementById('conn-label');
+    dot.className = 'status-dot ' + (ok ? 'ok' : 'err');
+    lbl.textContent = ok ? 'Connected' : 'Disconnected';
+  }
+
+  // ---------- lasers ----------
+  async function setLaser(side, state) {
+    try {
+      const j = await apiFetch('/api/laser/' + side, {
+        method: 'POST',
+        body: JSON.stringify({ state })
+      });
+      updateLaserUI(j.status);
+      toast('Laser ' + side + (state ? ' ON' : ' OFF'));
+    } catch {}
+  }
+
+  function updateLaserUI(status) {
+    if (!status) return;
+    ['left', 'right'].forEach(s => {
+      const cb = document.getElementById('laser-' + s);
+      const ind = document.getElementById('ind-' + s);
+      if (cb) cb.checked = !!status[s];
+      if (ind) ind.className = 'laser-ind' + (status[s] ? ' on' : '');
+    });
+  }
+
+  // ---------- LED ----------
+  let ledTimer = null;
+  function debounceLed() {
+    clearTimeout(ledTimer);
+    ledTimer = setTimeout(() => {
+      const r = +document.getElementById('led-r').value;
+      const g = +document.getElementById('led-g').value;
+      const b = +document.getElementById('led-b').value;
+      setLed(r, g, b);
+    }, 300);
+  }
+
+  async function setLed(r, g, b) {
+    document.getElementById('led-r').value = r;
+    document.getElementById('led-g').value = g;
+    document.getElementById('led-b').value = b;
+    updateSwatch();
+    try {
+      await apiFetch('/api/led/color', {
+        method: 'POST',
+        body: JSON.stringify({ r, g, b })
+      });
+      toast(`LED → rgb(${r},${g},${b})`);
+    } catch {}
+  }
+
+  function updateSwatch() {
+    const r = document.getElementById('led-r').value;
+    const g = document.getElementById('led-g').value;
+    const b = document.getElementById('led-b').value;
+    document.getElementById('v-r').textContent = r;
+    document.getElementById('v-g').textContent = g;
+    document.getElementById('v-b').textContent = b;
+    document.getElementById('led-swatch').style.background = `rgb(${r},${g},${b})`;
+  }
+
+  // ---------- motors ----------
+  function sliderVal(id, vid) {
+    const el = document.getElementById(id);
+    const ve = document.getElementById(vid);
+    if (!el || !ve) return;
+    const unit = id.startsWith('fan') ? '%' : '';
+    ve.textContent = el.value + unit;
+  }
+
+  document.getElementById('move-x').addEventListener('input', () => sliderVal('move-x', 'v-mx'));
+  document.getElementById('move-y').addEventListener('input', () => sliderVal('move-y', 'v-my'));
+  document.getElementById('move-z').addEventListener('input', () => sliderVal('move-z', 'v-mz'));
+
+  async function moveMotors() {
+    const axes = ['x', 'y', 'z'];
+    for (const ax of axes) {
+      const mm = parseFloat(document.getElementById('move-' + ax).value);
+      if (mm !== 0) {
+        try {
+          const j = await apiFetch('/api/move/' + ax, {
+            method: 'POST',
+            body: JSON.stringify({ mm })
+          });
+          updateMotorUI(j.status);
+        } catch {}
+      }
+    }
+    toast('Move command sent');
+  }
+
+  async function homeMotors(target) {
+    try {
+      const j = await apiFetch('/api/home/' + target, { method: 'POST' });
+      updateMotorUI(j.status);
+      toast('Homing ' + target);
+    } catch {}
+  }
+
+  async function stopMotors() {
+    try {
+      const j = await apiFetch('/api/motor/stop', { method: 'POST', body: JSON.stringify({ axis: 'all' }) });
+      updateMotorUI(j.status);
+      toast('Motors stopped');
+    } catch {}
+  }
+
+  function updateMotorUI(status) {
+    if (!status) return;
+    const pos = status.positions || {};
+    ['x', 'y', 'z'].forEach(ax => {
+      const el = document.getElementById('pos-' + ax);
+      if (el) el.textContent = pos[ax] !== undefined ? pos[ax].toFixed(2) + ' mm' : '—';
+    });
+  }
+
+  // ---------- fans ----------
+  async function setFans() {
+    const fans = [
+      { key: 'pi', endpoint: '/api/fan/pi' },
+      { key: 'creality', endpoint: '/api/fan/creality' },
+      { key: 'temperature', endpoint: '/api/fan/temperature' }
+    ];
+    for (const { key, endpoint } of fans) {
+      const pct = parseInt(document.getElementById('fan-' + key).value, 10);
+      try {
+        await apiFetch(endpoint, { method: 'POST', body: JSON.stringify({ percent: pct }) });
+      } catch {}
+    }
+    toast('Fan speeds applied');
+  }
+
+  function setAllFans(pct) {
+    ['fan-pi', 'fan-creality', 'fan-temperature'].forEach((id, i) => {
+      const vids = ['v-fpi', 'v-fcr', 'v-ftp'];
+      const el = document.getElementById(id);
+      if (el) el.value = pct;
+      const ve = document.getElementById(vids[i]);
+      if (ve) ve.textContent = pct + '%';
+    });
+    setFans();
+  }
+
+  function updateFanUI(status) {
+    if (!status) return;
+    const piSpeed = status.pi?.speed !== undefined ? Math.round(status.pi.speed * 100) : 0;
+    const crSpeed = status.creality !== undefined ? Math.round(status.creality * 100) : 0;
+    const tpSpeed = status.temperature !== undefined ? Math.round(status.temperature * 100) : 0;
+    document.getElementById('fan-pi').value = piSpeed;
+    document.getElementById('v-fpi').textContent = piSpeed + '%';
+    document.getElementById('fan-creality').value = crSpeed;
+    document.getElementById('v-fcr').textContent = crSpeed + '%';
+    document.getElementById('fan-temperature').value = tpSpeed;
+    document.getElementById('v-ftp').textContent = tpSpeed + '%';
+  }
+
+  // ---------- temperature ----------
+  async function refreshTemp() {
+    try {
+      const j = await apiFetch('/api/temperature/board');
+      const t = j.status?.board_c;
+      document.getElementById('temp-board').textContent = t !== undefined ? t.toFixed(1) + ' °C' : '—';
+    } catch {
+      document.getElementById('temp-board').textContent = '—';
+    }
+  }
+
+  // ---------- status ----------
+  async function refreshStatus() {
+    try {
+      const j = await apiFetch('/api/status');
+      const d = j.status || {};
+      const apiText = document.createTextNode(d.api || 'ok');
+      const body = document.getElementById('status-body');
+      body.innerHTML = '';
+      const lines = [
+        ['API', d.api || 'ok'],
+        ['GPIO', d.gpio_driver ? '✅' : '❌'],
+        ['STM32', d.stm32_driver ? '✅' : '❌'],
+        ['Updated', new Date().toLocaleTimeString()],
+      ];
+      lines.forEach(([k, v]) => {
+        const b = document.createElement('b');
+        b.textContent = k + ': ';
+        body.appendChild(b);
+        body.appendChild(document.createTextNode(v));
+        body.appendChild(document.createElement('br'));
+      });
+      setConn(true);
+    } catch {
+      document.getElementById('status-body').textContent = 'Unreachable';
+      setConn(false);
+    }
+  }
+
+  // ---------- refresh all ----------
+  async function refreshAll() {
+    const [motorJ, fanJ] = await Promise.allSettled([
+      apiFetch('/api/motor/status'),
+      apiFetch('/api/fan/status'),
+      refreshTemp(),
+      refreshStatus()
+    ]);
+    if (motorJ.status === 'fulfilled') updateMotorUI(motorJ.value.status);
+    if (fanJ.status === 'fulfilled') updateFanUI(fanJ.value.status);
+
+    // Refresh laser status read-only
+    try {
+      const lj = await apiFetch('/api/laser/status');
+      updateLaserUI(lj.status);
+    } catch {}
+  }
+
+  // ---------- polling ----------
+  async function poll() {
+    try {
+      const [mj, fj] = await Promise.all([
+        apiFetch('/api/motor/status'),
+        apiFetch('/api/fan/status')
+      ]);
+      updateMotorUI(mj.status);
+      updateFanUI(fj.status);
+    } catch {}
+    await refreshTemp();
+    await refreshStatus();
+  }
+
+  // ---------- init ----------
+  updateSwatch();
+  refreshAll();
+  setInterval(poll, 5000);
+</script>
+</body>
+</html>

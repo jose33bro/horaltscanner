@@ -12,7 +12,7 @@ _API_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _API_DIR.parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,23 @@ except Exception as exc:  # pragma: no cover - environment dependent
 
 
 app = Flask(__name__)
+
+_WEB_DIR = _API_DIR.parent / "web"
+_VERSION_FILE = _REPO_ROOT / "VERSION"
+_VERSION = _VERSION_FILE.read_text().strip() if _VERSION_FILE.exists() else "unknown"
+
+
+@app.after_request
+def _add_cors(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
+
+
+@app.route("/", methods=["GET"])
+def index():
+    return send_from_directory(str(_WEB_DIR), "index.html")
 
 
 def _initialize_driver(driver: Any, name: str) -> None:
@@ -309,6 +326,41 @@ def temperature_all():
     except Exception:
         logger.exception("All temperature route failed")
         return _json_error("Internal server error", 500)
+
+
+@app.route("/api/laser/status", methods=["GET"])
+def laser_status():
+    if gpio_driver is None:
+        return _json_error("GPIO driver unavailable", 503)
+    try:
+        return jsonify({"success": True, "status": gpio_driver.get_laser_status()})
+    except Exception:
+        logger.exception("Laser status route failed")
+        return _json_error("Internal server error", 500)
+
+
+@app.route("/api/led/status", methods=["GET"])
+def led_status():
+    if gpio_driver is None:
+        return _json_error("GPIO driver unavailable", 503)
+    try:
+        return jsonify({"success": True, "status": gpio_driver.get_led_status()})
+    except Exception:
+        logger.exception("LED status route failed")
+        return _json_error("Internal server error", 500)
+
+
+@app.route("/api/status", methods=["GET"])
+def api_status():
+    return jsonify({
+        "success": True,
+        "status": {
+            "api": "ok",
+            "gpio_driver": gpio_driver is not None,
+            "stm32_driver": stm32_driver is not None,
+            "version": _VERSION,
+        },
+    })
 
 
 if __name__ == "__main__":

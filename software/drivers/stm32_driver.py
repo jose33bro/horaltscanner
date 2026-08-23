@@ -103,12 +103,13 @@ class STM32Driver:
                 timeout=self.timeout,
                 write_timeout=self.timeout,
             )
+            logger.info("STM32 port opened: %s @ %d baud", self.port, self.baudrate)
             self.connected = True
-            logger.info("STM32 connected: %s @ %d baud", self.port, self.baudrate)
             if self.ping():
                 logger.info("STM32 handshake OK")
                 return True
             logger.warning("STM32 ping failed – firmware may not be running")
+            self.connected = False
             return False
         except serial.SerialException as exc:
             logger.error("STM32 connect error: %s", exc)

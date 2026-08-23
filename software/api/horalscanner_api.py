@@ -300,7 +300,7 @@ def led_color():
 # 3D Model endpoints
 # ---------------------------------------------------------------------------
 
-@app.route("/api/model/reconstruct", methods=["GET"])
+@app.route("/api/model/reconstruct", methods=["POST"])
 def model_reconstruct():
     result = _reconstruction.reconstruct()
     return jsonify(result)

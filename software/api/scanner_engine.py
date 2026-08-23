@@ -215,7 +215,7 @@ class ReconstructionEngine:
 
         except Exception as exc:
             logger.exception("Reconstruction failed")
-            return {"ok": False, "stl_size": 0, "amf_size": 0, "error": str(exc)}
+            return {"ok": False, "stl_size": 0, "amf_size": 0, "error": "Reconstruction failed"}
 
     # ------------------------------------------------------------------
     # Helpers

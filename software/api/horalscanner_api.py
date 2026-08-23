@@ -95,6 +95,12 @@ def scan_pointcloud():
 # Movement endpoints
 # ---------------------------------------------------------------------------
 
+def _safe_error(exc: Exception, context: str = "") -> str:
+    """Return a sanitized error string that does not expose internal paths or stack traces."""
+    logger.error("%s error: %s", context, exc)
+    return f"{context} error" if context else "Internal error"
+
+
 def _send_gcode(cmd: str) -> str:
     """Send a raw G-code command to the Creality board via serial."""
     try:
@@ -106,7 +112,8 @@ def _send_gcode(cmd: str) -> str:
             resp = ser.read(ser.in_waiting or 64).decode(errors="replace").strip()
         return resp
     except Exception as exc:
-        return f"error: {exc}"
+        logger.error("send_gcode error: %s", exc)
+        return "error: serial communication failed"
 
 
 @app.route("/api/move/<axis>", methods=["POST"])
@@ -482,7 +489,7 @@ def system_update():
             "pip_output": pip_install.stdout + pip_install.stderr,
         })
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)})
+        return jsonify({"ok": False, "error": _safe_error(exc, "update")})
 
 
 @app.route("/health", methods=["GET"])

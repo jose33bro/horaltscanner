@@ -34,6 +34,15 @@ from lidar_driver import LidarDriver
 from slicer_bridge import SlicerBridge
 from moonraker_client import MoonrakerClient
 
+# New drivers and API blueprints
+import sys as _sys
+_sys.path.insert(0, str(_REPO_ROOT / "software" / "drivers"))
+from stm32_driver import STM32Driver
+from gpio_driver import GPIODriver
+from motor_control import motor_bp, init_driver as _init_motor_driver
+from laser_control import laser_bp, init_driver as _init_laser_driver
+from led_control import led_bp, init_driver as _init_led_driver
+
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
@@ -54,6 +63,20 @@ _logitech = LogitechCamera(device_id=0)
 _picam = PiCamera()
 _lidar = LidarDriver(port="/dev/ttyUSB0")
 _slicer = SlicerBridge()
+
+# New hardware drivers (connect on startup; non-fatal if unavailable)
+_stm32 = STM32Driver()
+_gpio = GPIODriver()
+
+# Register new blueprints
+app.register_blueprint(motor_bp)
+app.register_blueprint(laser_bp)
+app.register_blueprint(led_bp)
+
+# Inject drivers into blueprints
+_init_motor_driver(_stm32)
+_init_laser_driver(_gpio)
+_init_led_driver(_gpio)
 
 # Print queue:  {id: {id, name, gcode_b64, added_at, status}}
 _print_queue: dict = {}
@@ -510,6 +533,7 @@ if __name__ == "__main__":
     _logitech.open()
     _picam.open()
     _lidar.connect()
+    _stm32.connect()
 
     logger.info("🚀 HoralScanner PRO API starting on port %d", port)
     logger.info("📍 Web UI: http://0.0.0.0:%d/", port)

@@ -37,8 +37,7 @@ from slicer_bridge import SlicerBridge
 from moonraker_client import MoonrakerClient
 
 # New drivers and API blueprints
-import sys as _sys
-_sys.path.insert(0, str(_REPO_ROOT / "software" / "drivers"))
+sys.path.insert(0, str(_REPO_ROOT / "software" / "drivers"))
 from stm32_driver import STM32Driver
 from gpio_driver import GPIODriver
 from motor_control import motor_bp, init_driver as _init_motor_driver

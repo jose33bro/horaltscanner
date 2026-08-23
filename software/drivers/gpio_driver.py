@@ -4,7 +4,7 @@ Controls lasers, LED RGB, and fan via GPIO pins
 
 import logging
 from typing import Dict, Any, Optional
-from gpiozero import OutputDevice, BOARD
+from gpiozero import OutputDevice
 import threading
 
 logger = logging.getLogger(__name__)

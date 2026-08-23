@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
 from typing import Any
+
+# Add repo root to path so 'software' module can be imported
+_API_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _API_DIR.parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
 
 from flask import Flask, jsonify, request
 

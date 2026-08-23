@@ -169,6 +169,21 @@ class HoralScannerAPITests(unittest.TestCase):
         response = self.client.post("/api/fan/pi", json={"speed": "fast"})
         self.assertEqual(response.status_code, 400)
 
+    def test_fan_percent_value_is_scaled(self):
+        response = self.client.post("/api/fan/pi", json={"percent": 1})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(("set_fan_speed", 0.01), self.fake_gpio.calls)
+
+    def test_fan_route_returns_502_when_driver_fails(self):
+        self.fake_gpio.set_fan_speed = lambda _: False
+        response = self.client.post("/api/fan/pi", json={"speed": 0.5})
+        self.assertEqual(response.status_code, 502)
+
+    def test_temperature_all_returns_502_when_sensor_unavailable(self):
+        self.fake_stm32.read_board_temperature = lambda: None
+        response = self.client.get("/api/temperature/all")
+        self.assertEqual(response.status_code, 502)
+
 
 if __name__ == "__main__":
     unittest.main()

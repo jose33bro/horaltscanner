@@ -93,11 +93,12 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertIn(("home_motor", "all"), self.fake_stm32.calls)
 
     def test_motor_status_and_stop_routes_use_stm32_driver(self):
-        status_response = self.client.post("/api/motor/status", json={})
+        status_response = self.client.get("/api/motor/status")
         stop_response = self.client.post("/api/motor/stop", json={"axis": "z"})
 
         self.assertEqual(status_response.status_code, 200)
         self.assertEqual(stop_response.status_code, 200)
+        self.assertEqual(status_response.get_json()["status"], self.fake_stm32.status)
         self.assertIn(("stop_motor", "z"), self.fake_stm32.calls)
 
     def test_invalid_numeric_payloads_return_400(self):

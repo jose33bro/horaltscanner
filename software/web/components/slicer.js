@@ -16,6 +16,7 @@ const SlicerUI = (() => {
   }
 
   async function _doSlice() {
+    try {
     // Get current model from reconstruction
     const modelResp = await fetch('/api/model/export', {
       method: 'POST',
@@ -54,6 +55,9 @@ const SlicerUI = (() => {
       document.getElementById('btn-add-queue')?.removeAttribute('disabled');
     } else {
       _setStatus(`❌ Slice error: ${result.error}`);
+    }
+    } catch (err) {
+      _setStatus(`❌ Network error: ${err.message}`);
     }
   }
 

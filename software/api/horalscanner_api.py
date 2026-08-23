@@ -461,6 +461,10 @@ def status():
 
 @app.route("/api/update", methods=["POST"])
 def system_update():
+    # Restrict to localhost-only to prevent unauthorized code execution
+    remote = request.remote_addr
+    if remote not in ("127.0.0.1", "::1"):
+        return jsonify({"ok": False, "error": "Update only allowed from localhost"}), 403
     repo_dir = str(_REPO_ROOT)
     try:
         pull = subprocess.run(

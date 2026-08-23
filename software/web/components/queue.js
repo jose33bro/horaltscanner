@@ -37,11 +37,11 @@ const QueueUI = (() => {
 
   async function send(id) {
     const moonrakerUrl = localStorage.getItem('moonraker_url') || '';
-    const apiKey       = localStorage.getItem('moonraker_key') || '';
+    // API key is not stored client-side; the backend uses its saved config.
     const resp = await fetch(`/api/queue/${id}/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ moonraker_url: moonrakerUrl, api_key: apiKey }),
+      body: JSON.stringify({ moonraker_url: moonrakerUrl }),
     });
     const result = await resp.json();
     alert(result.ok ? '✅ Sent to printer!' : `❌ Error: ${result.error}`);

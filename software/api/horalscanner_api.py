@@ -56,6 +56,29 @@ def _json_error(message: str, status_code: int = 400):
     return jsonify({"success": False, "error": message}), status_code
 
 
+def _parse_pwm_speed(data: dict[str, Any]) -> float:
+    """Parse PWM speed from request payload.
+
+    Accepts either:
+      - speed/pwm in 0.0-1.0 range
+      - speed/pwm in 0-100 range (treated as percent)
+      - percent in 0-100 range
+    """
+    raw_value = data.get("speed", data.get("pwm", data.get("percent")))
+    if raw_value is None:
+        raise ValueError("Missing speed value")
+
+    speed = float(raw_value)
+    if speed < 0:
+        raise ValueError("Speed must be >= 0")
+
+    if speed <= 1.0:
+        return speed
+    if speed <= 100.0:
+        return speed / 100.0
+    raise ValueError("Speed must be <= 1.0 or <= 100")
+
+
 @app.route("/api/laser/<side>", methods=["POST"])
 def laser(side: str):
     data = request.get_json(silent=True) or {}
@@ -165,6 +188,119 @@ def motor_stop():
         return jsonify({"success": True, "status": stm32_driver.get_motor_status()})
     except Exception:
         logger.exception("Motor stop route failed")
+        return _json_error("Internal server error", 500)
+
+
+@app.route("/api/fan/pi", methods=["POST"])
+def fan_pi():
+    if gpio_driver is None:
+        return _json_error("GPIO driver unavailable", 503)
+
+    data = request.get_json(silent=True) or {}
+    try:
+        speed = _parse_pwm_speed(data)
+    except (TypeError, ValueError):
+        return _json_error("Invalid fan speed value", 400)
+
+    try:
+        success = gpio_driver.set_fan_speed(speed)
+        if not success:
+            return _json_error("Failed to set Pi fan speed")
+        return jsonify({"success": True, "status": gpio_driver.get_fan_status()})
+    except Exception:
+        logger.exception("Pi fan route failed")
+        return _json_error("Internal server error", 500)
+
+
+@app.route("/api/fan/creality", methods=["POST"])
+def fan_creality():
+    if stm32_driver is None:
+        return _json_error("STM32 driver unavailable", 503)
+
+    data = request.get_json(silent=True) or {}
+    try:
+        speed = _parse_pwm_speed(data)
+    except (TypeError, ValueError):
+        return _json_error("Invalid fan speed value", 400)
+
+    try:
+        success = stm32_driver.set_fan_speed("creality", speed)
+        if not success:
+            return _json_error("Failed to set Creality fan speed")
+        return jsonify({"success": True, "status": stm32_driver.get_fan_status()})
+    except Exception:
+        logger.exception("Creality fan route failed")
+        return _json_error("Internal server error", 500)
+
+
+@app.route("/api/fan/temperature", methods=["POST"])
+def fan_temperature():
+    if stm32_driver is None:
+        return _json_error("STM32 driver unavailable", 503)
+
+    data = request.get_json(silent=True) or {}
+    try:
+        speed = _parse_pwm_speed(data)
+    except (TypeError, ValueError):
+        return _json_error("Invalid fan speed value", 400)
+
+    try:
+        success = stm32_driver.set_fan_speed("temperature", speed)
+        if not success:
+            return _json_error("Failed to set temperature fan speed")
+        return jsonify({"success": True, "status": stm32_driver.get_fan_status()})
+    except Exception:
+        logger.exception("Temperature fan route failed")
+        return _json_error("Internal server error", 500)
+
+
+@app.route("/api/fan/status", methods=["GET"])
+def fan_status():
+    if gpio_driver is None and stm32_driver is None:
+        return _json_error("No fan drivers available", 503)
+
+    try:
+        status: dict[str, Any] = {}
+        if gpio_driver is not None:
+            status["pi"] = gpio_driver.get_fan_status()
+        if stm32_driver is not None:
+            status.update(stm32_driver.get_fan_status())
+        return jsonify({"success": True, "status": status})
+    except Exception:
+        logger.exception("Fan status route failed")
+        return _json_error("Internal server error", 500)
+
+
+@app.route("/api/temperature/board", methods=["GET"])
+def temperature_board():
+    if stm32_driver is None:
+        return _json_error("STM32 driver unavailable", 503)
+
+    try:
+        temperature = stm32_driver.read_board_temperature()
+        if temperature is None:
+            return _json_error("Failed to read board temperature", 502)
+        return jsonify({"success": True, "status": {"board_c": temperature}})
+    except Exception:
+        logger.exception("Board temperature route failed")
+        return _json_error("Internal server error", 500)
+
+
+@app.route("/api/temperature/all", methods=["GET"])
+def temperature_all():
+    if stm32_driver is None:
+        return _json_error("STM32 driver unavailable", 503)
+
+    try:
+        board_temperature = stm32_driver.read_board_temperature()
+        status = {
+            "board_c": board_temperature,
+            "sensor_pin": "PC5",
+            "sensor_type": "EPCOS 100K B57560G104F",
+        }
+        return jsonify({"success": True, "status": status})
+    except Exception:
+        logger.exception("All temperature route failed")
         return _json_error("Internal server error", 500)
 
 

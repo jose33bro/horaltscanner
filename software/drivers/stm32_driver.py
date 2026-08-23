@@ -63,6 +63,7 @@ class STM32Driver:
         self.motor_positions = {"x": 0.0, "y": 0.0, "z": 0.0}
         self.motor_moving = {"x": False, "y": False, "z": False}
         self.temperature = 0.0
+        self.fan_speeds = {"creality": 0.0, "temperature": 0.0}
 
         # Communication queue
         self.cmd_queue: Queue = Queue()
@@ -275,29 +276,41 @@ class STM32Driver:
         """Set fan speed (0-1.0)
         
         Args:
-            fan: "board" or "pi"
+            fan: "creality"/"board" (PA0) or "temperature" (PA8)
             speed: Speed 0.0-1.0
             
         Returns:
             True if command sent successfully
         """
-        if fan not in ["board", "pi"]:
+        fan_aliases = {"board": "creality", "creality": "creality", "temperature": "temperature"}
+        normalized_fan = fan_aliases.get(fan)
+        if normalized_fan is None:
             logger.error(f"Invalid fan: {fan}")
             return False
 
+        speed = max(0.0, min(1.0, speed))
+
         # Convert to 0-255
         pwm_value = int(speed * 255)
-        cmd = f"FAN_{fan.upper()}_PWM {pwm_value}"
+        if normalized_fan == "creality":
+            cmd = f"FAN_PA0_PWM {pwm_value}"
+        else:
+            cmd = f"FAN_PA8_PWM {pwm_value}"
 
         if self._send_command(cmd):
-            logger.info(f"Set {fan} fan: {speed*100:.0f}%")
+            self.fan_speeds[normalized_fan] = speed
+            logger.info(f"Set {normalized_fan} fan: {speed*100:.0f}%")
             return True
 
         return False
 
+    def get_fan_status(self) -> Dict[str, float]:
+        """Get tracked fan speeds for STM32-controlled fans."""
+        return self.fan_speeds.copy()
+
     # ========== TEMPERATURE ==========
 
-    def read_temperature(self) -> Optional[float]:
+    def read_board_temperature(self) -> Optional[float]:
         """Read board temperature
         
         Returns:
@@ -315,3 +328,7 @@ class STM32Driver:
                 logger.warning(f"Invalid temperature response: {response}")
 
         return None
+
+    def read_temperature(self) -> Optional[float]:
+        """Backward-compatible alias for board temperature reading."""
+        return self.read_board_temperature()

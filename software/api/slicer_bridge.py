@@ -93,7 +93,8 @@ class SlicerBridge:
             except subprocess.TimeoutExpired:
                 return {"ok": False, "gcode_b64": "", "error": "Slicer timeout"}
             except Exception as exc:
-                return {"ok": False, "gcode_b64": "", "error": str(exc)}
+                logger.error("Slicer error: %s", exc)
+                return {"ok": False, "gcode_b64": "", "error": "Slicing failed"}
 
     def get_version(self) -> str:
         if not self.is_available():

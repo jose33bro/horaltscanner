@@ -36,7 +36,7 @@ class MoonrakerClient:
             data = r.json()
             return {"ok": True, "version": data.get("result", {}).get("sw_version", "?"), "error": ""}
         except Exception as exc:
-            return {"ok": False, "version": "", "error": str(exc)}
+            return {"ok": False, "version": "", "error": "Connection failed"}
 
     def upload_and_print(self, gcode_bytes: bytes, filename: str) -> dict:
         """Upload G-code file and optionally start printing.  Returns {ok, error}."""
@@ -55,7 +55,8 @@ class MoonrakerClient:
             r.raise_for_status()
             return {"ok": True, "error": "", "result": r.json()}
         except Exception as exc:
-            return {"ok": False, "error": str(exc), "result": {}}
+            logger.error("upload_and_print error: %s", exc)
+            return {"ok": False, "error": "Upload failed", "result": {}}
 
     def get_printer_info(self) -> dict:
         """Get printer status."""

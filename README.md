@@ -14,9 +14,9 @@ L'API principale est `software/api/horalscanner_api.py`.
 - `POST /api/home/<x|y|z|all>`: homing d'axe(s)
 - `GET|POST /api/motor/status`: état moteurs (position, mouvement, température MCU)
 - `POST /api/motor/stop`: arrêt moteur (`{"axis":"x|y|z|all"}`)
-- `POST /api/fan/pi`: vitesse ventilateur Pi (PWM `0-1` ou `% 0-100`)
-- `POST /api/fan/creality`: vitesse ventilateur Creality PA0 (PWM `0-1` ou `% 0-100`)
-- `POST /api/fan/temperature`: vitesse ventilateur thermique PA8 (PWM `0-1` ou `% 0-100`)
+- `POST /api/fan/pi`: vitesse ventilateur Pi (`{"speed":0-1}` / `{"pwm":0-1}` / `{"percent":0-100}`)
+- `POST /api/fan/creality`: vitesse ventilateur Creality PA0 (`{"speed":0-1}` / `{"pwm":0-1}` / `{"percent":0-100}`)
+- `POST /api/fan/temperature`: vitesse ventilateur thermique PA8 (`{"speed":0-1}` / `{"pwm":0-1}` / `{"percent":0-100}`)
 - `GET /api/fan/status`: vitesse de tous les ventilateurs
 - `GET /api/temperature/board`: température carte Creality (PC5)
 - `GET /api/temperature/all`: toutes les températures exposées par l'API
@@ -59,7 +59,7 @@ software/
 - PA8: ventilateur température (PWM)
 - PC5: sonde température carte (`EPCOS 100K B57560G104F`)
 
-Référence câblage: `/home/runner/work/horaltscanner/horaltscanner/hardware/wiring_diagram.md`
+Référence câblage: `hardware/wiring_diagram.md`
 
 ## Tests
 

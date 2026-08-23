@@ -61,18 +61,13 @@ def _parse_pwm_speed(data: dict[str, Any]) -> float:
 
     Accepts either:
       - speed/pwm in 0.0-1.0 range
-      - speed/pwm in 0-100 range (treated as percent)
       - percent in 0-100 range
     """
     if "speed" in data:
         speed = float(data["speed"])
-        if speed < 0:
-            raise ValueError("Speed must be >= 0")
-        if speed <= 1.0:
-            return speed
-        if speed <= 100.0:
-            return speed / 100.0
-        raise ValueError("Speed must be <= 1.0 or <= 100")
+        if speed < 0 or speed > 1.0:
+            raise ValueError("Speed must be in 0.0-1.0")
+        return speed
 
     if "pwm" in data:
         speed = float(data["pwm"])

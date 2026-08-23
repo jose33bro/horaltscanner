@@ -63,8 +63,9 @@ def laser(side: str):
             return _json_error("Failed to update laser state")
 
         return jsonify({"success": True, "status": gpio_driver.get_laser_status()})
-    except Exception as exc:
-        return _json_error(str(exc), 500)
+    except Exception:
+        logger.exception("Laser route failed")
+        return _json_error("Internal server error", 500)
 
 
 @app.route("/api/led/color", methods=["POST"])
@@ -86,8 +87,9 @@ def led_color():
             return _json_error("Failed to set LED color")
 
         return jsonify({"success": True, "status": gpio_driver.get_led_status()})
-    except Exception as exc:
-        return _json_error(str(exc), 500)
+    except Exception:
+        logger.exception("LED route failed")
+        return _json_error("Internal server error", 500)
 
 
 @app.route("/api/move/<axis>", methods=["POST"])
@@ -107,8 +109,9 @@ def move(axis: str):
             return _json_error("Failed to move motor")
 
         return jsonify({"success": True, "status": stm32_driver.get_motor_status()})
-    except Exception as exc:
-        return _json_error(str(exc), 500)
+    except Exception:
+        logger.exception("Move route failed")
+        return _json_error("Internal server error", 500)
 
 
 @app.route("/api/home/<target>", methods=["POST"])
@@ -122,8 +125,9 @@ def home(target: str):
             return _json_error("Failed to home motor")
 
         return jsonify({"success": True, "status": stm32_driver.get_motor_status()})
-    except Exception as exc:
-        return _json_error(str(exc), 500)
+    except Exception:
+        logger.exception("Home route failed")
+        return _json_error("Internal server error", 500)
 
 
 @app.route("/api/motor/status", methods=["GET", "POST"])
@@ -133,8 +137,9 @@ def motor_status():
 
     try:
         return jsonify({"success": True, "status": stm32_driver.get_motor_status()})
-    except Exception as exc:
-        return _json_error(str(exc), 500)
+    except Exception:
+        logger.exception("Motor status route failed")
+        return _json_error("Internal server error", 500)
 
 
 @app.route("/api/motor/stop", methods=["POST"])
@@ -151,10 +156,11 @@ def motor_stop():
             return _json_error("Failed to stop motor")
 
         return jsonify({"success": True, "status": stm32_driver.get_motor_status()})
-    except Exception as exc:
-        return _json_error(str(exc), 500)
+    except Exception:
+        logger.exception("Motor stop route failed")
+        return _json_error("Internal server error", 500)
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000, debug=False)

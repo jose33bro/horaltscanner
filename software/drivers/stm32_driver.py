@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_STEPS_PER_ROTATION = 200
 DEFAULT_MOTOR_LIMITS = {
-    "X": {"max_velocity": 300.0, "homing_speed": 50.0, "position_min": 0.0},
-    "Y": {"max_velocity": 300.0, "homing_speed": 90.0, "position_min": 0.0},
-    "Z": {"max_velocity": 5.0, "homing_speed": 50.0, "position_min": 0.0},
+    "X": {"max_velocity": 300.0, "homing_speed": 50.0, "position_min": 0.0, "position_max": 210.0},
+    "Y": {"max_velocity": 300.0, "homing_speed": 90.0, "position_min": 0.0, "position_max": 628.32},
+    "Z": {"max_velocity": 5.0, "homing_speed": 50.0, "position_min": 0.0, "position_max": 270.0},
 }
 AXIS_COMMANDS = {
     "X": {"move": CMD_MOVE_X, "home": CMD_HOME_X, "status_attr": "pos_x"},
@@ -92,7 +92,7 @@ class STM32Driver:
                 "max_velocity": float(source.get("max_velocity", defaults["max_velocity"])),
                 "homing_speed": float(source.get("homing_speed", defaults["homing_speed"])),
                 "position_min": float(source.get("position_min", defaults["position_min"])),
-                "position_max": float(source.get("position_max", defaults["position_min"])),
+                "position_max": float(source.get("position_max", defaults["position_max"])),
             }
         return result
 

@@ -1,275 +1,208 @@
-const API_BASE = 'http://192.168.1.39:5000';
+/**
+ * HoralScanner PRO – Main Orchestrator
+ */
 
-// Classe pour gérer l'API
-class CrealityAPI {
-    constructor(baseURL) {
-        this.baseURL = baseURL;
-    }
+const App = (() => {
+  // -----------------------------------------------------------------------
+  // Tab navigation
+  // -----------------------------------------------------------------------
+  function _initTabs() {
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = btn.dataset.tab;
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('tab-' + target)?.classList.add('active');
 
-    async request(endpoint, method = 'GET', data = null) {
-        const options = {
-            method,
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        };
-
-        if (data) {
-            options.body = JSON.stringify(data);
+        // Lazy-init components on first visit
+        if (target === 'viewer' && !_viewerInited) {
+          Viewer3D.init('viewer3d-container');
+          _viewerInited = true;
         }
+      });
+    });
+  }
 
-        try {
-            const response = await fetch(`${this.baseURL}${endpoint}`, options);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return await response.json();
-        } catch (error) {
-            console.error(`Erreur API: ${endpoint}`, error);
-            throw error;
-        }
-    }
+  let _viewerInited = false;
+  let _scanTimer = null;
+  let _scanStart = null;
 
-    // Endpoints
-    async getStatus() {
-        return this.request('/api/status');
-    }
+  // -----------------------------------------------------------------------
+  // Status polling
+  // -----------------------------------------------------------------------
+  function _pollStatus() {
+    fetch('/api/status')
+      .then(r => r.json())
+      .then(data => {
+        const dot  = document.getElementById('status-dot');
+        const text = document.getElementById('status-text');
+        if (dot)  { dot.className  = 'status-dot ' + (data.ok ? 'online' : 'offline'); }
+        if (text) { text.textContent = data.ok ? `Online – ${data.temperature_c ?? '?'} °C` : 'API offline'; }
+      })
+      .catch(() => {
+        const dot = document.getElementById('status-dot');
+        if (dot) dot.className = 'status-dot offline';
+        const text = document.getElementById('status-text');
+        if (text) text.textContent = 'API unreachable';
+      });
+  }
 
-    async home() {
-        return this.request('/api/home', 'POST');
-    }
+  // -----------------------------------------------------------------------
+  // Scan control
+  // -----------------------------------------------------------------------
+  function startScan() {
+    fetch('/api/scan/start', { method: 'POST' }).then(() => {
+      document.getElementById('btn-scan-start')?.setAttribute('disabled', '');
+      document.getElementById('btn-scan-stop')?.removeAttribute('disabled');
+      _scanStart = Date.now();
+      _scanTimer = setInterval(_updateScanStats, 1000);
+    });
+  }
 
-    async move(x, y, z, speed) {
-        return this.request('/api/move', 'POST', { x, y, z, speed });
-    }
+  function stopScan() {
+    fetch('/api/scan/stop', { method: 'POST' }).then(() => {
+      document.getElementById('btn-scan-start')?.removeAttribute('disabled');
+      document.getElementById('btn-scan-stop')?.setAttribute('disabled', '');
+      clearInterval(_scanTimer);
+      _scanTimer = null;
+    });
+  }
 
-    async setNozzleTemp(temp) {
-        return this.request('/api/temp/nozzle', 'POST', { temp });
-    }
+  function _updateScanStats() {
+    fetch('/api/scan/status')
+      .then(r => r.json())
+      .then(d => {
+        _setText('stat-points',  d.points ?? 0);
+        const elapsed = d.elapsed_s ?? 0;
+        const mm = Math.floor(elapsed / 60).toString().padStart(2, '0');
+        const ss = Math.floor(elapsed % 60).toString().padStart(2, '0');
+        _setText('stat-time', `${mm}:${ss}`);
+        _setText('stat-quality', d.quality != null ? `${d.quality.toFixed(1)} %` : '--');
+      });
+  }
 
-    async setBedTemp(temp) {
-        return this.request('/api/temp/bed', 'POST', { temp });
-    }
-
-    async extrude(length, speed) {
-        return this.request('/api/extrude', 'POST', { length, speed });
-    }
-
-    async flashFirmware(firmware) {
-        const formData = new FormData();
-        formData.append('firmware', firmware);
-
-        try {
-            const response = await fetch(`${this.baseURL}/api/flash`, {
-                method: 'POST',
-                body: formData
-            });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return await response.json();
-        } catch (error) {
-            console.error('Erreur flashage', error);
-            throw error;
-        }
-    }
-}
-
-// Instance API
-const api = new CrealityAPI(API_BASE);
-
-// UI Controller
-class UIController {
-    constructor() {
-        this.statusElement = document.getElementById('connection-status');
-        this.tempsElement = document.getElementById('temps-display');
-        this.setupTabs();
-        this.setupEventListeners();
-        this.startStatusUpdate();
-    }
-
-    setupTabs() {
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const tabName = btn.dataset.tab;
-                this.switchTab(tabName);
-            });
-        });
-    }
-
-    switchTab(tabName) {
-        // Hide all tabs
-        document.querySelectorAll('.tab-content').forEach(tab => {
-            tab.classList.remove('active');
-        });
-
-        // Remove active from buttons
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.classList.remove('active');
-        });
-
-        // Show selected tab
-        document.getElementById(tabName).classList.add('active');
-        document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
-    }
-
-    setupEventListeners() {
-        // File input
-        document.getElementById('firmware-file').addEventListener('change', (e) => {
-            this.handleFirmwareSelect(e);
-        });
-    }
-
-    handleFirmwareSelect(e) {
-        const file = e.target.files[0];
-        if (file) {
-            const sizeKB = (file.size / 1024).toFixed(2);
-            document.getElementById('firmware-info').textContent = 
-                `Fichier: ${file.name} (${sizeKB} KB)`;
-        }
-    }
-
-    updateStatus(connected, temps = null) {
-        if (connected) {
-            this.statusElement.textContent = '✓ Connecté';
-            this.statusElement.classList.remove('disconnected');
-            this.statusElement.classList.add('connected');
+  // -----------------------------------------------------------------------
+  // Reconstruction + export
+  // -----------------------------------------------------------------------
+  function reconstruct() {
+    _setText('stat-quality', 'Reconstructing…');
+    fetch('/api/model/reconstruct')
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) {
+          _setText('stat-quality', '✅ Model ready');
+          // Show in 3D viewer if already initialised
+          if (_viewerInited) {
+            fetch('/api/model/current?format=stl')
+              .then(r => r.arrayBuffer())
+              .then(buf => Viewer3D.showSTL(buf));
+          }
         } else {
-            this.statusElement.textContent = '✗ Déconnecté';
-            this.statusElement.classList.remove('connected');
-            this.statusElement.classList.add('disconnected');
+          _setText('stat-quality', `❌ ${d.error}`);
         }
+      });
+  }
 
-        if (temps) {
-            this.tempsElement.textContent = temps;
+  function exportModel(format) {
+    const a = document.createElement('a');
+    a.href = `/api/model/current?format=${format}`;
+    a.download = `model.${format}`;
+    a.click();
+  }
+
+  // -----------------------------------------------------------------------
+  // Movement
+  // -----------------------------------------------------------------------
+  function moveAxis(axis) {
+    const mm = parseFloat(document.getElementById(`move-${axis}-mm`)?.value || '10');
+    fetch(`/api/move/${axis}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mm }),
+    });
+  }
+
+  function rotate() {
+    const deg = parseFloat(document.getElementById('rotate-deg')?.value || '10');
+    fetch('/api/rotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ degrees: deg }),
+    });
+  }
+
+  function home(target) {
+    fetch(`/api/home/${target}`, { method: 'POST' });
+  }
+
+  // -----------------------------------------------------------------------
+  // Laser
+  // -----------------------------------------------------------------------
+  function laser(side, state) {
+    fetch(`/api/laser/${side}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state }),
+    });
+  }
+
+  // -----------------------------------------------------------------------
+  // LED
+  // -----------------------------------------------------------------------
+  function setLED() {
+    const r = parseInt(document.getElementById('led-r')?.value || '0', 10);
+    const g = parseInt(document.getElementById('led-g')?.value || '0', 10);
+    const b = parseInt(document.getElementById('led-b')?.value || '0', 10);
+    const preview = document.getElementById('led-preview');
+    if (preview) preview.style.background = `rgb(${r},${g},${b})`;
+    fetch('/api/led/color', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ r, g, b }),
+    });
+  }
+
+  // -----------------------------------------------------------------------
+  // Camera capture
+  // -----------------------------------------------------------------------
+  function captureFrame(cam) {
+    fetch(`/api/camera/${cam}`, { method: 'POST' })
+      .then(r => r.json())
+      .then(d => {
+        if (d.jpeg_b64) {
+          const img = document.getElementById('camera-feed');
+          if (img) img.src = 'data:image/jpeg;base64,' + d.jpeg_b64;
         }
-    }
+      });
+  }
 
-    showMessage(message, type = 'info') {
-        const statusDiv = document.getElementById('flash-status');
-        statusDiv.textContent = message;
-        statusDiv.className = `status-message ${type}`;
-    }
+  // -----------------------------------------------------------------------
+  // Helpers
+  // -----------------------------------------------------------------------
+  function _setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
 
-    async startStatusUpdate() {
-        setInterval(async () => {
-            try {
-                const status = await api.getStatus();
-                this.updateStatus(status.connected, status.temperatures);
-            } catch (error) {
-                this.updateStatus(false);
-            }
-        }, 2000);
-    }
-}
+  // -----------------------------------------------------------------------
+  // Bootstrap
+  // -----------------------------------------------------------------------
+  function _init() {
+    _initTabs();
+    SlicerUI.init();
+    QueueUI.init();
+    SettingsUI.init();
+    MaintenanceUI.init();
+    _pollStatus();
+    setInterval(_pollStatus, 10000);
+  }
 
-// Commandes UI
-async function sendCommand(command) {
-    try {
-        if (command === 'home') {
-            await api.home();
-            ui.showMessage('✓ Homing en cours...', 'info');
-        }
-    } catch (error) {
-        ui.showMessage(`✗ Erreur: ${error.message}`, 'error');
-    }
-}
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _init);
+  } else {
+    _init();
+  }
 
-async function sendMove() {
-    try {
-        const x = parseFloat(document.getElementById('move-x').value);
-        const y = parseFloat(document.getElementById('move-y').value);
-        const z = parseFloat(document.getElementById('move-z').value);
-        const speed = parseFloat(document.getElementById('move-speed').value);
-
-        await api.move(x, y, z, speed);
-        ui.showMessage(`✓ Déplacement vers X=${x} Y=${y} Z=${z}`, 'info');
-    } catch (error) {
-        ui.showMessage(`✗ Erreur: ${error.message}`, 'error');
-    }
-}
-
-async function setNozzleTemp() {
-    try {
-        const temp = parseFloat(document.getElementById('nozzle-temp').value);
-        await api.setNozzleTemp(temp);
-        ui.showMessage(`✓ Buse chauffée à ${temp}°C`, 'success');
-    } catch (error) {
-        ui.showMessage(`✗ Erreur: ${error.message}`, 'error');
-    }
-}
-
-async function setBedTemp() {
-    try {
-        const temp = parseFloat(document.getElementById('bed-temp').value);
-        await api.setBedTemp(temp);
-        ui.showMessage(`✓ Lit chauffé à ${temp}°C`, 'success');
-    } catch (error) {
-        ui.showMessage(`✗ Erreur: ${error.message}`, 'error');
-    }
-}
-
-async function sendExtrude() {
-    try {
-        const length = parseFloat(document.getElementById('extrude-length').value);
-        const speed = parseFloat(document.getElementById('extrude-speed').value);
-        await api.extrude(length, speed);
-        ui.showMessage(`✓ Extrusion ${length}mm`, 'success');
-    } catch (error) {
-        ui.showMessage(`✗ Erreur: ${error.message}`, 'error');
-    }
-}
-
-async function flashFirmware() {
-    const fileInput = document.getElementById('firmware-file');
-    const file = fileInput.files[0];
-
-    if (!file) {
-        ui.showMessage('Sélectionnez un fichier firmware', 'error');
-        return;
-    }
-
-    if (!file.name.endsWith('.bin') && !file.name.endsWith('.hex')) {
-        ui.showMessage('Fichier invalide (.bin ou .hex requis)', 'error');
-        return;
-    }
-
-    try {
-        document.getElementById('flash-progress').style.display = 'block';
-        
-        ui.showMessage('📤 Flashage en cours...', 'info');
-        const result = await api.flashFirmware(file);
-        
-        document.getElementById('progress-bar').value = 100;
-        document.getElementById('progress-text').textContent = '100%';
-        
-        ui.showMessage('✓ Firmware flashé avec succès!', 'success');
-    } catch (error) {
-        ui.showMessage(`✗ Erreur flashage: ${error.message}`, 'error');
-    }
-}
-
-function reconnect() {
-    ui.showMessage('🔄 Reconnexion...', 'info');
-    setTimeout(() => {
-        ui.showMessage('✓ Reconnecté', 'success');
-    }, 1000);
-}
-
-function disconnect() {
-    ui.updateStatus(false);
-    ui.showMessage('Déconnecté', 'info');
-}
-
-function updateSettings() {
-    const port = document.getElementById('port-select').value;
-    const baudrate = document.getElementById('baudrate-select').value;
-    
-    ui.showMessage(
-        `✓ Paramètres sauvegardés: ${port} @ ${baudrate}bps`,
-        'success'
-    );
-}
-
-// Initialiser l'app
-let ui;
-document.addEventListener('DOMContentLoaded', () => {
-    ui = new UIController();
-    console.log('✓ App chargée');
-});
+  return { startScan, stopScan, reconstruct, exportModel, moveAxis, rotate, home, laser, setLED, captureFrame };
+})();

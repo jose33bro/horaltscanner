@@ -63,7 +63,8 @@ def led_mode():
     try:
         driver.led_set_mode(mode)
     except ValueError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        logger.warning("Rejected LED mode %s: %s", mode, exc)
+        return jsonify({"ok": False, "error": "Invalid LED mode"}), 400
     return jsonify({"ok": True, "mode": mode, **driver.led_status()})
 
 

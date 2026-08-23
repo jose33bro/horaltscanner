@@ -54,6 +54,7 @@ software/
 - PC2 / PB9 / PC3: stepper X (step/dir/enable)
 - PB8 / PB7 / PC3: stepper Y (step/dir/enable)
 - PB6 / PB5 / PC3: stepper Z (step/dir/enable)
+- `PC3` est un enable partagé pour X/Y/Z.
 - PA0: ventilateur Creality (PWM)
 - PA8: ventilateur température (PWM)
 - PC5: sonde température carte (`EPCOS 100K B57560G104F`)

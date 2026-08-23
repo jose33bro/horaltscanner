@@ -64,19 +64,29 @@ def _parse_pwm_speed(data: dict[str, Any]) -> float:
       - speed/pwm in 0-100 range (treated as percent)
       - percent in 0-100 range
     """
-    raw_value = data.get("speed", data.get("pwm", data.get("percent")))
-    if raw_value is None:
-        raise ValueError("Missing speed value")
+    if "speed" in data:
+        speed = float(data["speed"])
+        if speed < 0:
+            raise ValueError("Speed must be >= 0")
+        if speed <= 1.0:
+            return speed
+        if speed <= 100.0:
+            return speed / 100.0
+        raise ValueError("Speed must be <= 1.0 or <= 100")
 
-    speed = float(raw_value)
-    if speed < 0:
-        raise ValueError("Speed must be >= 0")
-
-    if speed <= 1.0:
+    if "pwm" in data:
+        speed = float(data["pwm"])
+        if speed < 0 or speed > 1.0:
+            raise ValueError("PWM must be in 0.0-1.0")
         return speed
-    if speed <= 100.0:
-        return speed / 100.0
-    raise ValueError("Speed must be <= 1.0 or <= 100")
+
+    if "percent" in data:
+        percent = float(data["percent"])
+        if percent < 0 or percent > 100.0:
+            raise ValueError("Percent must be in 0-100")
+        return percent / 100.0
+
+    raise ValueError("Missing speed value")
 
 
 @app.route("/api/laser/<side>", methods=["POST"])
@@ -205,7 +215,7 @@ def fan_pi():
     try:
         success = gpio_driver.set_fan_speed(speed)
         if not success:
-            return _json_error("Failed to set Pi fan speed")
+            return _json_error("Failed to set Pi fan speed", 502)
         return jsonify({"success": True, "status": gpio_driver.get_fan_status()})
     except Exception:
         logger.exception("Pi fan route failed")
@@ -226,7 +236,7 @@ def fan_creality():
     try:
         success = stm32_driver.set_fan_speed("creality", speed)
         if not success:
-            return _json_error("Failed to set Creality fan speed")
+            return _json_error("Failed to set Creality fan speed", 502)
         return jsonify({"success": True, "status": stm32_driver.get_fan_status()})
     except Exception:
         logger.exception("Creality fan route failed")
@@ -247,7 +257,7 @@ def fan_temperature():
     try:
         success = stm32_driver.set_fan_speed("temperature", speed)
         if not success:
-            return _json_error("Failed to set temperature fan speed")
+            return _json_error("Failed to set temperature fan speed", 502)
         return jsonify({"success": True, "status": stm32_driver.get_fan_status()})
     except Exception:
         logger.exception("Temperature fan route failed")
@@ -293,6 +303,8 @@ def temperature_all():
 
     try:
         board_temperature = stm32_driver.read_board_temperature()
+        if board_temperature is None:
+            return _json_error("Failed to read board temperature", 502)
         status = {
             "board_c": board_temperature,
             "sensor_pin": "PC5",

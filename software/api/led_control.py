@@ -44,6 +44,9 @@ def led_set():
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "r, g, b must be integers 0-255"}), 400
 
+    if not (0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255):
+        return jsonify({"ok": False, "error": "r, g, b must be in range 0-255"}), 400
+
     driver.led_set_rgb(r, g, b)
     return jsonify({"ok": True, "r": r, "g": g, "b": b})
 

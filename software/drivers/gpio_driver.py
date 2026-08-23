@@ -12,6 +12,7 @@ Uses gpiozero library; falls back to simulation mode when not available
 """
 
 import logging
+import threading
 import time
 from typing import Optional, Tuple
 
@@ -149,11 +150,10 @@ class GPIODriver:
 
     def led_set_mode(self, mode: str) -> None:
         """
-        Apply a named colour preset.
+        Apply a named colour mode (rainbow, pulse, red, green, blue, white, off).
 
-        Supported modes: ``rainbow``, ``pulse``, ``red``, ``green``,
-        ``blue``, ``white``, ``off``.  For ``rainbow`` and ``pulse``
-        a single colour cycle is performed synchronously.
+        ``rainbow`` and ``pulse`` run in a background thread so they do not
+        block the calling thread (e.g. a Flask worker).
         """
         mode = mode.lower()
         presets = {
@@ -166,21 +166,29 @@ class GPIODriver:
         if mode in presets:
             self.led_set_rgb(*presets[mode])
         elif mode == "pulse":
-            for v in range(0, 256, 16):
-                self.led_set_rgb(0, 0, v)
-                time.sleep(0.02)
-            for v in range(255, -1, -16):
-                self.led_set_rgb(0, 0, v)
-                time.sleep(0.02)
-            self.led_off()
+            threading.Thread(target=self._led_pulse_bg, daemon=True).start()
         elif mode == "rainbow":
-            for hue in range(0, 360, 10):
-                r, g, b = _hsv_to_rgb(hue / 360.0, 1.0, 1.0)
-                self.led_set_rgb(r, g, b)
-                time.sleep(0.03)
-            self.led_off()
+            threading.Thread(target=self._led_rainbow_bg, daemon=True).start()
         else:
             logger.warning("Unknown LED mode: %s", mode)
+
+    def _led_pulse_bg(self) -> None:
+        """Background pulse animation (blue fade in/out)."""
+        for v in range(0, 256, 16):
+            self.led_set_rgb(0, 0, v)
+            time.sleep(0.02)
+        for v in range(255, -1, -16):
+            self.led_set_rgb(0, 0, v)
+            time.sleep(0.02)
+        self.led_off()
+
+    def _led_rainbow_bg(self) -> None:
+        """Background rainbow animation."""
+        for hue in range(0, 360, 10):
+            r, g, b = _hsv_to_rgb(hue / 360.0, 1.0, 1.0)
+            self.led_set_rgb(r, g, b)
+            time.sleep(0.03)
+        self.led_off()
 
     def led_status(self) -> dict:
         """Return current LED state."""

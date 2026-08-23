@@ -123,7 +123,8 @@ def receive_gcode():
             "size": file_size
         })
     except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
+        print(f"Error saving G-code: {e}")
+        return jsonify({"success": False, "message": "Failed to process uploaded file"}), 500
 
 
 if __name__ == '__main__':

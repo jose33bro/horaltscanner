@@ -1,1 +1,1 @@
-"""API package for horaltscanner."""
+"""API package for HoralScanner."""

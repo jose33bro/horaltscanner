@@ -100,6 +100,13 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertEqual(stop_response.status_code, 200)
         self.assertIn(("stop_motor", "z"), self.fake_stm32.calls)
 
+    def test_invalid_numeric_payloads_return_400(self):
+        led_response = self.client.post("/api/led/color", json={"r": "red", "g": 0, "b": 0})
+        move_response = self.client.post("/api/move/x", json={"mm": "far"})
+
+        self.assertEqual(led_response.status_code, 400)
+        self.assertEqual(move_response.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

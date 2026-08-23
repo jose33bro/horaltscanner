@@ -15,7 +15,7 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
         self.assertEqual(commands, ["FAN_PA0_PWM 127"])
         self.assertEqual(driver.get_fan_status()["creality"], 0.5)
 
-    def test_set_fan_speed_uses_pa8_for_temperature_fan(self):
+    def test_set_fan_speed_uses_pa8_for_temperature_fan_and_clamps_speed(self):
         driver = STM32Driver()
         commands = []
         driver._send_command = lambda cmd: commands.append(cmd) or True

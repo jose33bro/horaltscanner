@@ -168,6 +168,8 @@ class HoralScannerAPITests(unittest.TestCase):
     def test_invalid_fan_speed_returns_400(self):
         response = self.client.post("/api/fan/pi", json={"speed": "fast"})
         self.assertEqual(response.status_code, 400)
+        response = self.client.post("/api/fan/pi", json={"speed": 50})
+        self.assertEqual(response.status_code, 400)
 
     def test_fan_percent_value_is_scaled(self):
         response = self.client.post("/api/fan/pi", json={"percent": 1})

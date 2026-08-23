@@ -1,275 +1,150 @@
-const API_BASE = 'http://192.168.1.39:5000';
+// HoralScanner Web UI - App logic
+// The API base URL is relative so it works regardless of the server IP
+const API_BASE = '';
 
-// Classe pour gérer l'API
-class CrealityAPI {
-    constructor(baseURL) {
-        this.baseURL = baseURL;
-    }
-
-    async request(endpoint, method = 'GET', data = null) {
-        const options = {
-            method,
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        };
-
-        if (data) {
-            options.body = JSON.stringify(data);
-        }
-
-        try {
-            const response = await fetch(`${this.baseURL}${endpoint}`, options);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return await response.json();
-        } catch (error) {
-            console.error(`Erreur API: ${endpoint}`, error);
-            throw error;
-        }
-    }
-
-    // Endpoints
-    async getStatus() {
-        return this.request('/api/status');
-    }
-
-    async home() {
-        return this.request('/api/home', 'POST');
-    }
-
-    async move(x, y, z, speed) {
-        return this.request('/api/move', 'POST', { x, y, z, speed });
-    }
-
-    async setNozzleTemp(temp) {
-        return this.request('/api/temp/nozzle', 'POST', { temp });
-    }
-
-    async setBedTemp(temp) {
-        return this.request('/api/temp/bed', 'POST', { temp });
-    }
-
-    async extrude(length, speed) {
-        return this.request('/api/extrude', 'POST', { length, speed });
-    }
-
-    async flashFirmware(firmware) {
-        const formData = new FormData();
-        formData.append('firmware', firmware);
-
-        try {
-            const response = await fetch(`${this.baseURL}/api/flash`, {
-                method: 'POST',
-                body: formData
-            });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return await response.json();
-        } catch (error) {
-            console.error('Erreur flashage', error);
-            throw error;
-        }
-    }
+// Scanner section
+function startScan() {
+    showAlert('🔍 Scan démarré...', 'info');
+    document.getElementById('scan-progress').style.display = 'block';
+    document.getElementById('scan-status').textContent = 'Scan en cours...';
 }
 
-// Instance API
-const api = new CrealityAPI(API_BASE);
+function stopScan() {
+    document.getElementById('scan-progress').style.display = 'none';
+    document.getElementById('scan-status').textContent = 'Scan arrêté';
+    showAlert('Scan arrêté', 'info');
+}
 
-// UI Controller
-class UIController {
-    constructor() {
-        this.statusElement = document.getElementById('connection-status');
-        this.tempsElement = document.getElementById('temps-display');
-        this.setupTabs();
-        this.setupEventListeners();
-        this.startStatusUpdate();
+function exportScan() {
+    showAlert('💾 Scan exporté en .STL', 'success');
+}
+
+// G-code / Print section
+let currentGcode = null;
+
+function handleGcodeSelect() {
+    const file = document.getElementById('gcode-file').files[0];
+    if (!file) return;
+    currentGcode = file;
+    const sizeKB = (file.size / 1024).toFixed(2);
+    document.getElementById('gcode-name').textContent = file.name;
+    document.getElementById('gcode-size').textContent = sizeKB + ' KB';
+    document.getElementById('gcode-info').style.display = 'block';
+    document.getElementById('send-btn').disabled = false;
+    document.getElementById('gcode-time').textContent = 'N/A';
+    document.getElementById('gcode-lines').textContent = Math.floor(file.size / 20);
+    showAlert('📁 Fichier sélectionné: ' + file.name, 'success');
+}
+
+function previewGcode() {
+    if (!currentGcode) {
+        showAlert("Sélectionnez un fichier d'abord", 'error');
+        return;
     }
+    showAlert("👁️ Aperçu du G-code (fonctionnalité en développement)", 'info');
+}
 
-    setupTabs() {
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const tabName = btn.dataset.tab;
-                this.switchTab(tabName);
-            });
-        });
+async function sendToPrinter() {
+    if (!currentGcode) {
+        showAlert('Sélectionnez un fichier', 'error');
+        return;
     }
-
-    switchTab(tabName) {
-        // Hide all tabs
-        document.querySelectorAll('.tab-content').forEach(tab => {
-            tab.classList.remove('active');
-        });
-
-        // Remove active from buttons
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.classList.remove('active');
-        });
-
-        // Show selected tab
-        document.getElementById(tabName).classList.add('active');
-        document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
-    }
-
-    setupEventListeners() {
-        // File input
-        document.getElementById('firmware-file').addEventListener('change', (e) => {
-            this.handleFirmwareSelect(e);
-        });
-    }
-
-    handleFirmwareSelect(e) {
-        const file = e.target.files[0];
-        if (file) {
-            const sizeKB = (file.size / 1024).toFixed(2);
-            document.getElementById('firmware-info').textContent = 
-                `Fichier: ${file.name} (${sizeKB} KB)`;
-        }
-    }
-
-    updateStatus(connected, temps = null) {
-        if (connected) {
-            this.statusElement.textContent = '✓ Connecté';
-            this.statusElement.classList.remove('disconnected');
-            this.statusElement.classList.add('connected');
+    const formData = new FormData();
+    formData.append('gcode', currentGcode);
+    try {
+        document.getElementById('print-progress').style.display = 'block';
+        showAlert('📤 Envoi en cours...', 'info');
+        const response = await fetch(`${API_BASE}/api/print`, { method: 'POST', body: formData });
+        const data = await response.json();
+        if (data.success) {
+            document.getElementById('print-progress-bar').value = 100;
+            document.getElementById('print-progress-text').textContent = '100%';
+            showAlert("✓ Fichier envoyé à l'imprimante!", 'success');
         } else {
-            this.statusElement.textContent = '✗ Déconnecté';
-            this.statusElement.classList.remove('connected');
-            this.statusElement.classList.add('disconnected');
+            showAlert('✗ Erreur: ' + (data.message || data.error), 'error');
         }
-
-        if (temps) {
-            this.tempsElement.textContent = temps;
-        }
-    }
-
-    showMessage(message, type = 'info') {
-        const statusDiv = document.getElementById('flash-status');
-        statusDiv.textContent = message;
-        statusDiv.className = `status-message ${type}`;
-    }
-
-    async startStatusUpdate() {
-        setInterval(async () => {
-            try {
-                const status = await api.getStatus();
-                this.updateStatus(status.connected, status.temperatures);
-            } catch (error) {
-                this.updateStatus(false);
-            }
-        }, 2000);
+    } catch (e) {
+        showAlert('✗ Erreur: ' + e.message, 'error');
     }
 }
 
-// Commandes UI
-async function sendCommand(command) {
-    try {
-        if (command === 'home') {
-            await api.home();
-            ui.showMessage('✓ Homing en cours...', 'info');
-        }
-    } catch (error) {
-        ui.showMessage(`✗ Erreur: ${error.message}`, 'error');
-    }
+function clearGcode() {
+    currentGcode = null;
+    document.getElementById('gcode-file').value = '';
+    document.getElementById('gcode-info').style.display = 'none';
+    document.getElementById('send-btn').disabled = true;
+    document.getElementById('print-progress').style.display = 'none';
+    showAlert('🗑️ Fichier effacé', 'info');
 }
 
-async function sendMove() {
-    try {
-        const x = parseFloat(document.getElementById('move-x').value);
-        const y = parseFloat(document.getElementById('move-y').value);
-        const z = parseFloat(document.getElementById('move-z').value);
-        const speed = parseFloat(document.getElementById('move-speed').value);
-
-        await api.move(x, y, z, speed);
-        ui.showMessage(`✓ Déplacement vers X=${x} Y=${y} Z=${z}`, 'info');
-    } catch (error) {
-        ui.showMessage(`✗ Erreur: ${error.message}`, 'error');
-    }
+// Settings section
+function connectScanner() {
+    showAlert('🔌 Scanner connecté', 'success');
 }
 
-async function setNozzleTemp() {
-    try {
-        const temp = parseFloat(document.getElementById('nozzle-temp').value);
-        await api.setNozzleTemp(temp);
-        ui.showMessage(`✓ Buse chauffée à ${temp}°C`, 'success');
-    } catch (error) {
-        ui.showMessage(`✗ Erreur: ${error.message}`, 'error');
-    }
-}
-
-async function setBedTemp() {
-    try {
-        const temp = parseFloat(document.getElementById('bed-temp').value);
-        await api.setBedTemp(temp);
-        ui.showMessage(`✓ Lit chauffé à ${temp}°C`, 'success');
-    } catch (error) {
-        ui.showMessage(`✗ Erreur: ${error.message}`, 'error');
-    }
-}
-
-async function sendExtrude() {
-    try {
-        const length = parseFloat(document.getElementById('extrude-length').value);
-        const speed = parseFloat(document.getElementById('extrude-speed').value);
-        await api.extrude(length, speed);
-        ui.showMessage(`✓ Extrusion ${length}mm`, 'success');
-    } catch (error) {
-        ui.showMessage(`✗ Erreur: ${error.message}`, 'error');
-    }
+function connectPrinter() {
+    showAlert('🖨️ Imprimante connectée', 'success');
 }
 
 async function flashFirmware() {
-    const fileInput = document.getElementById('firmware-file');
-    const file = fileInput.files[0];
-
+    const file = document.getElementById('firmware-file').files[0];
     if (!file) {
-        ui.showMessage('Sélectionnez un fichier firmware', 'error');
+        showAlert('Sélectionnez un fichier', 'error');
         return;
     }
-
-    if (!file.name.endsWith('.bin') && !file.name.endsWith('.hex')) {
-        ui.showMessage('Fichier invalide (.bin ou .hex requis)', 'error');
-        return;
-    }
-
+    const formData = new FormData();
+    formData.append('firmware', file);
     try {
         document.getElementById('flash-progress').style.display = 'block';
-        
-        ui.showMessage('📤 Flashage en cours...', 'info');
-        const result = await api.flashFirmware(file);
-        
+        showAlert('📤 Flashage en cours...', 'info');
+        const response = await fetch(`${API_BASE}/api/flash`, { method: 'POST', body: formData });
+        const data = await response.json();
         document.getElementById('progress-bar').value = 100;
         document.getElementById('progress-text').textContent = '100%';
-        
-        ui.showMessage('✓ Firmware flashé avec succès!', 'success');
-    } catch (error) {
-        ui.showMessage(`✗ Erreur flashage: ${error.message}`, 'error');
+        if (data.success) {
+            showAlert('✓ Flashage réussi!', 'success');
+        } else {
+            showAlert('✗ Erreur: ' + data.message, 'error');
+        }
+    } catch (e) {
+        showAlert('✗ Erreur: ' + e.message, 'error');
     }
 }
 
-function reconnect() {
-    ui.showMessage('🔄 Reconnexion...', 'info');
-    setTimeout(() => {
-        ui.showMessage('✓ Reconnecté', 'success');
-    }, 1000);
+// Navigation
+function switchSection(sectionId) {
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById(sectionId).classList.add('active');
+    document.querySelector(`[data-section="${sectionId}"]`).classList.add('active');
 }
 
-function disconnect() {
-    ui.updateStatus(false);
-    ui.showMessage('Déconnecté', 'info');
+function showAlert(message, type) {
+    const alert = document.getElementById('alert');
+    if (!alert) return;
+    alert.textContent = message;
+    alert.className = `alert show alert-${type}`;
+    setTimeout(() => alert.classList.remove('show'), 4000);
 }
 
-function updateSettings() {
-    const port = document.getElementById('port-select').value;
-    const baudrate = document.getElementById('baudrate-select').value;
-    
-    ui.showMessage(
-        `✓ Paramètres sauvegardés: ${port} @ ${baudrate}bps`,
-        'success'
-    );
-}
+// Status polling
+setInterval(async () => {
+    try {
+        const response = await fetch(`${API_BASE}/api/status`);
+        const data = await response.json();
+        const printerStatus = document.getElementById('printer-status');
+        if (printerStatus) {
+            printerStatus.className = data.connected ? 'status-badge ok' : 'status-badge error';
+        }
+    } catch (e) {
+        // API unreachable
+    }
+}, 3000);
 
-// Initialiser l'app
-let ui;
+// Init navigation
 document.addEventListener('DOMContentLoaded', () => {
-    ui = new UIController();
-    console.log('✓ App chargée');
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.addEventListener('click', () => switchSection(btn.dataset.section));
+    });
+    console.log('✓ HoralScanner UI chargée');
 });

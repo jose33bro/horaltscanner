@@ -674,7 +674,7 @@
                                 <h2>⚡ Actions</h2>
                                 <div class="btn-group" style="flex-direction:column;">
                                     <button class="btn btn-primary btn-block" onclick="previewGcode()">👁️ Aperçu</button>
-                                    <button class="btn btn-success btn-block" onclick="sendToprinter()" id="send-btn" disabled>📤 Envoyer à l'Imprimante</button>
+                                    <button class="btn btn-success btn-block" onclick="sendToPrinter()" id="send-btn" disabled>📤 Envoyer à l'Imprimante</button>
                                     <button class="btn btn-secondary btn-block" onclick="clearGcode()">🗑️ Effacer</button>
                                 </div>
                                 <div id="print-progress" style="display:none; margin-top:15px;">
@@ -752,7 +752,7 @@
     </div>
     
     <script>
-        const API = 'http://192.168.1.39:5000';
+        const API = '';
         let currentGcode = null;
         
         // Navigation
@@ -809,7 +809,7 @@
             document.getElementById('send-btn').disabled = false;
             
             // Simuler le calcul du temps
-            document.getElementById('gcode-time').textContent = '2h 30min';
+            document.getElementById('gcode-time').textContent = 'N/A';
             document.getElementById('gcode-lines').textContent = Math.floor(file.size / 20);
             
             showAlert('📁 Fichier sélectionné: ' + file.name, 'success');
@@ -823,7 +823,7 @@
             showAlert('👁️ Aperçu du G-code (fonctionnalité en développement)', 'info');
         }
         
-        async function sendToprinter() {
+        async function sendToPrinter() {
             if (!currentGcode) {
                 showAlert('Sélectionnez un fichier', 'error');
                 return;

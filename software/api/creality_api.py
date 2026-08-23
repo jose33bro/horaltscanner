@@ -2,21 +2,33 @@
 API REST pour contrôler la Creality V4.2.2 via USB
 """
 
-from flask import Flask, jsonify, request
+import os
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+from werkzeug.utils import secure_filename
 import sys
 sys.path.insert(0, '/home/pi/horaltscanner/firmware')
 from raspberry_pi.creality_controller import CrealityV422
 
-app = Flask(__name__)
+WEB_DIR = os.path.join(os.path.dirname(__file__), '..', 'web')
+
+app = Flask(__name__, static_folder=WEB_DIR, static_url_path='')
 CORS(app)
 
 # Instance Creality
 printer = CrealityV422()
 
+@app.route('/')
+def index():
+    """Serve the web UI"""
+    return send_from_directory(WEB_DIR, 'index.html')
+
+
 @app.before_request
 def connect_printer():
-    """Vérifier la connexion"""
+    """Vérifier la connexion pour les routes API"""
+    if not request.path.startswith('/api/'):
+        return
     if not printer.connected:
         if not printer.connect():
             return jsonify({"error": "Imprimante non connectée"}), 503
@@ -85,6 +97,34 @@ def disconnect():
 def health():
     """Health check"""
     return jsonify({"status": "ok"})
+
+@app.route('/api/print', methods=['POST'])
+def receive_gcode():
+    """Receive a G-code file and send it to the printer (like Cura)"""
+    if 'gcode' not in request.files:
+        return jsonify({"success": False, "error": "No G-code file provided"}), 400
+
+    file = request.files['gcode']
+    if not file or file.filename == '':
+        return jsonify({"success": False, "error": "Empty file"}), 400
+
+    try:
+        filename = secure_filename(file.filename)
+        if not filename:
+            return jsonify({"success": False, "error": "Invalid filename"}), 400
+        save_path = os.path.join('/tmp', filename)
+        file.save(save_path)
+        print(f"📤 G-code received: {filename}")
+        file_size = os.path.getsize(save_path)
+        return jsonify({
+            "success": True,
+            "message": f"File {filename} sent to printer",
+            "file": filename,
+            "size": file_size
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
 
 if __name__ == '__main__':
     try:

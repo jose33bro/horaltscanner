@@ -126,9 +126,10 @@ def _safe_error(exc: Exception, context: str = "") -> str:
     return f"{context} error" if context else "Internal error"
 
 
-def _legacy_error_response(exc: Exception, *, bad_request: bool = False):
+def _legacy_error_response(exc: Exception, *, bad_request: bool = False, message: str = "Hardware request failed"):
     status = 400 if bad_request else 503
-    return jsonify({"ok": False, "error": str(exc)}), status
+    logger.error("Legacy hardware route error: %s", exc)
+    return jsonify({"ok": False, "error": message}), status
 
 
 def _legacy_turntable_mm_from_degrees(degrees: float) -> float:
@@ -157,9 +158,9 @@ def move_axis(axis: str):
         result = _motor_driver_required().motor_move(axis, mm)
         return jsonify({"ok": True, "legacy": True, **result})
     except ValueError as exc:
-        return _legacy_error_response(exc, bad_request=True)
+        return _legacy_error_response(exc, bad_request=True, message="Invalid axis move request")
     except (RuntimeError, ConnectionError) as exc:
-        return _legacy_error_response(exc)
+        return _legacy_error_response(exc, message="Axis move failed")
 
 
 @app.route("/api/rotate", methods=["POST"])
@@ -171,9 +172,9 @@ def rotate():
         result = _motor_driver_required().motor_move("Y", distance_mm)
         return jsonify({"ok": True, "legacy": True, "degrees": degrees, **result})
     except ValueError as exc:
-        return _legacy_error_response(exc, bad_request=True)
+        return _legacy_error_response(exc, bad_request=True, message="Invalid rotate request")
     except (RuntimeError, ConnectionError) as exc:
-        return _legacy_error_response(exc)
+        return _legacy_error_response(exc, message="Rotation failed")
 
 
 @app.route("/api/home/<target>", methods=["POST"])
@@ -188,7 +189,7 @@ def home(target: str):
             result = _motor_driver_required().motor_home(axis)
         return jsonify({"ok": True, "legacy": True, "result": result})
     except (RuntimeError, ConnectionError) as exc:
-        return _legacy_error_response(exc)
+        return _legacy_error_response(exc, message="Homing failed")
 
 # ---------------------------------------------------------------------------
 # Laser endpoints
@@ -242,9 +243,11 @@ def lidar_move(direction: str):
         result = _motor_driver_required().motor_move("Z", mm)
         return jsonify({"ok": True, **result})
     except ValueError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        logger.warning("Rejected lidar move request: %s", exc)
+        return jsonify({"ok": False, "error": "Invalid lidar move request"}), 400
     except (RuntimeError, ConnectionError) as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 503
+        logger.error("Lidar move failed: %s", exc)
+        return jsonify({"ok": False, "error": "Lidar move failed"}), 503
 
 # ---------------------------------------------------------------------------
 # Camera endpoints

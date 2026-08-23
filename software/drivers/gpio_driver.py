@@ -4,7 +4,7 @@ Controls lasers, LED RGB, and fan via GPIO pins
 
 import logging
 from typing import Dict, Any, Optional
-from gpiozero import OutputDevice, BOARD
+from gpiozero import OutputDevice, PWMLED
 import threading
 
 logger = logging.getLogger(__name__)
@@ -39,29 +39,30 @@ class GPIODriver:
             True if all pins initialized successfully
         """
         try:
-            # Initialize laser pins
+            # Initialize laser pins (simple digital output)
             self.devices["laser_left"] = OutputDevice(
-                self.GPIO_CONFIG["laser_left"], initial=False
+                self.GPIO_CONFIG["laser_left"]
             )
+            self.devices["laser_left"].off()
+            
             self.devices["laser_right"] = OutputDevice(
-                self.GPIO_CONFIG["laser_right"], initial=False
+                self.GPIO_CONFIG["laser_right"]
             )
+            self.devices["laser_right"].off()
 
             # Initialize LED RGB pins (PWM capable)
-            self.devices["led_red"] = OutputDevice(
-                self.GPIO_CONFIG["led_red"], initial=False
-            )
-            self.devices["led_green"] = OutputDevice(
-                self.GPIO_CONFIG["led_green"], initial=False
-            )
-            self.devices["led_blue"] = OutputDevice(
-                self.GPIO_CONFIG["led_blue"], initial=False
-            )
+            self.devices["led_red"] = PWMLED(self.GPIO_CONFIG["led_red"])
+            self.devices["led_red"].off()
+            
+            self.devices["led_green"] = PWMLED(self.GPIO_CONFIG["led_green"])
+            self.devices["led_green"].off()
+            
+            self.devices["led_blue"] = PWMLED(self.GPIO_CONFIG["led_blue"])
+            self.devices["led_blue"].off()
 
-            # Initialize fan pin
-            self.devices["pi_fan"] = OutputDevice(
-                self.GPIO_CONFIG["pi_fan"], initial=False
-            )
+            # Initialize fan pin (PWM capable)
+            self.devices["pi_fan"] = PWMLED(self.GPIO_CONFIG["pi_fan"])
+            self.devices["pi_fan"].off()
 
             self.connected = True
             logger.info("✓ GPIO driver initialized successfully")

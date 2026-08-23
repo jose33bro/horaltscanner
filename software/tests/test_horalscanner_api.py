@@ -186,6 +186,44 @@ class HoralScannerAPITests(unittest.TestCase):
         response = self.client.get("/api/temperature/all")
         self.assertEqual(response.status_code, 502)
 
+    def test_api_status_returns_health(self):
+        response = self.client.get("/api/status")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["status"]["api"], "ok")
+        self.assertTrue(data["status"]["gpio_driver"])
+        self.assertTrue(data["status"]["stm32_driver"])
+        self.assertIn("version", data["status"])
+
+    def test_laser_status_route(self):
+        self.fake_gpio.laser_status = {"left": True, "right": False}
+        response = self.client.get("/api/laser/status")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["status"], {"left": True, "right": False})
+
+    def test_led_status_route(self):
+        self.fake_gpio.led_status = {"r": 10, "g": 20, "b": 30}
+        response = self.client.get("/api/led/status")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["status"], {"r": 10, "g": 20, "b": 30})
+
+    def test_cors_headers_present(self):
+        response = self.client.get("/api/status")
+        self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), "*")
+
+    def test_api_status_no_gpio_driver(self):
+        self.api_module.gpio_driver = None
+        response = self.client.get("/api/status")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()["status"]["gpio_driver"])
+
+    def test_api_status_no_stm32_driver(self):
+        self.api_module.stm32_driver = None
+        response = self.client.get("/api/status")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()["status"]["stm32_driver"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,13 +2,32 @@
 
 Projet de scanner 3D modulaire Raspberry Pi + Creality V4.2.2 avec firmware USB personnalisé (sans Marlin/Klipper).
 
+## Web Dashboard
+
+Une interface de commande est accessible depuis un navigateur après démarrage du service :
+
+```
+http://<ip-raspberry-pi>:5000
+```
+
+Contrôles disponibles :
+- 🔴 Lasers gauche / droit (toggle)
+- 🟡 LED RGB (sliders + presets)
+- ⚙️ Moteurs X/Y/Z (déplacement mm, homing, stop)
+- 💨 Ventilateurs Pi / Creality / Température (%)
+- 🌡️ Température carte en temps réel
+- 📡 Statut drivers (GPIO, STM32)
+
 ## API Flask (sans Klipper)
 
 L'API principale est `software/api/horalscanner_api.py`.
 
 ### Endpoints disponibles
 
-- `POST /api/laser/<left|right>`: active/désactive les lasers (`{"state": true|false}`)
+- `GET /` → web dashboard (interface de commande)
+- `GET /api/status` → santé de l'API (GPIO, STM32, version)
+- `GET /api/laser/status`: état des lasers
+- `GET /api/led/status`: état de la LED
 - `POST /api/led/color`: couleur RGB (`{"r":0-255,"g":0-255,"b":0-255}`)
 - `POST /api/move/<x|y|z>`: déplacement axe en mm (`{"mm": float}`)
 - `POST /api/home/<x|y|z|all>`: homing d'axe(s)

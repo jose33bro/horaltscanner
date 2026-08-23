@@ -33,3 +33,10 @@ python-dateutil>=2.8.0
 
 # JSON/YAML
 pyyaml>=5.4.0
+
+# Web API
+flask>=2.3.0
+flask-cors>=4.0.0
+
+# HTTP client (Moonraker)
+requests>=2.31.0

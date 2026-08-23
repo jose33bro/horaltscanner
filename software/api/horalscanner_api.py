@@ -1,4 +1,4 @@
-"""Horaltscanner Flask API."""
+"""HoralScanner Flask API."""
 
 from __future__ import annotations
 
@@ -70,9 +70,12 @@ def laser(side: str):
 @app.route("/api/led/color", methods=["POST"])
 def led_color():
     data = request.get_json(silent=True) or {}
-    r = int(data.get("r", 0))
-    g = int(data.get("g", 0))
-    b = int(data.get("b", 0))
+    try:
+        r = int(data.get("r", 0))
+        g = int(data.get("g", 0))
+        b = int(data.get("b", 0))
+    except (TypeError, ValueError):
+        return _json_error("Invalid LED color values", 400)
 
     if gpio_driver is None:
         return _json_error("GPIO driver unavailable", 503)
@@ -90,7 +93,10 @@ def led_color():
 @app.route("/api/move/<axis>", methods=["POST"])
 def move(axis: str):
     data = request.get_json(silent=True) or {}
-    distance = float(data.get("mm", 0.0))
+    try:
+        distance = float(data.get("mm", 0.0))
+    except (TypeError, ValueError):
+        return _json_error("Invalid distance value", 400)
 
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)

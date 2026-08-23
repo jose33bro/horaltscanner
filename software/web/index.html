@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HoralScanner PRO</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- ===================================================================
+       Header
+  ==================================================================== -->
+  <header class="app-header">
+    <div class="header-brand">
+      <span class="logo">🔍</span>
+      <span class="brand-name">HoralScanner <strong>PRO</strong></span>
+    </div>
+    <div class="header-status">
+      <span id="status-dot" class="status-dot offline"></span>
+      <span id="status-text">Connecting…</span>
+    </div>
+  </header>
+
+  <!-- ===================================================================
+       Tab navigation
+  ==================================================================== -->
+  <nav class="tab-nav">
+    <button class="tab-btn active" data-tab="scanner">🔍 Scanner</button>
+    <button class="tab-btn"        data-tab="viewer">🧊 3D Viewer</button>
+    <button class="tab-btn"        data-tab="slicer">✂️ Slicer</button>
+    <button class="tab-btn"        data-tab="queue">📋 Queue</button>
+    <button class="tab-btn"        data-tab="settings">⚙️ Settings</button>
+    <button class="tab-btn"        data-tab="maintenance">🛠️ Maintenance</button>
+  </nav>
+
+  <!-- ===================================================================
+       TAB: Scanner
+  ==================================================================== -->
+  <div id="tab-scanner" class="tab-content active">
+    <div class="panel-grid two-col">
+
+      <!-- Camera feed -->
+      <div class="panel">
+        <h2>📹 Flux Caméra (Logitech)</h2>
+        <div class="camera-container">
+          <img id="camera-feed" src="/api/camera/stream" alt="Camera stream"
+               onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22480%22><rect fill=%22%23333%22 width=%22640%22 height=%22480%22/><text fill=%22%23aaa%22 x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22 font-size=%2224%22>Camera offline</text></svg>'" />
+        </div>
+        <div class="btn-row">
+          <button class="btn-secondary" onclick="App.captureFrame('logi')">📷 Capture Logitech</button>
+          <button class="btn-secondary" onclick="App.captureFrame('picam')">📷 Capture PiCam</button>
+        </div>
+      </div>
+
+      <!-- Scan controls -->
+      <div class="panel">
+        <h2>🎯 Contrôle Scan</h2>
+        <div class="form-group">
+          <label>Résolution</label>
+          <select id="scan-resolution">
+            <option value="1920x1080">1920×1080 Full HD</option>
+            <option value="1280x720">1280×720 HD</option>
+            <option value="640x480">640×480 SD</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Mode Scan</label>
+          <select id="scan-mode">
+            <option value="full">Complet (360°)</option>
+            <option value="preview">Aperçu rapide</option>
+            <option value="manual">Manuel</option>
+          </select>
+        </div>
+        <div class="btn-row">
+          <button id="btn-scan-start" class="btn-primary" onclick="App.startScan()">▶️ Démarrer</button>
+          <button id="btn-scan-stop"  class="btn-danger"  onclick="App.stopScan()" disabled>⏹️ Arrêter</button>
+        </div>
+
+        <!-- Stats -->
+        <table class="stats-table">
+          <thead><tr><th>Paramètre</th><th>Valeur</th></tr></thead>
+          <tbody>
+            <tr><td>Points capturés</td><td id="stat-points">0</td></tr>
+            <tr><td>Temps écoulé</td>   <td id="stat-time">00:00</td></tr>
+            <tr><td>Qualité</td>        <td id="stat-quality">--</td></tr>
+          </tbody>
+        </table>
+
+        <!-- Reconstruction -->
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn-secondary" onclick="App.reconstruct()">🧱 Reconstruire 3D</button>
+          <button class="btn-secondary" onclick="App.exportModel('stl')">💾 Export STL</button>
+          <button class="btn-secondary" onclick="App.exportModel('amf')">💾 Export AMF</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Movement controls -->
+    <div class="panel">
+      <h2>🕹️ Contrôle Mouvement</h2>
+      <div class="axis-controls">
+        <div class="axis-group">
+          <label>X (mm)</label>
+          <input type="number" id="move-x-mm" value="10" step="1">
+          <button onclick="App.moveAxis('x')">→</button>
+        </div>
+        <div class="axis-group">
+          <label>Y (mm)</label>
+          <input type="number" id="move-y-mm" value="10" step="1">
+          <button onclick="App.moveAxis('y')">→</button>
+        </div>
+        <div class="axis-group">
+          <label>Z (mm)</label>
+          <input type="number" id="move-z-mm" value="5" step="1">
+          <button onclick="App.moveAxis('z')">→</button>
+        </div>
+        <div class="axis-group">
+          <label>Rotation (°)</label>
+          <input type="number" id="rotate-deg" value="10" step="1">
+          <button onclick="App.rotate()">↻</button>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn-secondary" onclick="App.home('all')">🏠 Home All</button>
+        <button class="btn-secondary" onclick="App.home('x')">Home X</button>
+        <button class="btn-secondary" onclick="App.home('y')">Home Y</button>
+        <button class="btn-secondary" onclick="App.home('z')">Home Z</button>
+      </div>
+    </div>
+
+    <!-- Laser & LED -->
+    <div class="panel-grid two-col">
+      <div class="panel">
+        <h2>🔴 Lasers</h2>
+        <div class="btn-row">
+          <button onclick="App.laser('left', true)"  class="btn-danger">🔴 Left ON</button>
+          <button onclick="App.laser('left', false)" class="btn-secondary">Left OFF</button>
+          <button onclick="App.laser('right', true)" class="btn-danger">🔴 Right ON</button>
+          <button onclick="App.laser('right',false)" class="btn-secondary">Right OFF</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>💡 LED RGB</h2>
+        <div class="form-group inline">
+          <label>R <input type="range" id="led-r" min="0" max="255" value="0" oninput="App.setLED()"></label>
+          <label>G <input type="range" id="led-g" min="0" max="255" value="0" oninput="App.setLED()"></label>
+          <label>B <input type="range" id="led-b" min="0" max="255" value="0" oninput="App.setLED()"></label>
+        </div>
+        <div id="led-preview" class="led-preview"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================
+       TAB: 3D Viewer
+  ==================================================================== -->
+  <div id="tab-viewer" class="tab-content">
+    <div class="panel">
+      <h2>🧊 Visualisation 3D</h2>
+      <div class="viewer-toolbar">
+        <button onclick="Viewer3D.setMode('points')">Points</button>
+        <button onclick="Viewer3D.setMode('wireframe')">Wireframe</button>
+        <button onclick="Viewer3D.setMode('solid')">Solid</button>
+        <button onclick="Viewer3D.startPolling()">🔄 Auto-refresh</button>
+        <button onclick="Viewer3D.stopPolling()">⏸ Pause</button>
+        <button onclick="Viewer3D.downloadModel('stl')" class="btn-primary">💾 STL</button>
+        <button onclick="Viewer3D.downloadModel('amf')" class="btn-primary">💾 AMF</button>
+      </div>
+      <div id="viewer3d-container" class="viewer3d-container"></div>
+    </div>
+  </div>
+
+  <!-- ===================================================================
+       TAB: Slicer
+  ==================================================================== -->
+  <div id="tab-slicer" class="tab-content">
+    <div class="panel">
+      <h2>✂️ PrusaSlicer</h2>
+      <div class="panel-grid two-col">
+        <div>
+          <div class="form-group">
+            <label>Layer Height (mm)</label>
+            <input type="number" id="slicer-layer-height" value="0.2" step="0.05" min="0.05" max="0.5">
+          </div>
+          <div class="form-group">
+            <label>Infill (%)</label>
+            <input type="number" id="slicer-infill" value="20" step="5" min="0" max="100">
+          </div>
+          <div class="form-group">
+            <label>Nozzle Temp (°C)</label>
+            <input type="number" id="slicer-nozzle-temp" value="200" step="5" min="150" max="300">
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="slicer-support"> Support material</label>
+          </div>
+        </div>
+        <div>
+          <p class="hint">Uses the current reconstructed model from the Scanner tab.</p>
+          <div class="btn-row stacked">
+            <button id="btn-slice" class="btn-primary">✂️ Slice Model</button>
+            <button id="btn-download-gcode" class="btn-secondary" disabled>💾 Download G-code</button>
+            <button id="btn-add-queue" class="btn-secondary" disabled>📋 Add to Queue</button>
+          </div>
+          <p id="slicer-status" class="status-msg"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================
+       TAB: Queue
+  ==================================================================== -->
+  <div id="tab-queue" class="tab-content">
+    <div class="panel">
+      <h2>📋 Print Queue</h2>
+      <div class="btn-row">
+        <button id="btn-queue-refresh" class="btn-secondary">🔄 Refresh</button>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Name</th><th>Added</th><th>Status</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="queue-tbody">
+          <tr><td colspan="4" class="empty-row">Queue is empty</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ===================================================================
+       TAB: Settings
+  ==================================================================== -->
+  <div id="tab-settings" class="tab-content">
+    <div class="panel">
+      <h2>⚙️ Configuration</h2>
+      <div class="panel-grid two-col">
+        <!-- Moonraker -->
+        <div class="settings-section">
+          <h3>🔗 GrandVoile (Moonraker)</h3>
+          <div class="form-group">
+            <label>Moonraker URL</label>
+            <input type="url" id="settings-moonraker-url" placeholder="http://192.168.1.40:7125">
+          </div>
+          <div class="form-group">
+            <label>API Key</label>
+            <input type="password" id="settings-moonraker-key" placeholder="(leave blank if not set)">
+          </div>
+          <button id="btn-moonraker-test" class="btn-secondary">🔌 Test Connection</button>
+        </div>
+        <!-- Slicer defaults -->
+        <div class="settings-section">
+          <h3>✂️ Slicer Defaults</h3>
+          <div class="form-group">
+            <label>Layer Height (mm)</label>
+            <input type="number" id="settings-layer-height" value="0.2" step="0.05">
+          </div>
+          <div class="form-group">
+            <label>Infill (%)</label>
+            <input type="number" id="settings-infill" value="20">
+          </div>
+          <div class="form-group">
+            <label>Nozzle Temp (°C)</label>
+            <input type="number" id="settings-nozzle-temp" value="200">
+          </div>
+        </div>
+        <!-- Scanner -->
+        <div class="settings-section">
+          <h3>🔍 Scanner</h3>
+          <div class="form-group">
+            <label>Resolution</label>
+            <select id="settings-resolution">
+              <option>1920x1080</option>
+              <option>1280x720</option>
+              <option>640x480</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Laser Power (%)</label>
+            <input type="number" id="settings-laser-power" value="100" min="0" max="100">
+          </div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button id="btn-settings-save" class="btn-primary">💾 Save Settings</button>
+      </div>
+      <p id="settings-status" class="status-msg"></p>
+    </div>
+  </div>
+
+  <!-- ===================================================================
+       TAB: Maintenance
+  ==================================================================== -->
+  <div id="tab-maintenance" class="tab-content">
+    <div class="panel">
+      <h2>🛠️ System Dashboard</h2>
+      <div class="panel-grid two-col">
+        <div class="settings-section">
+          <h3>📊 Status</h3>
+          <table class="stats-table">
+            <tr><td>Temperature</td><td id="maint-temp">–</td></tr>
+            <tr><td>Disk</td>       <td id="maint-disk-free">–</td></tr>
+            <tr><td>Scan</td>       <td id="maint-scan-status">–</td></tr>
+          </table>
+        </div>
+        <div class="settings-section">
+          <h3>🔌 Hardware</h3>
+          <table class="stats-table">
+            <tr><td>LIDAR</td>    <td id="maint-lidar">–</td></tr>
+            <tr><td>Logitech</td> <td id="maint-logitech">–</td></tr>
+            <tr><td>PiCam</td>    <td id="maint-picam">–</td></tr>
+            <tr><td>Slicer</td>   <td id="maint-slicer">–</td></tr>
+            <tr><td>GPIO</td>     <td id="maint-gpio">–</td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button id="btn-system-update" class="btn-secondary">⬆️ Update (git pull)</button>
+      </div>
+      <pre id="maint-update-log" class="update-log"></pre>
+    </div>
+  </div>
+
+  <!-- ===================================================================
+       Scripts (Three.js loaded from CDN with fallback)
+  ==================================================================== -->
+  <script>
+    // Try to load Three.js from CDN; if blocked, Viewer3D will show an error.
+    (function() {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js';
+      s.onload = function() {
+        // Load STLLoader and OrbitControls after Three.js is ready
+        var s2 = document.createElement('script');
+        s2.src = 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/STLLoader.js';
+        document.head.appendChild(s2);
+        var s3 = document.createElement('script');
+        s3.src = 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js';
+        document.head.appendChild(s3);
+      };
+      document.head.appendChild(s);
+    })();
+  </script>
+  <script src="components/viewer3d.js"></script>
+  <script src="components/slicer.js"></script>
+  <script src="components/queue.js"></script>
+  <script src="components/settings.js"></script>
+  <script src="components/maintenance.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

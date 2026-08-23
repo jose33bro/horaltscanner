@@ -1,23 +1,20 @@
 # Horaltscanner
 
-Projet de scanner 3D modulaire Raspberry Pi + Creality V4.2.2 avec firmware USB personnalisé (sans Marlin/Klipper).
+Projet de scanner 3D modulaire pour Raspberry Pi 4 + carte mère Creality V4.2.2 avec firmware USB personnalisé (sans Marlin/Klipper).
 
-## Structure actuelle
+## Objectif
+- Piloter les moteurs X/Y/Z via un protocole USB binaire dédié
+- Contrôler 2 lasers et l'éclairage RGB via GPIO du Raspberry Pi
+- Intégrer les capteurs: lidar TF-Luna, caméra USB Logitech, caméra Pi V3 (DSI)
+- Exposer une API REST et une interface web pour l'orchestration du scanner
 
-```
-firmware/
-├── creality_v422/
-│   └── usb_firmware.c         # Firmware STM32F103 + protocole USB
-├── raspberry_pi/
-│   ├── usb_driver.py          # Driver protocole USB
-│   ├── motor_control.py       # Orchestration axes X/Y/Z
-│   ├── gpio_laser_control.py  # Contrôle des 2 lasers GPIO
-│   └── scanner_app.py         # Orchestration scan + capture
-hardware/
-└── wiring_diagram.md
-software/
-└── tests/                     # Tests unitaires Python
-```
+## Structure du dépôt
+- `firmware/` : firmware STM32 et pilotes Raspberry Pi bas niveau
+- `software/api/` : API Flask et intégration applicative
+- `software/drivers/` : couche de contrôle matériel STM32/GPIO
+- `software/web/` : interface web HoralScanner PRO
+- `software/tests/` : tests unitaires Python
+- `hardware/` et `docs/` : documentation matérielle et technique
 
 ## Tests
 

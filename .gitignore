@@ -3,3 +3,5 @@ __pycache__/
 
 # Local virtualenv
 horalscanner_env/
+__pycache__/
+.pytest_cache/

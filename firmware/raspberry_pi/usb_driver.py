@@ -14,11 +14,18 @@ CMD_HOME_Z = 0x12
 CMD_SET_SPEED = 0x20
 CMD_GET_STATUS = 0x30
 CMD_STOP = 0x40
+CMD_GET_TEMP = 0x50
+CMD_FAN_ON = 0x51
+CMD_FAN_OFF = 0x52
+CMD_SET_FAN_THRESHOLD = 0x53
 
 STATUS_OK = 0x00
+ERR_THERMAL_SHUTDOWN = 0x20
 
+# Response format extended with temperature_cdeg (int16, signed)
+# < B B i i i B h B
 PACKET_FORMAT = "<BBiiB"
-RESPONSE_FORMAT = "<BBiiiBB"
+RESPONSE_FORMAT = "<BBiiiBhB"
 
 
 class USBProtocolError(RuntimeError):
@@ -38,6 +45,7 @@ class ScannerStatus:
     pos_y: int
     pos_z: int
     endstop_mask: int
+    temperature_celsius: float = 0.0
 
 
 class PyUSBTransport:
@@ -83,12 +91,20 @@ class USBScannerDriver:
         if len(response) != struct.calcsize(RESPONSE_FORMAT):
             raise USBProtocolError(f"Bad response size: {len(response)}")
 
-        status, error, pos_x, pos_y, pos_z, endstop_mask, checksum = struct.unpack(RESPONSE_FORMAT, response)
+        status, error, pos_x, pos_y, pos_z, endstop_mask, temperature_cdeg, checksum = struct.unpack(RESPONSE_FORMAT, response)
         expected = self.checksum(response[:-1])
         if checksum != expected:
             raise USBProtocolError("Bad response checksum")
 
-        return ScannerStatus(status=status, error=error, pos_x=pos_x, pos_y=pos_y, pos_z=pos_z, endstop_mask=endstop_mask)
+        return ScannerStatus(
+            status=status,
+            error=error,
+            pos_x=pos_x,
+            pos_y=pos_y,
+            pos_z=pos_z,
+            endstop_mask=endstop_mask,
+            temperature_celsius=temperature_cdeg / 100.0,
+        )
 
     def _exchange(self, command: int, axis: int = 0, value: int = 0, speed: int = 0) -> ScannerStatus:
         packet = self._build_packet(command, axis=axis, value=value, speed=speed)
@@ -138,3 +154,29 @@ class USBScannerDriver:
 
     def stop(self) -> ScannerStatus:
         return self._exchange(CMD_STOP)
+
+    def get_temperature(self) -> float:
+        """Read the current MCU board temperature in °C."""
+        return self._exchange(CMD_GET_TEMP).temperature_celsius
+
+    def fan_on(self) -> ScannerStatus:
+        """Force the fan relay ON."""
+        return self._exchange(CMD_FAN_ON)
+
+    def fan_off(self) -> ScannerStatus:
+        """Force the fan relay OFF."""
+        return self._exchange(CMD_FAN_OFF)
+
+    def set_fan_threshold(self, on_celsius: float, off_celsius: float) -> ScannerStatus:
+        """Configure automatic fan thresholds (on_celsius > off_celsius).
+
+        Both values are transmitted as centi-degrees packed into the value/speed
+        fields of the USB packet.
+        """
+        if on_celsius <= off_celsius:
+            raise ValueError("on_celsius must be greater than off_celsius")
+        return self._exchange(
+            CMD_SET_FAN_THRESHOLD,
+            value=int(on_celsius * 100),
+            speed=int(off_celsius * 100),
+        )

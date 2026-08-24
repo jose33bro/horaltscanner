@@ -16,6 +16,7 @@ INSTALL_DIR="/home/pi/horaltscanner"
 VENV_DIR="/home/pi/horaltscanner_env"
 REPO_URL="https://github.com/jose33bro/horaltscanner.git"
 BACKUP_DIR="/home/pi/backups"
+IMAGE_BUILD_MODE="${HORALSCANNER_IMAGE_BUILD:-0}"
 
 # Functions
 log_info() {
@@ -32,6 +33,10 @@ log_warn() {
 
 log_error() {
     echo -e "${RED}✗ ${1}${NC}"
+}
+
+is_image_build() {
+    [ "$IMAGE_BUILD_MODE" = "1" ]
 }
 
 # Step 0: Pre-flight checks
@@ -55,6 +60,20 @@ preflight_check() {
     fi
     
     log_success "Preflight checks passed"
+}
+
+# Step 0.1: Ensure default Raspberry Pi user exists
+ensure_pi_user() {
+    if id -u pi >/dev/null 2>&1; then
+        return
+    fi
+
+    log_warn "User pi not found. Creating default image user..."
+    useradd -m -s /bin/bash pi
+    echo "pi:raspberry" | chpasswd
+    chage -d 0 pi || true
+    usermod -aG sudo pi || true
+    log_success "User pi created"
 }
 
 # Step 1: Update system
@@ -126,6 +145,16 @@ configure_gpio() {
 # Step 4: Clone repository
 clone_repo() {
     log_info "Cloning HoralScanner repository..."
+
+    if [ -n "${HORALSCANNER_SOURCE_DIR:-}" ] && [ -d "${HORALSCANNER_SOURCE_DIR}" ]; then
+        rm -rf "$INSTALL_DIR"
+        mkdir -p "$(dirname "$INSTALL_DIR")"
+        cp -a "${HORALSCANNER_SOURCE_DIR}" "$INSTALL_DIR"
+        rm -rf "$INSTALL_DIR/.git"
+        cd "$INSTALL_DIR"
+        log_success "Repository copied from local source"
+        return
+    fi
     
     if [ -d "$INSTALL_DIR" ]; then
         log_warn "Directory $INSTALL_DIR already exists. Updating..."
@@ -203,8 +232,13 @@ SyslogIdentifier=horalscanner
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload
-    systemctl enable horalscanner
+    if is_image_build; then
+        mkdir -p /etc/systemd/system/multi-user.target.wants
+        ln -sf /etc/systemd/system/horalscanner.service /etc/systemd/system/multi-user.target.wants/horalscanner.service
+    else
+        systemctl daemon-reload
+        systemctl enable horalscanner
+    fi
     
     log_success "Service installed and enabled"
 }
@@ -247,6 +281,11 @@ test_installation() {
 
 # Step 9: Quick start
 quick_start() {
+    if is_image_build; then
+        log_success "HoralScanner configured in image and ready for first boot"
+        return
+    fi
+
     log_info "Starting HoralScanner service..."
     
     systemctl start horalscanner
@@ -292,6 +331,7 @@ main() {
         --full)
             log_info "Running FULL setup (system + code + service)"
             preflight_check
+            ensure_pi_user
             update_system
             install_system_deps
             configure_gpio
@@ -315,6 +355,7 @@ main() {
         --install)
             log_info "Running INSTALL ONLY (no system updates)"
             preflight_check
+            ensure_pi_user
             install_system_deps
             configure_gpio
             clone_repo

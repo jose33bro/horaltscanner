@@ -9,6 +9,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
 
     steps:
       - name: Checkout
@@ -25,4 +27,4 @@ jobs:
           pip install pytest pytest-cov flask flask-cors requests numpy scipy pyyaml python-dateutil pyserial pillow
 
       - name: Run tests
-        run: pytest -q
+        run: python -m pytest -q software/tests

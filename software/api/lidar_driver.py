@@ -16,7 +16,7 @@ TFLUNA_HEADER = b"\x59\x59"
 class LidarDriver:
     """Driver for TF-Luna LIDAR over serial (USB-TTL)."""
 
-    def __init__(self, port: str = "/dev/ttyUSB0", baud: int = TFLUNA_BAUD):
+    def __init__(self, port: str = "/dev/tfluna_usb_a1", baud: int = TFLUNA_BAUD):
         self.port = port
         self.baud = baud
         self._ser = None

@@ -10,9 +10,8 @@ on:
         description: Optional release display name
         required: false
       base_image_url:
-        description: Raspberry Pi OS Bookworm 64-bit Lite image URL
+        description: Optional Raspberry Pi OS Bookworm 64-bit Lite image URL override
         required: false
-        default: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2024-03-15/2024-03-15-raspios-bookworm-arm64-lite.img.xz
 
 permissions:
   contents: write
@@ -24,7 +23,6 @@ jobs:
     env:
       BUILD_DIR: ${{ github.workspace }}/dist/os-image
       IMAGE_NAME: horalscanner-bookworm-arm64-lite
-      RPI_OS_URL: ${{ inputs.base_image_url }}
       ROOT_MOUNT: /mnt/horalscanner-root
 
     steps:
@@ -56,6 +54,30 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y qemu-user-static rsync xz-utils dosfstools e2fsprogs parted kpartx
+
+      - name: Resolve Raspberry Pi OS image URL
+        env:
+          INPUT_BASE_IMAGE_URL: ${{ inputs.base_image_url }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_BASE_IMAGE_URL" ]; then
+            RESOLVED_RPI_OS_URL="$INPUT_BASE_IMAGE_URL"
+          else
+            IMAGE_INDEX_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/"
+            IMAGE_PATH=$(curl -fsSL "$IMAGE_INDEX_URL" \
+              | grep -oE 'href="[^"]*raspios-bookworm-arm64-lite\.img\.xz"' \
+              | sed 's/^href="//; s/"$//' \
+              | sort -V \
+              | tail -n 1)
+            test -n "$IMAGE_PATH"
+            RESOLVED_RPI_OS_URL="${IMAGE_INDEX_URL}${IMAGE_PATH}"
+          fi
+
+          {
+            echo "RPI_OS_URL<<EOF"
+            printf '%s\n' "$RESOLVED_RPI_OS_URL"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
 
       - name: Download Raspberry Pi OS Bookworm 64-bit Lite
         run: |

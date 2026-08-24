@@ -19,7 +19,7 @@ permissions:
 jobs:
   build-os-image:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 360
     env:
       BUILD_DIR: ${{ github.workspace }}/dist/os-image
       IMAGE_NAME: horalscanner-bookworm-arm64-lite
@@ -64,12 +64,22 @@ jobs:
             RESOLVED_RPI_OS_URL="$INPUT_BASE_IMAGE_URL"
           else
             IMAGE_INDEX_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/"
-            IMAGE_PATH=$(curl -fsSL "$IMAGE_INDEX_URL" \
+            IMAGE_DIR=$(curl -fsSL "$IMAGE_INDEX_URL" \
+              | grep -oE 'href="raspios_lite_arm64-[0-9-]+/?\"' \
+              | sed 's/^href="//; s/"$//' \
+              | tr -d '/' \
+              | sort -V \
+              | tail -n 1)
+            test -n "$IMAGE_DIR"
+
+            IMAGE_DIR_URL="${IMAGE_INDEX_URL}${IMAGE_DIR}/"
+            IMAGE_PATH=$(curl -fsSL "$IMAGE_DIR_URL" \
               | grep -oE 'href="[^"]*bookworm[^"]*arm64-lite[^"]*\.img\.xz"' \
               | sed 's/^href="//; s/"$//' \
               | sort -V \
               | tail -n 1)
             test -n "$IMAGE_PATH"
+
             case "$IMAGE_PATH" in
               http://*|https://*)
                 RESOLVED_RPI_OS_URL="$IMAGE_PATH"
@@ -78,7 +88,7 @@ jobs:
                 RESOLVED_RPI_OS_URL="https://downloads.raspberrypi.com${IMAGE_PATH}"
                 ;;
               *)
-                RESOLVED_RPI_OS_URL="${IMAGE_INDEX_URL}${IMAGE_PATH}"
+                RESOLVED_RPI_OS_URL="${IMAGE_DIR_URL}${IMAGE_PATH}"
                 ;;
             esac
           fi

@@ -1,5 +1,8 @@
 #include <stdbool.h>
 #include <stdint.h>
+#include "src/adc.h"
+#include "src/temperature.h"
+#include "src/fan_control.h"
 
 #define AXIS_X_MIN_STEPS 0
 #define AXIS_X_MAX_STEPS 200000
@@ -14,6 +17,7 @@
 #define ERR_BAD_CHECKSUM 0x10
 #define ERR_BAD_COMMAND 0x11
 #define ERR_OUT_OF_RANGE 0x12
+#define ERR_THERMAL_SHUTDOWN 0x20
 
 typedef enum {
     AXIS_X = 0,
@@ -30,7 +34,11 @@ typedef enum {
     CMD_HOME_Z = 0x12,
     CMD_SET_SPEED = 0x20,
     CMD_GET_STATUS = 0x30,
-    CMD_STOP = 0x40
+    CMD_STOP = 0x40,
+    CMD_GET_TEMP = 0x50,
+    CMD_FAN_ON = 0x51,
+    CMD_FAN_OFF = 0x52,
+    CMD_SET_FAN_THRESHOLD = 0x53
 } command_id_t;
 
 typedef struct __attribute__((packed)) {
@@ -48,6 +56,7 @@ typedef struct __attribute__((packed)) {
     int32_t pos_y;
     int32_t pos_z;
     uint8_t endstop_mask;
+    int16_t temperature_cdeg; /* temperature in centi-degrees Celsius (value / 100 = °C) */
     uint8_t checksum;
 } usb_response_t;
 
@@ -118,6 +127,8 @@ void firmware_init(void) {
     g_axes[AXIS_X] = (axis_state_t){.position_steps = 0, .speed_steps_per_s = 2000, .endstop = true};
     g_axes[AXIS_Y] = (axis_state_t){.position_steps = 0, .speed_steps_per_s = 1500, .endstop = true};
     g_axes[AXIS_Z] = (axis_state_t){.position_steps = 0, .speed_steps_per_s = 1200, .endstop = true};
+    adc_init();
+    fan_control_init(0); /* relay on GPIO PB0 by default */
 }
 
 static uint8_t axis_move(axis_id_t axis, int32_t delta_steps, int32_t speed_steps_per_s) {
@@ -143,6 +154,8 @@ static void fill_response(usb_response_t *response, uint8_t status, uint8_t erro
     response->pos_y = g_axes[AXIS_Y].position_steps;
     response->pos_z = g_axes[AXIS_Z].position_steps;
     response->endstop_mask = get_endstop_mask();
+    float temp_c = temperature_read_celsius();
+    response->temperature_cdeg = (int16_t)(temp_c * 100.0f);
     response->checksum = checksum_xor((const uint8_t *)response, sizeof(usb_response_t) - 1);
 }
 
@@ -150,6 +163,15 @@ void firmware_handle_packet(const usb_packet_t *packet, usb_response_t *response
     const uint8_t expected = checksum_xor((const uint8_t *)packet, sizeof(usb_packet_t) - 1);
     if (packet->checksum != expected) {
         fill_response(response, STATUS_ERROR, ERR_BAD_CHECKSUM);
+        return;
+    }
+
+    /* Emergency thermal safety: stop all motors if temperature exceeds limit. */
+    float current_temp = temperature_read_celsius();
+    fan_control_update(current_temp);
+    if (current_temp >= TEMP_EMERGENCY_STOP) {
+        motor_stepper_stop_all();
+        fill_response(response, STATUS_ERROR, ERR_THERMAL_SHUTDOWN);
         return;
     }
 
@@ -191,6 +213,27 @@ void firmware_handle_packet(const usb_packet_t *packet, usb_response_t *response
         case CMD_STOP:
             motor_stepper_stop_all();
             break;
+        case CMD_GET_TEMP:
+            /* Temperature is always embedded in the response; nothing extra needed. */
+            break;
+        case CMD_FAN_ON:
+            fan_on();
+            break;
+        case CMD_FAN_OFF:
+            fan_off();
+            break;
+        case CMD_SET_FAN_THRESHOLD: {
+            /* value  = on  threshold * 100 (centi-degrees)
+             * speed  = off threshold * 100 (centi-degrees) */
+            float th_on  = (float)packet->value / 100.0f;
+            float th_off = (float)packet->speed / 100.0f;
+            if (th_on <= th_off) {
+                error = ERR_BAD_COMMAND;
+                break;
+            }
+            fan_set_threshold(th_on, th_off);
+            break;
+        }
         default:
             error = ERR_BAD_COMMAND;
             break;

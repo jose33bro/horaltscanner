@@ -70,7 +70,17 @@ jobs:
               | sort -V \
               | tail -n 1)
             test -n "$IMAGE_PATH"
-            RESOLVED_RPI_OS_URL="${IMAGE_INDEX_URL}${IMAGE_PATH}"
+            case "$IMAGE_PATH" in
+              http://*|https://*)
+                RESOLVED_RPI_OS_URL="$IMAGE_PATH"
+                ;;
+              /*)
+                RESOLVED_RPI_OS_URL="https://downloads.raspberrypi.com${IMAGE_PATH}"
+                ;;
+              *)
+                RESOLVED_RPI_OS_URL="${IMAGE_INDEX_URL}${IMAGE_PATH}"
+                ;;
+            esac
           fi
 
           {
@@ -156,21 +166,36 @@ jobs:
       - name: Generate release notes
         run: |
           set -euo pipefail
-          cat > "$BUILD_DIR/release-notes.md" <<EOF
-          ## HoralScanner Raspberry Pi OS image
+          python - <<'PY'
+          import os
+          from pathlib import Path
 
-          - Base image: Raspberry Pi OS Bookworm 64-bit Lite
-          - Source image URL: ${RPI_OS_URL}
-          - Artifact: ${IMAGE_NAME}.img.xz
-          - Checksum: ${IMAGE_NAME}.img.xz.sha256
+          build_dir = Path(os.environ["BUILD_DIR"])
+          image_name = os.environ["IMAGE_NAME"]
+          source_url = os.environ["RPI_OS_URL"]
 
-          ### First boot
-
-          - SSH is enabled.
-          - If the base image did not already contain a \`pi\` user, the build creates one.
-          - The generated \`pi\` account uses the standard \`raspberry\` password and is marked for mandatory password change on first login.
-          - You can override the Raspberry Pi OS source image when manually starting the workflow with the \`base_image_url\` input.
-          EOF
+          (build_dir / "release-notes.md").write_text(
+              "\n".join(
+                  [
+                      "## HoralScanner Raspberry Pi OS image",
+                      "",
+                      "- Base image: Raspberry Pi OS Bookworm 64-bit Lite",
+                      f"- Source image URL: {source_url}",
+                      f"- Artifact: {image_name}.img.xz",
+                      f"- Checksum: {image_name}.img.xz.sha256",
+                      "",
+                      "### First boot",
+                      "",
+                      "- SSH is enabled.",
+                      "- If the base image did not already contain a `pi` user, the build creates one.",
+                      "- The generated `pi` account uses the standard `raspberry` password and is marked for mandatory password change on first login.",
+                      "- You can override the Raspberry Pi OS source image when manually starting the workflow with the `base_image_url` input.",
+                      "",
+                  ]
+              ),
+              encoding="utf-8",
+          )
+          PY
 
       - name: Upload image artifacts
         uses: actions/upload-artifact@v4

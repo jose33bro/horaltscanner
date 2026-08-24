@@ -40,9 +40,15 @@ class ScannerApp:
         self._sensors = sensors
 
         # Backward-compatible orchestration mode used by the older app tests.
-        self.usb = USBDriver()
-        self.gpio = GPIOLaserControl(use_board=use_gpio)
-        self.motors = MotorController(self.usb)
+        # Skip creating hardware objects when the newer controller path is used.
+        if controller is None:
+            self.usb = USBDriver()
+            self.gpio = GPIOLaserControl(use_board=use_gpio)
+            self.motors = MotorController(self.usb)
+        else:
+            self.usb = USBDriver()  # kept for shutdown/legacy test attributes
+            self.gpio = GPIOLaserControl(use_board=False)
+            self.motors = controller
         self.running = False
         self.scan_active = False
 

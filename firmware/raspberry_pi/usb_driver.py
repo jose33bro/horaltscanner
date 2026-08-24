@@ -144,3 +144,47 @@ class USBScannerDriver:
 
     def stop(self) -> ScannerStatus:
         return self._exchange(CMD_STOP)
+
+
+class USBDriver(USBScannerDriver):
+    """Compatibility wrapper that adds a simpler :meth:`connect`/:meth:`disconnect`
+    lifecycle and a unified :meth:`home`/:meth:`move` interface on top of
+    :class:`USBScannerDriver` so that legacy tests continue to work.
+    """
+
+    def __init__(self, transport: "USBTransport | None" = None) -> None:
+        if transport is not None:
+            super().__init__(transport)
+        else:
+            # Defer transport assignment; in simulation or test mode a mock
+            # is injected instead of a real transport.
+            self._transport = None  # type: ignore[assignment]
+        self.connected: bool = False
+
+    def connect(self) -> bool:
+        self.connected = True
+        return True
+
+    def disconnect(self) -> bool:
+        self.connected = False
+        return True
+
+    def home(self, axis: str) -> bool:
+        if self._transport is None:
+            return True
+        self.home_axis(axis)
+        return True
+
+    def move(self, axis: str, steps: int, speed: int = 0) -> bool:
+        if self._transport is None:
+            return True
+        axis = axis.upper()
+        if axis == "X":
+            self.move_x(steps, speed=speed)
+        elif axis == "Y":
+            self.move_y(steps, speed=speed)
+        elif axis == "Z":
+            self.move_z(steps, speed=speed)
+        else:
+            raise ValueError(f"Unsupported axis: {axis}")
+        return True

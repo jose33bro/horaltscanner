@@ -1,0 +1,131 @@
+name: Build HoralScanner OS Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to create or update
+        required: true
+      release_name:
+        description: Optional release display name
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-os-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      BUILD_DIR: ${{ github.workspace }}/dist/os-image
+      IMAGE_NAME: horalscanner-bookworm-arm64-lite
+      RPI_OS_URL: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2024-03-15/2024-03-15-raspios-bookworm-arm64-lite.img.xz
+      ROOT_MOUNT: /mnt/horalscanner-root
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve release metadata
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.release_name }}" ]; then
+            echo "RELEASE_NAME=${{ inputs.release_name }}" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_NAME=${{ inputs.release_tag }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install image build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static rsync xz-utils dosfstools e2fsprogs parted kpartx
+
+      - name: Download Raspberry Pi OS Bookworm 64-bit Lite
+        run: |
+          set -euo pipefail
+          mkdir -p "$BUILD_DIR"
+          curl -L --fail "$RPI_OS_URL" -o "$BUILD_DIR/${IMAGE_NAME}.img.xz"
+
+      - name: Extract base image
+        run: |
+          set -euo pipefail
+          xz -d -k "$BUILD_DIR/${IMAGE_NAME}.img.xz"
+
+      - name: Mount and customize image
+        run: |
+          set -euo pipefail
+
+          IMAGE_PATH="$BUILD_DIR/${IMAGE_NAME}.img"
+          LOOP_DEV=""
+
+          cleanup() {
+            set +e
+            sync
+            sudo umount "$ROOT_MOUNT/run" 2>/dev/null || true
+            sudo umount "$ROOT_MOUNT/dev/pts" 2>/dev/null || true
+            sudo umount "$ROOT_MOUNT/dev" 2>/dev/null || true
+            sudo umount "$ROOT_MOUNT/proc" 2>/dev/null || true
+            sudo umount "$ROOT_MOUNT/sys" 2>/dev/null || true
+            sudo umount "$ROOT_MOUNT/boot/firmware" 2>/dev/null || true
+            sudo umount "$ROOT_MOUNT" 2>/dev/null || true
+            if [ -n "$LOOP_DEV" ]; then
+              sudo losetup -d "$LOOP_DEV" 2>/dev/null || true
+            fi
+          }
+
+          trap cleanup EXIT
+
+          sudo mkdir -p "$ROOT_MOUNT"
+          LOOP_DEV=$(sudo losetup --find --show --partscan "$IMAGE_PATH")
+          sudo mount "${LOOP_DEV}p2" "$ROOT_MOUNT"
+          sudo mount "${LOOP_DEV}p1" "$ROOT_MOUNT/boot/firmware"
+          sudo touch "$ROOT_MOUNT/boot/firmware/ssh"
+          sudo rsync -a --delete --exclude '.git' ./ "$ROOT_MOUNT/tmp/horalscanner-source/"
+          sudo cp /usr/bin/qemu-aarch64-static "$ROOT_MOUNT/usr/bin/"
+          sudo cp /etc/resolv.conf "$ROOT_MOUNT/etc/resolv.conf"
+          sudo mount --bind /dev "$ROOT_MOUNT/dev"
+          sudo mount --bind /dev/pts "$ROOT_MOUNT/dev/pts"
+          sudo mount -t proc proc "$ROOT_MOUNT/proc"
+          sudo mount -t sysfs sys "$ROOT_MOUNT/sys"
+          sudo mount --bind /run "$ROOT_MOUNT/run"
+
+          sudo chroot "$ROOT_MOUNT" /usr/bin/qemu-aarch64-static /bin/bash -lc '
+            set -euo pipefail
+            export HORALSCANNER_IMAGE_BUILD=1
+            export HORALSCANNER_SOURCE_DIR=/tmp/horalscanner-source
+            bash /tmp/horalscanner-source/setup_pi.sh --install
+            rm -f /usr/bin/qemu-aarch64-static
+            rm -rf /tmp/horalscanner-source /var/lib/apt/lists/*
+          '
+
+      - name: Compress image
+        run: |
+          set -euo pipefail
+          xz -T0 -9 -f "$BUILD_DIR/${IMAGE_NAME}.img"
+
+      - name: Generate SHA256 checksum
+        run: |
+          set -euo pipefail
+          cd "$BUILD_DIR"
+          sha256sum "${IMAGE_NAME}.img.xz" > "${IMAGE_NAME}.img.xz.sha256"
+
+      - name: Upload image artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.IMAGE_NAME }}-${{ inputs.release_tag }}
+          path: |
+            ${{ env.BUILD_DIR }}/${{ env.IMAGE_NAME }}.img.xz
+            ${{ env.BUILD_DIR }}/${{ env.IMAGE_NAME }}.img.xz.sha256
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: ${{ env.RELEASE_NAME }}
+          generate_release_notes: true
+          files: |
+            ${{ env.BUILD_DIR }}/${{ env.IMAGE_NAME }}.img.xz
+            ${{ env.BUILD_DIR }}/${{ env.IMAGE_NAME }}.img.xz.sha256

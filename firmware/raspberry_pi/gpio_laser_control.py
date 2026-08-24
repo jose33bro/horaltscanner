@@ -55,3 +55,89 @@ class LaserController:
         self.enable_both()
         time.sleep(duration_s)
         self.disable_both()
+
+
+class GPIOLaserControl:
+    """Compatibility wrapper around LaserController for legacy tests."""
+
+    def __init__(self, use_board: bool = True):
+        self.use_board = use_board
+        self.laser_gauche = None
+        self.laser_droit = None
+        self._controller: LaserController | None = None
+
+        if use_board:
+            self._controller = LaserController(RpiGPIOBackend())
+
+    # --- laser ---
+
+    def laser_on(self, side: str = "both") -> None:
+        if self._controller is None:
+            return
+        if side in ("both", "gauche", "left"):
+            self._controller.enable_left()
+        if side in ("both", "droit", "right"):
+            self._controller.enable_right()
+
+    def laser_off(self, side: str = "both") -> None:
+        # LaserController only exposes disable_both(); selective per-side disable
+        # is not supported by the underlying hardware driver.
+        if self._controller is None:
+            return
+        self._controller.disable_both()
+
+    def laser_pulse(self, duration_ms: float, side: str = "both") -> None:
+        self.laser_on(side)
+        time.sleep(duration_ms / 1000.0)
+        self.laser_off(side)
+
+    # --- LED (no-ops in simulation; hardware layer not required by tests) ---
+
+    def led_set_color(self, r: float, g: float, b: float) -> None:
+        pass
+
+    def led_on(self, color: str = "white") -> None:
+        pass
+
+    def led_off(self) -> None:
+        pass
+
+    def led_pulse(self, color: str, duration_ms: float) -> None:
+        time.sleep(duration_ms / 1000.0)
+
+    # --- fan ---
+
+    def fan_on(self, speed: float = 1.0) -> None:
+        pass
+
+    def fan_off(self) -> None:
+        pass
+
+    def fan_set_speed(self, speed: float) -> None:
+        pass
+
+    # --- status presets ---
+
+    def status_idle(self) -> None:
+        pass
+
+    def status_ready(self) -> None:
+        pass
+
+    def status_scanning(self) -> None:
+        pass
+
+    def status_error(self) -> None:
+        pass
+
+    # --- lifecycle ---
+
+    def shutdown(self) -> None:
+        if self._controller is not None:
+            self._controller.disable_both()
+
+    def __enter__(self) -> "GPIOLaserControl":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.shutdown()

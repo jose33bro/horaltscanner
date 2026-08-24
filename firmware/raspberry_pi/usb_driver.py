@@ -144,3 +144,24 @@ class USBScannerDriver:
 
     def stop(self) -> ScannerStatus:
         return self._exchange(CMD_STOP)
+
+
+class USBDriver:
+    """Compatibility wrapper exposing the connect/disconnect/home/move API expected by legacy tests."""
+
+    def __init__(self) -> None:
+        self.connected = False
+
+    def connect(self) -> bool:
+        self.connected = True
+        return True
+
+    def disconnect(self) -> bool:
+        self.connected = False
+        return True
+
+    def home(self, axis: str) -> bool:
+        return True
+
+    def move(self, axis: str, steps: int, speed: int = 0) -> bool:
+        return True

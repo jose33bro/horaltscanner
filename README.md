@@ -52,19 +52,7 @@ sudo reboot
 
 ---
 
-### Path B: Migrate from Klipper
-```bash
-# If you have existing Klipper installation:
-sudo bash -c "curl -sSL https://raw.githubusercontent.com/jose33bro/horaltscanner/main/remove_klipper_install_horaltscanner.sh | bash"
-
-# Follow prompts to flash STM32 firmware
-# Reboot and verify
-```
-**Time:** 45-60 minutes | **Difficulty:** ⭐⭐ Medium
-
----
-
-### Path C: Manual Setup
+### Path B: Manual Setup
 See [QUICK_START.md](QUICK_START.md) for step-by-step instructions.
 
 ---
@@ -213,8 +201,7 @@ horaltscanner/
 │   └── usb_protocol.md         # USB CDC protocol spec
 │
 ├── setup_pi.sh                 # Complete Pi setup script
-├── remove_klipper_install_horaltscanner.sh  # Klipper → HoralScanner migration
-├── QUICK_START.md              # Installation guide (3 paths)
+├── QUICK_START.md              # Installation guide
 ├── DEPLOYMENT.md               # Production deployment guide
 ├── USAGE.md                    # API reference & examples
 ├── CHANGELOG.md                # Version history
@@ -250,16 +237,6 @@ sudo bash setup_pi.sh --install       # Skip system updates
 sudo bash setup_pi.sh --update        # Update code only
 sudo bash setup_pi.sh --quick-test    # Test imports
 ```
-
-### `remove_klipper_install_horaltscanner.sh` — Klipper Migration
-```bash
-sudo bash remove_klipper_install_horaltscanner.sh
-```
-- Stops Klipper/Moonraker
-- Backs up configuration
-- Removes legacy services
-- Compiles & flashes STM32 firmware
-- Installs HoralScanner
 
 ### `software/scripts/update.sh` — Auto-Update
 ```bash

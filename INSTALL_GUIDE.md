@@ -14,10 +14,9 @@ Complete guide for installing or updating HoralScanner on Raspberry Pi 4.
 1. [Quick Overview](#quick-overview)
 2. [Installation Methods](#installation-methods)
 3. [Method A: Fresh Pi OS Install](#method-a-fresh-pi-os-install)
-4. [Method B: Update Existing Pi with Klipper](#method-b-update-existing-pi-with-klipper)
-5. [Method C: Create Pre-configured OS Image](#method-c-create-pre-configured-os-image)
-6. [Verification & Testing](#verification--testing)
-7. [Troubleshooting](#troubleshooting)
+4. [Method B: Create Pre-configured OS Image](#method-b-create-pre-configured-os-image)
+5. [Verification & Testing](#verification--testing)
+6. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -26,8 +25,7 @@ Complete guide for installing or updating HoralScanner on Raspberry Pi 4.
 | Method | Use Case | Time | Difficulty |
 |--------|----------|------|------------|
 | **A** | Fresh Pi, no OS yet | 30-45 min | ⭐ Easy |
-| **B** | Has Klipper, want to replace | 20-30 min | ⭐⭐ Medium |
-| **C** | Create reusable OS image | 60-90 min | ⭐⭐⭐ Hard |
+| **B** | Create reusable OS image | 60-90 min | ⭐⭐⭐ Hard |
 
 ---
 
@@ -48,22 +46,7 @@ Complete guide for installing or updating HoralScanner on Raspberry Pi 4.
 
 ---
 
-### Method B: Update Existing Pi (Remove Klipper)
-**For:** Pi running Klipper that you want to replace
-
-**Steps:**
-1. SSH into your Pi
-2. Run `update_pi_clean.sh`
-3. Confirm removal of Klipper
-4. Reboot
-5. Access dashboard on port 5000
-
-**Time:** 20-30 minutes
-**File:** `update_pi_clean.sh`
-
----
-
-### Method C: Create Pre-configured OS Image
+### Method B: Create Pre-configured OS Image
 **For:** Building a reusable image to flash multiple Pis or as backup
 
 **Steps:**
@@ -153,69 +136,7 @@ sudo journalctl -u horalscanner -f
 
 ---
 
-## ✅ Method B: Update Existing Pi (Remove Klipper)
-
-### Prerequisites
-- Raspberry Pi 4 with Klipper installed
-- SSH access
-- ~500MB free disk space
-- ~15 minutes
-
-### Step-by-Step
-
-#### 1. SSH into Pi
-
-```bash
-ssh pi@raspberrypi.local
-```
-
-#### 2. Run Clean Update Script
-
-```bash
-# Option A: From GitHub
-sudo bash -c "curl -sSL https://raw.githubusercontent.com/jose33bro/horaltscanner/main/update_pi_clean.sh | bash"
-
-# Option B: From local repo
-cd ~/horaltscanner
-sudo bash ../update_pi_clean.sh
-```
-
-**What it does:**
-- Stops Klipper/Moonraker services
-- Backs up old config to `/home/pi/backups_old_system_*`
-- Removes Klipper, Moonraker, Mainsail, Nginx
-- Updates Raspberry Pi OS
-- Installs HoralScanner
-- Installs systemd service
-- Enables GPIO access
-
-#### 3. Confirm Removal
-
-```
-⚠️  This will COMPLETELY remove Klipper and replace with HoralScanner
-Continue? (yes/no): yes
-```
-
-#### 4. Automatic Reboot (or manual)
-
-Script will ask to reboot. Confirm with `yes`.
-
-#### 5. Verify Installation
-
-```bash
-# Check service
-sudo systemctl status horalscanner
-
-# View logs
-sudo journalctl -u horalscanner -f
-
-# Access dashboard
-# http://<your-pi-ip>:5000
-```
-
----
-
-## ✅ Method C: Create Pre-configured OS Image
+## ✅ Method B: Create Pre-configured OS Image
 
 ### Prerequisites
 - Linux host with 20GB+ free disk space
@@ -535,7 +456,6 @@ sudo systemctl daemon-reload
 | Script | Purpose | Use When | Time |
 |--------|---------|----------|------|
 | `setup_pi.sh` | Fresh install | Starting from clean Raspberry Pi OS | 30-45 min |
-| `update_pi_clean.sh` | Remove Klipper | Migrating from Klipper | 20-30 min |
 | `build_clean_os_image.sh` | Create reusable image | Building for multiple Pis | 60-90 min |
 | `software/scripts/update.sh` | Update code only | Already running, want latest version | 5-10 min |
 

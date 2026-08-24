@@ -66,29 +66,16 @@ update_system() {
     log_success "System updated"
 }
 
-# Step 2: Install system dependencies
+# Step 2: Install system dependencies (Bookworm compatible)
 install_system_deps() {
     log_info "Installing system dependencies..."
     
+    # Core dependencies
     apt-get install -y \
         build-essential \
         python3-dev \
         python3-pip \
         python3-venv \
-        libatlas-base-dev \
-        libjasper-dev \
-        libharfbuzz0b \
-        libwebp6 \
-        libtiff5 \
-        libopenjp2-7 \
-        libjasper1 \
-        libopenblas-dev \
-        liblapack-dev \
-        libxcb1 \
-        libffi-dev \
-        libssl-dev \
-        libopencv-dev \
-        python3-opencv \
         git \
         curl \
         wget \
@@ -96,7 +83,19 @@ install_system_deps() {
         nano \
         htop \
         i2c-tools \
-        usbutils
+        usbutils \
+        libatlas-base-dev \
+        libopenblas-dev \
+        liblapack-dev \
+        libffi-dev \
+        libssl-dev \
+        libxcb1
+    
+    # Try to install optional packages (may not exist on all systems)
+    apt-get install -y libharfbuzz0b || log_warn "libharfbuzz0b not available (optional)"
+    apt-get install -y libopenjp2-7 || log_warn "libopenjp2-7 not available (optional)"
+    apt-get install -y libopencv-core4.5 || log_warn "libopencv-core not available (optional)"
+    apt-get install -y python3-opencv || apt-get install -y python3-cv2 || log_warn "OpenCV Python not available (will install via pip)"
     
     log_success "System dependencies installed"
 }
@@ -107,13 +106,19 @@ configure_gpio() {
     
     # Add pi user to gpio group
     usermod -a -G gpio pi || true
+    usermod -a -G dialout pi || true
     
-    # Enable I2C and SPI
-    sed -i 's/^#dtparam=i2c_arm=on/dtparam=i2c_arm=on/' /boot/firmware/config.txt || true
-    sed -i 's/^#dtparam=spi=on/dtparam=spi=on/' /boot/firmware/config.txt || true
-    
-    # Enable UART for serial communication
-    sed -i 's/^#enable_uart=1/enable_uart=1/' /boot/firmware/config.txt || true
+    # Enable I2C and SPI in boot config
+    if [ -f /boot/firmware/config.txt ]; then
+        sed -i 's/^#dtparam=i2c_arm=on/dtparam=i2c_arm=on/' /boot/firmware/config.txt || true
+        sed -i 's/^#dtparam=spi=on/dtparam=spi=on/' /boot/firmware/config.txt || true
+        sed -i 's/^#enable_uart=1/enable_uart=1/' /boot/firmware/config.txt || true
+        
+        # Ensure dtoverlay is enabled
+        grep -q "dtoverlay=gpio-ir" /boot/firmware/config.txt || echo "dtoverlay=gpio-ir" >> /boot/firmware/config.txt || true
+    else
+        log_warn "Boot config not found at /boot/firmware/config.txt"
+    fi
     
     log_success "GPIO configured"
 }
@@ -123,14 +128,14 @@ clone_repo() {
     log_info "Cloning HoralScanner repository..."
     
     if [ -d "$INSTALL_DIR" ]; then
-        log_warn "Directory $INSTALL_DIR already exists. Skipping clone..."
+        log_warn "Directory $INSTALL_DIR already exists. Updating..."
+        cd "$INSTALL_DIR"
+        git pull origin main || log_warn "Could not pull updates"
     else
         mkdir -p "$(dirname "$INSTALL_DIR")"
         git clone "$REPO_URL" "$INSTALL_DIR"
+        cd "$INSTALL_DIR"
     fi
-    
-    cd "$INSTALL_DIR"
-    git pull origin main
     
     log_success "Repository ready"
 }
@@ -139,6 +144,12 @@ clone_repo() {
 setup_python() {
     log_info "Setting up Python virtual environment..."
     
+    # Remove old venv if exists
+    if [ -d "$VENV_DIR" ]; then
+        log_warn "Removing old venv..."
+        rm -rf "$VENV_DIR"
+    fi
+    
     # Create venv
     python3 -m venv "$VENV_DIR"
     source "$VENV_DIR/bin/activate"
@@ -146,9 +157,14 @@ setup_python() {
     # Upgrade pip
     pip install --upgrade pip setuptools wheel
     
-    # Install requirements
+    # Install requirements with fallback
     log_info "Installing Python dependencies (this may take ~15 minutes)..."
-    pip install -r "$INSTALL_DIR/requirements.txt"
+    if [ -f "$INSTALL_DIR/requirements.txt" ]; then
+        pip install -r "$INSTALL_DIR/requirements.txt" || log_warn "Some packages failed to install"
+    else
+        log_warn "requirements.txt not found, installing basic packages..."
+        pip install flask flask-cors pillow numpy requests pyserial
+    fi
     
     deactivate
     
@@ -158,6 +174,12 @@ setup_python() {
 # Step 6: Install systemd service
 install_service() {
     log_info "Installing systemd service..."
+    
+    # Determine API script location
+    API_SCRIPT="$INSTALL_DIR/software/api/horalscanner_api.py"
+    if [ ! -f "$API_SCRIPT" ]; then
+        API_SCRIPT="$INSTALL_DIR/horalscanner_api.py"
+    fi
     
     cat > /etc/systemd/system/horalscanner.service <<EOF
 [Unit]
@@ -170,7 +192,7 @@ Type=simple
 User=pi
 WorkingDirectory=$INSTALL_DIR
 Environment="PATH=$VENV_DIR/bin"
-ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/software/api/horalscanner_api.py
+ExecStart=$VENV_DIR/bin/python3 $API_SCRIPT
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -187,7 +209,7 @@ EOF
     log_success "Service installed and enabled"
 }
 
-# Step 7: Backup and update
+# Step 7: Backup system
 backup_system() {
     log_info "Creating system backup..."
     
@@ -213,10 +235,10 @@ test_installation() {
     source "$VENV_DIR/bin/activate"
     
     # Test imports
-    python3 -c "import flask; print('Flask OK')" || log_warn "Flask import failed"
-    python3 -c "import cv2; print('OpenCV OK')" || log_warn "OpenCV import failed"
-    python3 -c "import gpiozero; print('gpiozero OK')" || log_warn "gpiozero import failed"
-    python3 -c "import serial; print('pyserial OK')" || log_warn "pyserial import failed"
+    python3 -c "import flask; print('✓ Flask')" 2>/dev/null || log_warn "Flask import failed"
+    python3 -c "import cv2; print('✓ OpenCV')" 2>/dev/null || log_warn "OpenCV import failed (optional)"
+    python3 -c "import serial; print('✓ pyserial')" 2>/dev/null || log_warn "pyserial import failed"
+    python3 -c "import PIL; print('✓ Pillow')" 2>/dev/null || log_warn "Pillow import failed"
     
     deactivate
     
@@ -228,14 +250,14 @@ quick_start() {
     log_info "Starting HoralScanner service..."
     
     systemctl start horalscanner
-    sleep 2
+    sleep 3
     
     if systemctl is-active --quiet horalscanner; then
         log_success "HoralScanner is running!"
         echo ""
-        echo -e "${GREEN}═══════════════════════════════════════${NC}"
-        echo -e "${GREEN}HoralScanner Installation Complete!${NC}"
-        echo -e "${GREEN}═══════════════════════════════════════${NC}"
+        echo -e "${GREEN}═══════════════════════════════════════════════════════╗${NC}"
+        echo -e "${GREEN}✓ HoralScanner Installation Complete!${NC}"
+        echo -e "${GREEN}═══════════════════════════════════════════════════════╗${NC}"
         echo ""
         echo -e "📊 Access the dashboard:"
         echo -e "   ${BLUE}http://<your-pi-ip>:5000${NC}"
@@ -247,111 +269,12 @@ quick_start() {
         echo -e "   Start:   ${BLUE}sudo systemctl start horalscanner${NC}"
         echo -e "   Stop:    ${BLUE}sudo systemctl stop horalscanner${NC}"
         echo -e "   Status:  ${BLUE}sudo systemctl status horalscanner${NC}"
+        echo -e "   Restart: ${BLUE}sudo systemctl restart horalscanner${NC}"
         echo ""
     else
         log_error "Service failed to start. Check logs:"
         journalctl -u horalscanner -n 20
     fi
-}
-
-# Step 10: Custom OS image creation helper
-create_os_image() {
-    log_info "Creating instructions for OS image..."
-    
-    cat > "$INSTALL_DIR/CREATE_CUSTOM_OS.md" <<'EOF'
-# Creating a Custom HoralScanner OS Image
-
-## Option A: Using Raspberry Pi Imager (Recommended)
-
-1. **Download Raspberry Pi Imager**
-   - https://www.raspberrypi.com/software/
-
-2. **Prepare SD card**
-   - Insert SD card
-   - Open Imager
-   - OS: Choose "Raspberry Pi OS (Bookworm)" - 64-bit Lite
-   - Storage: Select your SD card
-   - Settings (gear icon):
-     - Set hostname: `horaltscanner`
-     - Enable SSH (password auth)
-     - Set username: `pi`, password: your choice
-     - Configure WiFi (if needed)
-     - Set locale & timezone
-
-3. **Write and boot**
-
-4. **Run setup script**
-   ```bash
-   ssh pi@horaltscanner.local
-   sudo bash -c "curl -sSL https://raw.githubusercontent.com/jose33bro/horaltscanner/main/setup_pi.sh | bash"
-   ```
-
-## Option B: Manual Custom Image Creation
-
-### Prerequisites
-- Host machine (Linux/Mac)
-- `rpi-imager` or manual `dd`
-- PiShrink or similar for image compression
-
-### Step-by-step
-
-1. **Create base image**
-   ```bash
-   # Flash base Raspberry Pi OS to SD
-   rpi-imager --cli \
-     --os "raspberry_pi_os_lite" \
-     --output /path/to/horaltscanner.img \
-     --storage /dev/sdX
-   ```
-
-2. **Mount and customize**
-   ```bash
-   # Mount rootfs
-   mkdir -p /mnt/rpi
-   sudo mount /dev/mapper/rootfs /mnt/rpi
-   
-   # Chroot into image
-   sudo chroot /mnt/rpi /bin/bash
-   
-   # Inside chroot:
-   apt-get update
-   apt-get upgrade -y
-   
-   # Copy HoralScanner repo
-   git clone https://github.com/jose33bro/horaltscanner.git /home/pi/horaltscanner
-   
-   # Run setup
-   bash /home/pi/horaltscanner/setup_pi.sh --install-only
-   
-   # Clean up
-   apt-get clean
-   apt-get autoremove -y
-   rm -rf /tmp/*
-   
-   exit
-   ```
-
-3. **Unmount and shrink**
-   ```bash
-   sudo umount /mnt/rpi
-   pishrink.sh horaltscanner.img horaltscanner_slim.img
-   ```
-
-4. **Flash to multiple cards**
-   ```bash
-   dd if=horaltscanner_slim.img of=/dev/sdX bs=4M status=progress
-   ```
-
-## Option C: Using GitHub Actions (Future)
-
-Create `.github/workflows/build-image.yml`:
-- Use `Pi-Gen` builder
-- Customize stage3 with HoralScanner setup
-- Produce `.img` artifact
-
-EOF
-
-    log_success "OS image creation guide created at: $INSTALL_DIR/CREATE_CUSTOM_OS.md"
 }
 
 # Main execution
@@ -378,7 +301,6 @@ main() {
             backup_system
             test_installation
             quick_start
-            create_os_image
             ;;
         --update)
             log_info "Running UPDATE ONLY"
@@ -398,7 +320,7 @@ main() {
             clone_repo
             setup_python
             install_service
-            create_os_image
+            quick_start
             ;;
         --quick-test)
             log_info "Running quick test"

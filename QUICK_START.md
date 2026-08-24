@@ -5,7 +5,7 @@
 cat > QUICK_START.md <<'EOF'
 # 🚀 HoralScanner — Quick Start Guide
 
-**Goal:** Convert your Raspberry Pi 4 from Klipper/Marlin to HoralScanner 3D Scanner with custom STM32 USB firmware.
+**Goal:** Set up HoralScanner 3D Scanner on your Raspberry Pi 4 with custom STM32 USB firmware.
 
 ---
 
@@ -56,33 +56,7 @@ sudo reboot
 
 ---
 
-### **Path B: Migrate from Klipper (Current Setup)**
-**For:** Existing Klipper installation on your Pi
-
-```bash
-# 1. SSH into your Pi
-ssh pi@raspberrypi.local
-
-# 2. Run migration script
-sudo bash -c "curl -sSL https://raw.githubusercontent.com/jose33bro/horaltscanner/main/remove_klipper_install_horaltscanner.sh | bash"
-
-# 3. When prompted, prepare Creality board for firmware flashing
-#    - Disconnect power
-#    - Connect USB to Pi
-#    - Press RESET, then hold BOOT button
-
-# 4. Reboot
-sudo reboot
-
-# 5. Verify service is running
-sudo systemctl status horalscanner
-```
-
-**Time:** ~45-60 minutes (compilation + firmware flashing)
-
----
-
-### **Path C: Update Existing HoralScanner**
+### **Path B: Update Existing HoralScanner**
 **For:** Already running HoralScanner, want latest code
 
 ```bash

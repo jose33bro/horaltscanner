@@ -65,7 +65,7 @@ jobs:
           else
             IMAGE_INDEX_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/"
             IMAGE_DIR=$(curl -fsSL "$IMAGE_INDEX_URL" \
-              | grep -oE 'href="raspios_lite_arm64-[0-9-]+/?\"' \
+              | grep -oE 'href="raspios_lite_arm64-[0-9-]+/?"' \
               | sed 's/^href="//; s/"$//' \
               | tr -d '/' \
               | sort -V \
@@ -154,14 +154,18 @@ jobs:
           sudo mount -t sysfs sys "$ROOT_MOUNT/sys"
           sudo mount --bind /run "$ROOT_MOUNT/run"
 
+          CHROOT_STATUS=0
           sudo chroot "$ROOT_MOUNT" /usr/bin/qemu-aarch64-static /bin/bash -lc '
             set -euo pipefail
             export HORALSCANNER_IMAGE_BUILD=1
             export HORALSCANNER_SOURCE_DIR=/tmp/horalscanner-source
             bash /tmp/horalscanner-source/setup_pi.sh --install
-            rm -f /usr/bin/qemu-aarch64-static
-            rm -rf /tmp/horalscanner-source /var/lib/apt/lists/*
-          '
+          ' || CHROOT_STATUS=$?
+          sudo rm -f "$ROOT_MOUNT/usr/bin/qemu-aarch64-static"
+          sudo rm -rf "$ROOT_MOUNT/tmp/horalscanner-source" "$ROOT_MOUNT/var/lib/apt/lists/"*
+          if [ "$CHROOT_STATUS" -ne 0 ]; then
+            exit "$CHROOT_STATUS"
+          fi
 
       - name: Compress image
         run: |

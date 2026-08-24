@@ -28,12 +28,23 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Resolve release metadata
+        env:
+          INPUT_RELEASE_NAME: ${{ inputs.release_name }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          if [ -n "${{ inputs.release_name }}" ]; then
-            echo "RELEASE_NAME=${{ inputs.release_name }}" >> "$GITHUB_ENV"
+          if [ -n "$INPUT_RELEASE_NAME" ]; then
+            {
+              echo "RELEASE_NAME<<EOF"
+              printf '%s\n' "$INPUT_RELEASE_NAME"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
           else
-            echo "RELEASE_NAME=${{ inputs.release_tag }}" >> "$GITHUB_ENV"
+            {
+              echo "RELEASE_NAME<<EOF"
+              printf '%s\n' "$INPUT_RELEASE_TAG"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
           fi
 
       - name: Install image build dependencies
@@ -59,10 +70,14 @@ jobs:
 
           IMAGE_PATH="$BUILD_DIR/${IMAGE_NAME}.img"
           LOOP_DEV=""
+          RESOLV_BACKUP="$RUNNER_TEMP/horalscanner-resolv.conf"
 
           cleanup() {
             set +e
             sync
+            if [ -f "$RESOLV_BACKUP" ]; then
+              sudo cp -a "$RESOLV_BACKUP" "$ROOT_MOUNT/etc/resolv.conf" 2>/dev/null || true
+            fi
             sudo umount "$ROOT_MOUNT/run" 2>/dev/null || true
             sudo umount "$ROOT_MOUNT/dev/pts" 2>/dev/null || true
             sudo umount "$ROOT_MOUNT/dev" 2>/dev/null || true
@@ -84,6 +99,7 @@ jobs:
           sudo touch "$ROOT_MOUNT/boot/firmware/ssh"
           sudo rsync -a --delete --exclude '.git' ./ "$ROOT_MOUNT/tmp/horalscanner-source/"
           sudo cp /usr/bin/qemu-aarch64-static "$ROOT_MOUNT/usr/bin/"
+          sudo cp -a "$ROOT_MOUNT/etc/resolv.conf" "$RESOLV_BACKUP"
           sudo cp /etc/resolv.conf "$ROOT_MOUNT/etc/resolv.conf"
           sudo mount --bind /dev "$ROOT_MOUNT/dev"
           sudo mount --bind /dev/pts "$ROOT_MOUNT/dev/pts"

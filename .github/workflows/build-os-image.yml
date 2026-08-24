@@ -79,7 +79,7 @@ jobs:
           cleanup() {
             set +e
             sync
-            if [ -f "$RESOLV_BACKUP" ]; then
+            if [ -f "$RESOLV_BACKUP" ] && sudo mountpoint -q "$ROOT_MOUNT"; then
               sudo cp -a "$RESOLV_BACKUP" "$ROOT_MOUNT/etc/resolv.conf" 2>/dev/null || true
             fi
             sudo umount "$ROOT_MOUNT/run" 2>/dev/null || true
@@ -131,6 +131,25 @@ jobs:
           cd "$BUILD_DIR"
           sha256sum "${IMAGE_NAME}.img.xz" > "${IMAGE_NAME}.img.xz.sha256"
 
+      - name: Generate release notes
+        run: |
+          set -euo pipefail
+          cat > "$BUILD_DIR/release-notes.md" <<EOF
+          ## HoralScanner Raspberry Pi OS image
+
+          - Base image: Raspberry Pi OS Bookworm 64-bit Lite
+          - Source image URL: ${RPI_OS_URL}
+          - Artifact: ${IMAGE_NAME}.img.xz
+          - Checksum: ${IMAGE_NAME}.img.xz.sha256
+
+          ### First boot
+
+          - SSH is enabled.
+          - If the base image did not already contain a \`pi\` user, the build creates one.
+          - The generated \`pi\` account uses the standard \`raspberry\` password and is marked for mandatory password change on first login.
+          - You can override the Raspberry Pi OS source image when manually starting the workflow with the \`base_image_url\` input.
+          EOF
+
       - name: Upload image artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -145,7 +164,7 @@ jobs:
         with:
           tag_name: ${{ inputs.release_tag }}
           name: ${{ env.RELEASE_NAME }}
-          generate_release_notes: true
+          body_path: ${{ env.BUILD_DIR }}/release-notes.md
           files: |
             ${{ env.BUILD_DIR }}/${{ env.IMAGE_NAME }}.img.xz
             ${{ env.BUILD_DIR }}/${{ env.IMAGE_NAME }}.img.xz.sha256

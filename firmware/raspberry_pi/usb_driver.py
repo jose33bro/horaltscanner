@@ -144,3 +144,130 @@ class USBScannerDriver:
 
     def stop(self) -> ScannerStatus:
         return self._exchange(CMD_STOP)
+
+
+# ---------------------------------------------------------------------------
+# USBDriver - text-protocol (serial) driver used by MotorController
+# ---------------------------------------------------------------------------
+
+class USBDriver:
+    """Serial text-protocol driver for the Creality V4.2.2 firmware.
+
+    Commands are sent as ASCII text lines; responses are expected to
+    start with 'OK' for success or 'ERR' for failure.
+
+    Axis codes: X=0 (translation), Y=1 (rotation), Z=2 (height)
+    """
+
+    # USB serial path for Creality V4.2.2
+    DEFAULT_PORT = "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
+    BAUDRATE = 115200
+
+    def __init__(self, port: str | None = None, baudrate: int = BAUDRATE, timeout: float = 5.0):
+        self.port = port or self.DEFAULT_PORT
+        self.baudrate = baudrate
+        self.timeout = timeout
+        self.connected = False
+        self.ser = None  # serial.Serial instance (set on connect)
+
+    def connect(self) -> bool:
+        """Open the serial connection.  Returns True on success."""
+        try:
+            self.ser = serial.Serial(
+                self.port, baudrate=self.baudrate, timeout=self.timeout
+            )
+            self.connected = True
+            logger.info("USBDriver connected on %s", self.port)
+            return True
+        except Exception as exc:
+            logger.warning("USBDriver connect failed: %s", exc)
+            self.connected = False
+            return False
+
+    def disconnect(self) -> None:
+        if self.ser is not None:
+            try:
+                self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
+        self.connected = False
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _send(self, command: str) -> bool:
+        """Send a command and check for 'OK' response.  Returns True on success."""
+        if self.ser is None:
+            logger.warning("USBDriver: not connected, cannot send '%s'", command)
+            return False
+        try:
+            self.ser.write((command + "\n").encode("ascii"))
+            response = self.ser.readline().decode("ascii", errors="replace").strip()
+            if response.startswith("OK"):
+                return True
+            logger.warning("USBDriver rejected command '%s': %s", command, response)
+            return False
+        except Exception as exc:
+            logger.error("USBDriver serial error: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
+    # Motor commands
+    # ------------------------------------------------------------------
+
+    def move(self, axis: str, steps: int, speed: int = 0) -> bool:
+        """Move *axis* by *steps* steps at *speed* steps/s."""
+        axis = axis.upper()
+        return self._send(f"MOVE_{axis} {steps} {speed}")
+
+    def home(self, axis: str) -> bool:
+        """Home *axis* (move to endstop / reference point)."""
+        axis = axis.upper()
+        return self._send(f"HOME_{axis}")
+
+    def stop(self) -> bool:
+        """Emergency stop all motors."""
+        return self._send("STOP")
+
+    # ------------------------------------------------------------------
+    # Y-axis endstop (rotation counter)
+    # ------------------------------------------------------------------
+
+    def read_endstop_y(self) -> bool:
+        """Return True when the Y endstop (full-rotation detector) is triggered."""
+        if self.ser is None:
+            return False
+        try:
+            self.ser.write(b"ENDSTOP_Y\n")
+            response = self.ser.readline().decode("ascii", errors="replace").strip()
+            return response.endswith("1")
+        except Exception as exc:
+            logger.error("USBDriver endstop read error: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
+    # Temperature / fan
+    # ------------------------------------------------------------------
+
+    def get_temperature(self) -> float | None:
+        """Read board temperature (NTC on PA0).  Returns °C or None."""
+        if self.ser is None:
+            return None
+        try:
+            self.ser.write(b"GET_TEMP\n")
+            response = self.ser.readline().decode("ascii", errors="replace").strip()
+            for token in response.split():
+                try:
+                    return float(token)
+                except ValueError:
+                    continue
+            return None
+        except Exception as exc:
+            logger.error("USBDriver temperature read error: %s", exc)
+            return None
+
+    def fan_control(self, state: str) -> bool:
+        """Control the Creality fan: state = 'ON' or 'OFF'."""
+        return self._send(f"FAN_{state.upper()}")

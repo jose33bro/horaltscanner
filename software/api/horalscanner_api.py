@@ -28,6 +28,15 @@ except Exception as exc:  # pragma: no cover - environment dependent
     GPIODriver = None  # type: ignore[assignment]
     logger.warning("GPIODriver import failed: %s", exc)
 
+try:
+    from software.api.scanner_engine import ScanSession, ReconstructionEngine
+    _scan_session = ScanSession()
+    _reconstruction_engine = ReconstructionEngine(_scan_session)
+except Exception as exc:  # pragma: no cover
+    logger.warning("ScanSession/ReconstructionEngine import failed: %s", exc)
+    _scan_session = None  # type: ignore[assignment]
+    _reconstruction_engine = None  # type: ignore[assignment]
+
 
 app = Flask(__name__)
 
@@ -361,6 +370,61 @@ def api_status():
             "version": _VERSION,
         },
     })
+
+
+# ---------------------------------------------------------------------------
+# Scan control endpoints
+# ---------------------------------------------------------------------------
+
+@app.route("/api/scan/start", methods=["POST"])
+def scan_start():
+    """Start a new scan session."""
+    if _scan_session is None:
+        return _json_error("Scan engine unavailable", 503)
+    try:
+        _scan_session.start()
+        return jsonify({"success": True, "status": _scan_session.status()})
+    except Exception:
+        logger.exception("scan_start failed")
+        return _json_error("Internal server error", 500)
+
+
+@app.route("/api/scan/stop", methods=["POST"])
+def scan_stop():
+    """Stop the running scan session."""
+    if _scan_session is None:
+        return _json_error("Scan engine unavailable", 503)
+    try:
+        _scan_session.stop()
+        return jsonify({"success": True, "status": _scan_session.status()})
+    except Exception:
+        logger.exception("scan_stop failed")
+        return _json_error("Internal server error", 500)
+
+
+@app.route("/api/scan/status", methods=["GET"])
+def scan_status():
+    """Return scan session status (points, quality, elapsed time)."""
+    if _scan_session is None:
+        return _json_error("Scan engine unavailable", 503)
+    try:
+        return jsonify({"success": True, "status": _scan_session.status()})
+    except Exception:
+        logger.exception("scan_status failed")
+        return _json_error("Internal server error", 500)
+
+
+@app.route("/api/model/reconstruct", methods=["POST"])
+def model_reconstruct():
+    """Run 3D surface reconstruction on the current point cloud."""
+    if _reconstruction_engine is None:
+        return _json_error("Reconstruction engine unavailable", 503)
+    try:
+        result = _reconstruction_engine.reconstruct()
+        return jsonify({"success": result.get("ok", False), **result})
+    except Exception:
+        logger.exception("model_reconstruct failed")
+        return _json_error("Internal server error", 500)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import time
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 
 class GPIOBackend(Protocol):
@@ -55,3 +58,185 @@ class LaserController:
         self.enable_both()
         time.sleep(duration_s)
         self.disable_both()
+
+
+# ---------------------------------------------------------------------------
+# GPIOLaserControl - higher-level controller used by the scanner application
+# ---------------------------------------------------------------------------
+
+_LED_COLOURS: dict[str, tuple[float, float, float]] = {
+    "red":     (1.0,  0.0,  0.0),
+    "green":   (0.0,  1.0,  0.0),
+    "blue":    (0.0,  0.0,  1.0),
+    "yellow":  (1.0,  1.0,  0.0),
+    "cyan":    (0.0,  1.0,  1.0),
+    "magenta": (1.0,  0.0,  1.0),
+    "white":   (1.0,  1.0,  1.0),
+}
+
+
+class GPIOLaserControl:
+    """High-level GPIO controller for lasers, RGB LED ring, and Pi fan.
+
+    Parameters
+    ----------
+    use_board:
+        When True, attempts real gpiozero/RPi.GPIO hardware init.
+        When False (simulation), all operations are no-ops so the class
+        can be used on non-Pi hardware for testing.
+    left_pin:  BCM pin number for the left laser (default 27)
+    right_pin: BCM pin number for the right laser (default 22)
+    fan_pin:   BCM pin number for the Pi fan (default 23)
+    led_r_pin: BCM pin number for RGB LED red channel (default 18)
+    led_g_pin: BCM pin number for RGB LED green channel (default 13)
+    led_b_pin: BCM pin number for RGB LED blue channel (default 19)
+    """
+
+    def __init__(
+        self,
+        use_board: bool = True,
+        *,
+        left_pin: int = 27,
+        right_pin: int = 22,
+        fan_pin: int = 23,
+        led_r_pin: int = 18,
+        led_g_pin: int = 13,
+        led_b_pin: int = 19,
+    ) -> None:
+        self.use_board = use_board
+
+        # Public attributes expected by legacy scanner code
+        self.laser_gauche = None
+        self.laser_droit = None
+        self._fan = None
+
+        self._left_pin = left_pin
+        self._right_pin = right_pin
+        self._fan_pin = fan_pin
+        self._led_r_pin = led_r_pin
+        self._led_g_pin = led_g_pin
+        self._led_b_pin = led_b_pin
+
+        if use_board:
+            self._init_hardware()
+
+    def _init_hardware(self) -> None:
+        try:
+            from gpiozero import LED, PWMLED
+            self.laser_gauche = LED(self._left_pin)
+            self.laser_droit  = LED(self._right_pin)
+            self._fan = PWMLED(self._fan_pin)
+            logger.info("GPIOLaserControl hardware initialised (BCM)")
+        except Exception as exc:  # pragma: no cover - hardware environment specific
+            logger.warning("GPIOLaserControl hardware init failed: %s", exc)
+            self.use_board = False
+
+    # ------------------------------------------------------------------
+    # Laser helpers
+    # ------------------------------------------------------------------
+
+    def laser_on(self, side: str = "both") -> None:
+        if not self.use_board:
+            return
+        if side in ("gauche", "left", "both"):
+            self.laser_gauche and self.laser_gauche.on()
+        if side in ("droit", "right", "both"):
+            self.laser_droit and self.laser_droit.on()
+
+    def laser_off(self, side: str = "both") -> None:
+        if not self.use_board:
+            return
+        if side in ("gauche", "left", "both"):
+            self.laser_gauche and self.laser_gauche.off()
+        if side in ("droit", "right", "both"):
+            self.laser_droit and self.laser_droit.off()
+
+    def laser_pulse(self, duration_ms: int = 100, side: str = "both") -> None:
+        self.laser_on(side)
+        time.sleep(duration_ms / 1000.0)
+        self.laser_off(side)
+
+    # ------------------------------------------------------------------
+    # LED helpers
+    # ------------------------------------------------------------------
+
+    def led_set_color(self, r: float, g: float, b: float) -> None:
+        """Set LED colour with float values in 0.0–1.0 (clamped)."""
+        _ = (
+            max(0.0, min(1.0, r)),
+            max(0.0, min(1.0, g)),
+            max(0.0, min(1.0, b)),
+        )
+        # On real hardware, PWMLED per channel would be used here.
+
+    def led_on(self, color: str = "white") -> None:
+        r, g, b = _LED_COLOURS.get(color, (0.5, 0.5, 0.5))
+        self.led_set_color(r, g, b)
+
+    def led_off(self) -> None:
+        self.led_set_color(0.0, 0.0, 0.0)
+
+    def led_pulse(self, color: str = "white", duration_ms: int = 100) -> None:
+        self.led_on(color)
+        time.sleep(duration_ms / 1000.0)
+        self.led_off()
+
+    # ------------------------------------------------------------------
+    # Fan helpers
+    # ------------------------------------------------------------------
+
+    def fan_on(self, speed: float = 1.0) -> None:
+        if self._fan is not None:
+            try:
+                self._fan.value = max(0.0, min(1.0, speed))
+            except Exception:
+                pass
+
+    def fan_off(self) -> None:
+        if self._fan is not None:
+            try:
+                self._fan.off()
+            except Exception:
+                pass
+
+    def fan_set_speed(self, speed: float) -> None:
+        self.fan_on(speed)
+
+    # ------------------------------------------------------------------
+    # Status presets (RGB LED status indicators)
+    # ------------------------------------------------------------------
+
+    def status_idle(self) -> None:
+        self.led_off()
+
+    def status_ready(self) -> None:
+        self.led_on("green")
+
+    def status_scanning(self) -> None:
+        self.led_on("blue")
+
+    def status_error(self) -> None:
+        self.led_on("red")
+
+    # ------------------------------------------------------------------
+    # Shutdown / context manager
+    # ------------------------------------------------------------------
+
+    def shutdown(self) -> None:
+        self.laser_off("both")
+        self.led_off()
+        self.fan_off()
+        if self.use_board:
+            try:
+                self.laser_gauche and self.laser_gauche.close()
+                self.laser_droit  and self.laser_droit.close()
+                self._fan and self._fan.close()
+            except Exception:
+                pass
+        logger.info("GPIOLaserControl shutdown complete")
+
+    def __enter__(self) -> "GPIOLaserControl":
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.shutdown()

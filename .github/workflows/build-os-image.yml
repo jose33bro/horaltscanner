@@ -65,7 +65,7 @@ jobs:
           else
             IMAGE_INDEX_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/"
             IMAGE_PATH=$(curl -fsSL "$IMAGE_INDEX_URL" \
-              | grep -oE 'href="[^"]*raspios-bookworm-arm64-lite\.img\.xz"' \
+              | grep -oE 'href="[^"]*bookworm[^"]*arm64-lite[^"]*\.img\.xz"' \
               | sed 's/^href="//; s/"$//' \
               | sort -V \
               | tail -n 1)
@@ -133,7 +133,8 @@ jobs:
           sudo mount "${LOOP_DEV}p2" "$ROOT_MOUNT"
           sudo mount "${LOOP_DEV}p1" "$ROOT_MOUNT/boot/firmware"
           sudo touch "$ROOT_MOUNT/boot/firmware/ssh"
-          sudo rsync -a --delete --exclude '.git' ./ "$ROOT_MOUNT/tmp/horalscanner-source/"
+          sudo mkdir -p "$ROOT_MOUNT/tmp/horalscanner-source"
+          git archive --format=tar HEAD | sudo tar -xf - -C "$ROOT_MOUNT/tmp/horalscanner-source"
           sudo cp /usr/bin/qemu-aarch64-static "$ROOT_MOUNT/usr/bin/"
           sudo cp -a "$ROOT_MOUNT/etc/resolv.conf" "$RESOLV_BACKUP"
           sudo cp /etc/resolv.conf "$ROOT_MOUNT/etc/resolv.conf"

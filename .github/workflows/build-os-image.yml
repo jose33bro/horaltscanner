@@ -9,6 +9,10 @@ on:
       release_name:
         description: Optional release display name
         required: false
+      base_image_url:
+        description: Raspberry Pi OS Bookworm 64-bit Lite image URL
+        required: false
+        default: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2024-03-15/2024-03-15-raspios-bookworm-arm64-lite.img.xz
 
 permissions:
   contents: write
@@ -20,7 +24,7 @@ jobs:
     env:
       BUILD_DIR: ${{ github.workspace }}/dist/os-image
       IMAGE_NAME: horalscanner-bookworm-arm64-lite
-      RPI_OS_URL: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2024-03-15/2024-03-15-raspios-bookworm-arm64-lite.img.xz
+      RPI_OS_URL: ${{ inputs.base_image_url }}
       ROOT_MOUNT: /mnt/horalscanner-root
 
     steps:
@@ -62,7 +66,7 @@ jobs:
       - name: Extract base image
         run: |
           set -euo pipefail
-          xz -d -k "$BUILD_DIR/${IMAGE_NAME}.img.xz"
+          xz -d "$BUILD_DIR/${IMAGE_NAME}.img.xz"
 
       - name: Mount and customize image
         run: |

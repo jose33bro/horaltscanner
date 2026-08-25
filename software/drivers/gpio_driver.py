@@ -1,7 +1,7 @@
 import copy
 
 
-class STM32Driver:
+class GPIODriver:
     def __init__(self, simulation=True, hardware_config=None):
         self.simulation = simulation
         self.hardware_available = False
@@ -164,4 +164,4 @@ class STM32Driver:
 
 
 # Backward compatibility
-GPIODriver = STM32Driver
+STM32Driver = GPIODriver

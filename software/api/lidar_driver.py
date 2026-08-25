@@ -80,7 +80,7 @@ class LidarDriver:
     # Calibration
     # ------------------------------------------------------------------
 
-    def calibrate(self, known_distance_mm: float = 300.0, samples: int = 10) -> float:
+    def calibrate(self, known_distance_mm: float = 300.0, samples: int = 10) -> float | None:
         """Calibrate offset by measuring a known distance."""
         readings = []
         for _ in range(samples):
@@ -90,7 +90,7 @@ class LidarDriver:
             time.sleep(0.05)
         if not readings:
             logger.error("LIDAR calibration: no readings")
-            return self._offset_mm
+            return None
         measured = sum(readings) / len(readings)
         self._offset_mm = known_distance_mm - (measured - self._offset_mm)
         logger.info("LIDAR calibrated: offset=%.1f mm", self._offset_mm)

@@ -35,14 +35,18 @@
   "lasers": {
     "left": {
       "gpio": 27,
-      "pin": "rpi:gpio27"
+      "pin": "rpi:gpio27",
+      "active_high": true
     },
     "right": {
       "gpio": 22,
-      "pin": "rpi:gpio22"
+      "pin": "rpi:gpio22",
+      "active_high": true
     }
   },
   "led_rgb": {
+    "active_high": true,
+    "pwm_frequency_hz": 100,
     "red": {
       "gpio": 18,
       "pin": "rpi:gpio18"
@@ -62,7 +66,13 @@
     },
     "pi_fan": {
       "gpio": 23,
-      "pin": "rpi:gpio23"
+      "pin": "rpi:gpio23",
+      "active_high": true,
+      "default_value": 0,
+      "auto_control": true,
+      "on_temp_c": 55,
+      "off_temp_c": 45,
+      "poll_interval_s": 5
     }
   },
   "temperature": {
@@ -82,7 +92,13 @@
   "serial": {
     "mcu_port": "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",
     "baud": 115200,
+    "timeout_s": 1.0,
     "lidar_port": "/dev/ttyUSB0",
     "lidar_baud": 115200
+  },
+  "cameras": {
+    "pi_name": "Pi Camera V3 NoIR",
+    "usb_name": "Logitech C270",
+    "usb_device_id": 0
   }
 }

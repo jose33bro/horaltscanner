@@ -15,6 +15,7 @@ DEFAULT_CONFIG = {
         "laser_power": 100,
         "lidar_offset_mm": 0,
         "capture_fps": 30,
+        "simulation": False,
     },
     "slicer": {
         "layer_height": 0.2,

@@ -133,8 +133,8 @@ configure_gpio() {
         sed -i 's/^#dtparam=spi=on/dtparam=spi=on/' /boot/firmware/config.txt || true
         sed -i 's/^#enable_uart=1/enable_uart=1/' /boot/firmware/config.txt || true
         
-        # Ensure dtoverlay is enabled
-        grep -q "dtoverlay=gpio-ir" /boot/firmware/config.txt || echo "dtoverlay=gpio-ir" >> /boot/firmware/config.txt || true
+        # GPIO18 drives the red LED channel and must not be claimed by gpio-ir.
+        sed -i '/^[[:space:]]*dtoverlay=gpio-ir/d' /boot/firmware/config.txt || true
     else
         log_warn "Boot config not found at /boot/firmware/config.txt"
     fi
@@ -193,6 +193,11 @@ setup_python() {
     else
         log_warn "requirements.txt not found, installing basic packages..."
         pip install flask flask-cors pillow numpy requests pyserial
+    fi
+
+    if [ "$(uname -m)" = "aarch64" ]; then
+        log_info "Open3D ARM64 installer available at software/scripts/install_open3d_pi.sh"
+        log_info "Run it after setup to enable Poisson mesh reconstruction"
     fi
     
     deactivate

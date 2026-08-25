@@ -86,7 +86,7 @@ GPIO22  → Laser Right (digital)
 GPIO18  → LED Red (PWM)
 GPIO13  → LED Green (PWM)
 GPIO19  → LED Blue (PWM)
-GPIO23  → Pi Fan (PWM)
+GPIO23  → Pi Fan automatique (marche à 55 °C, arrêt à 45 °C)
 ```
 
 **STM32F103 Mapping (Creality V4.2.2):**
@@ -135,6 +135,12 @@ POST /api/fan/pi           {"percent": 50}      # Set Pi fan to 50%
 POST /api/fan/creality     {"speed": 0.75}      # Set Creality fan
 POST /api/fan/temperature  {"pwm": 0.5}         # Set temp fan
 GET  /api/fan/status                            # Get all speeds
+```
+
+Sur Raspberry Pi OS ARM64, activez la reconstruction Open3D avec:
+
+```bash
+bash software/scripts/install_open3d_pi.sh
 ```
 
 ### Temperature

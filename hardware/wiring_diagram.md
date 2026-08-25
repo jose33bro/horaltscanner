@@ -15,4 +15,12 @@
   - DSI vers caméra Pi V3 NoIR
   - GPIO27/22: lasers gauche/droit
   - GPIO18/13/19: LED RGB PWM
-  - GPIO23: ventilateur Pi PWM
+  - GPIO23: ventilateur Pi tout-ou-rien (`1` marche, `0` arrêt)
+
+Toutes les sorties Raspberry Pi sont actives à l'état haut: `1` active la
+sortie et `0` la désactive. Les charges doivent être commandées par un étage
+adapté (résistance/transistor/MOSFET); elles ne doivent pas être alimentées
+directement par une broche GPIO.
+
+> GPIO18 ne doit pas être réservé par `dtoverlay=gpio-ir`, car il commande le
+> canal rouge de la LED RGB.

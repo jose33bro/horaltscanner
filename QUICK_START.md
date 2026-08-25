@@ -124,7 +124,7 @@ http://<your-pi-ip>:5000
 - GPIO27: Laser Left
 - GPIO22: Laser Right
 - GPIO18/13/19: LED (R/G/B)
-- GPIO23: Pi Fan PWM
+- GPIO23: Pi Fan automatique (marche à 55 °C, arrêt à 45 °C)
 
 **Creality V4.2.2 (STM32F103):**
 - PC2/PB9/PC3: Stepper X (step/dir/enable)

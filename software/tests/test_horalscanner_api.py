@@ -212,6 +212,75 @@ class HoralScannerAPITests(unittest.TestCase):
         response = self.client.get("/api/status")
         self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), "*")
 
+    def test_dashboard_static_assets_are_served(self):
+        self.assertEqual(self.client.get("/").status_code, 200)
+        self.assertEqual(self.client.get("/app.js").status_code, 200)
+        self.assertEqual(self.client.get("/style.css").status_code, 200)
+        self.assertEqual(self.client.get("/viewer3d.js").status_code, 200)
+
+    def test_lidar_read_route_returns_measurement(self):
+        class FakeLidar:
+            connected = True
+
+            def read_distance_mm(self):
+                return 432.1
+
+            def get_offset(self):
+                return -2.0
+
+        original = self.api_module.lidar_driver
+        self.addCleanup(setattr, self.api_module, "lidar_driver", original)
+        self.api_module.lidar_driver = FakeLidar()
+
+        response = self.client.post("/api/lidar/read")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["distance_mm"], 432.1)
+
+    def test_camera_test_route_returns_quality_metrics(self):
+        class FakeCamera:
+            is_open = True
+
+            def open(self):
+                return True
+
+            def capture_jpeg(self):
+                return b"jpeg"
+
+        original_camera = self.api_module.pi_camera
+        original_analyzer = self.api_module.analyze_camera_frame
+        self.addCleanup(setattr, self.api_module, "pi_camera", original_camera)
+        self.addCleanup(setattr, self.api_module, "analyze_camera_frame", original_analyzer)
+        self.api_module.pi_camera = FakeCamera()
+        self.api_module.analyze_camera_frame = lambda _: {
+            "analysis_available": True,
+            "width": 1920,
+            "height": 1080,
+            "brightness": 120.0,
+            "sharpness": 300.0,
+            "checkerboard_found": True,
+        }
+
+        response = self.client.post("/api/camera/pi/test")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["result"]["checkerboard_found"])
+
+    def test_scan_control_routes_share_session_status(self):
+        original = self.api_module.scan_session
+        self.api_module.scan_session = self.api_module.ScanSession(simulation=True)
+        self.addCleanup(setattr, self.api_module, "scan_session", original)
+        self.addCleanup(self.api_module.scan_session.stop)
+
+        start_response = self.client.post("/api/scan/start")
+        status_response = self.client.get("/api/scan/status")
+        stop_response = self.client.post("/api/scan/stop")
+
+        self.assertEqual(start_response.status_code, 200)
+        self.assertTrue(status_response.get_json()["status"]["scanning"])
+        self.assertEqual(stop_response.status_code, 200)
+        self.assertFalse(stop_response.get_json()["status"]["scanning"])
+
     def test_api_status_no_gpio_driver(self):
         self.api_module.gpio_driver = None
         response = self.client.get("/api/status")

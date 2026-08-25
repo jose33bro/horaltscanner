@@ -96,7 +96,52 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
 
         self.assertTrue(driver.move_motor("x", 10.0))
         self.assertAlmostEqual(driver.get_motor_status()["positions"]["x"], 10.0)
-        self.assertEqual(commands, ["MOVE X 32000 160000"])
+        self.assertEqual(commands, ["MOVE X 32000 20000"])
+
+    def test_real_move_waits_for_motion_completion(self):
+        serial_port = Mock()
+        serial_port.readline.side_effect = [
+            b"OK MOVE\n",
+            b"OK MOTION_STATUS RUNNING\n",
+            b"OK MOTION_STATUS DONE\n",
+        ]
+        driver = STM32Driver(
+            simulation=False,
+            hardware_config={
+                "serial": {"mcu_port": "/dev/horalscanner_mcu"},
+                "motors": {"x": {"rotation_distance": 40, "microsteps": 16}},
+            },
+            serial_factory=Mock(return_value=serial_port),
+        )
+        driver.connect()
+        driver._motor_status["homed"]["x"] = True
+
+        self.assertTrue(driver.move_motor("x", 1.0))
+        self.assertEqual(
+            [call.args[0] for call in serial_port.write.call_args_list],
+            [b"MOVE X 80 4000\n", b"MOTION_STATUS\n", b"MOTION_STATUS\n"],
+        )
+
+    def test_stopped_motion_does_not_update_position(self):
+        serial_port = Mock()
+        serial_port.readline.side_effect = [
+            b"OK MOVE\n",
+            b"OK MOTION_STATUS STOPPED\n",
+        ]
+        driver = STM32Driver(
+            simulation=False,
+            hardware_config={
+                "serial": {"mcu_port": "/dev/horalscanner_mcu"},
+                "motors": {"x": {"rotation_distance": 40, "microsteps": 16}},
+            },
+            serial_factory=Mock(return_value=serial_port),
+        )
+        driver.connect()
+        driver._motor_status["homed"]["x"] = True
+
+        self.assertFalse(driver.move_motor("x", 1.0))
+        self.assertEqual(driver.get_motor_status()["positions"]["x"], 0.0)
+        self.assertFalse(driver.get_motor_status()["homed"]["x"])
 
     def test_move_motor_unknown_axis_returns_false(self):
         driver = STM32Driver()
@@ -136,6 +181,15 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
 
         self.assertTrue(driver.stop_motor("x"))
         self.assertIn("STOP X", commands)
+
+    def test_stop_invalidates_position_of_moving_axis(self):
+        driver = STM32Driver()
+        driver._send_command = lambda cmd: True
+        driver._motor_status["homed"]["x"] = True
+        driver._motor_status["moving"]["x"] = True
+
+        self.assertTrue(driver.stop_motor("x"))
+        self.assertFalse(driver.get_motor_status()["homed"]["x"])
 
     def test_stop_motor_unknown_axis_returns_false(self):
         driver = STM32Driver()

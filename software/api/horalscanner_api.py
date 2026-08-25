@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,11 @@ _API_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _API_DIR.parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory
+from software.api import config_manager
+from software.api.camera_driver import LogitechCamera, PiCamera, analyze_camera_frame
+from software.api.lidar_driver import LidarDriver
+from software.api.scanner_engine import ReconstructionEngine, ScanSession
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +54,21 @@ def index():
     return send_from_directory(str(_WEB_DIR), "index.html")
 
 
+@app.route("/app.js", methods=["GET"])
+def web_app_script():
+    return send_from_directory(str(_WEB_DIR), "app.js")
+
+
+@app.route("/style.css", methods=["GET"])
+def web_styles():
+    return send_from_directory(str(_WEB_DIR), "style.css")
+
+
+@app.route("/viewer3d.js", methods=["GET"])
+def web_3d_viewer_script():
+    return send_from_directory(str(_WEB_DIR), "viewer3d.js")
+
+
 def _initialize_driver(driver: Any, name: str) -> None:
     """Attempt to connect a driver without aborting startup."""
     if driver is None:
@@ -62,11 +82,51 @@ def _initialize_driver(driver: Any, name: str) -> None:
         logger.warning("%s connection error: %s", name, exc)
 
 
-stm32_driver = STM32Driver() if STM32Driver else None
-gpio_driver = GPIODriver() if GPIODriver else None
+hardware_config = config_manager.load_hardware_config()
+application_config = config_manager.load()
+pi_gpio_enabled = bool(hardware_config.get("hardware", {}).get("pi_gpio", False))
+stm32_enabled = bool(hardware_config.get("hardware", {}).get("mcu"))
+serial_config = hardware_config.get("serial", {})
+camera_config = hardware_config.get("cameras", {})
+scanner_config = application_config.get("scanner", {})
+
+stm32_driver = (
+    STM32Driver(simulation=not stm32_enabled, hardware_config=hardware_config)
+    if STM32Driver
+    else None
+)
+gpio_driver = (
+    GPIODriver(simulation=not pi_gpio_enabled, hardware_config=hardware_config)
+    if GPIODriver
+    else None
+)
+lidar_driver = LidarDriver(
+    port=serial_config.get("lidar_port", "/dev/ttyUSB0"),
+    baud=int(serial_config.get("lidar_baud", 115200)),
+)
+pi_camera = PiCamera()
+usb_camera = LogitechCamera(device_id=int(camera_config.get("usb_device_id", 0)))
+scan_session = ScanSession(simulation=bool(scanner_config.get("simulation", False)))
+reconstruction_engine = ReconstructionEngine(scan_session)
 
 _initialize_driver(stm32_driver, "STM32Driver")
 _initialize_driver(gpio_driver, "GPIODriver")
+
+
+def _get_camera(camera_name: str):
+    cameras = {
+        "pi": pi_camera,
+        "usb": usb_camera,
+    }
+    return cameras.get(camera_name)
+
+
+def _ensure_camera_open(camera) -> bool:
+    return camera.is_open or camera.open()
+
+
+def _ensure_lidar_connected() -> bool:
+    return lidar_driver.connected or lidar_driver.connect()
 
 
 def _json_error(message: str, status_code: int = 400):
@@ -350,14 +410,146 @@ def led_status():
         return _json_error("Internal server error", 500)
 
 
+@app.route("/api/lidar/read", methods=["POST"])
+def lidar_read():
+    if not _ensure_lidar_connected():
+        return _json_error("TF-Luna unavailable", 503)
+    distance = lidar_driver.read_distance_mm()
+    if distance is None:
+        return _json_error("TF-Luna measurement failed", 502)
+    return jsonify({
+        "success": True,
+        "distance_mm": round(distance, 1),
+        "offset_mm": lidar_driver.get_offset(),
+    })
+
+
+@app.route("/api/lidar/calibrate", methods=["POST"])
+def lidar_calibrate():
+    data = request.get_json(silent=True) or {}
+    try:
+        known_distance_mm = float(data.get("known_distance_mm", 300.0))
+        if known_distance_mm <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return _json_error("Known distance must be positive", 400)
+    if not _ensure_lidar_connected():
+        return _json_error("TF-Luna unavailable", 503)
+    offset = lidar_driver.calibrate(known_distance_mm=known_distance_mm)
+    if offset is None:
+        return _json_error("TF-Luna calibration failed: no measurements", 502)
+    return jsonify({"success": True, "offset_mm": round(offset, 1)})
+
+
+@app.route("/api/camera/<camera_name>/frame", methods=["GET"])
+def camera_frame(camera_name: str):
+    camera = _get_camera(camera_name)
+    if camera is None:
+        return _json_error("Unknown camera", 404)
+    if not _ensure_camera_open(camera):
+        return _json_error("Camera unavailable", 503)
+    jpeg = camera.capture_jpeg()
+    if jpeg is None:
+        return _json_error("Camera capture failed", 502)
+    return Response(jpeg, mimetype="image/jpeg")
+
+
+@app.route("/api/camera/<camera_name>/status", methods=["GET"])
+def camera_status(camera_name: str):
+    camera = _get_camera(camera_name)
+    if camera is None:
+        return _json_error("Unknown camera", 404)
+    available = _ensure_camera_open(camera)
+    return jsonify({
+        "success": True,
+        "camera": camera_name,
+        "available": available,
+    })
+
+
+@app.route("/api/camera/<camera_name>/test", methods=["POST"])
+def camera_test(camera_name: str):
+    camera = _get_camera(camera_name)
+    if camera is None:
+        return _json_error("Unknown camera", 404)
+    if not _ensure_camera_open(camera):
+        return _json_error("Camera unavailable", 503)
+    jpeg = camera.capture_jpeg()
+    if jpeg is None:
+        return _json_error("Camera capture failed", 502)
+    result = analyze_camera_frame(jpeg)
+    if not result["analysis_available"]:
+        return _json_error("OpenCV camera analysis unavailable", 503)
+    return jsonify({"success": True, "camera": camera_name, "result": result})
+
+
+@app.route("/api/scan/start", methods=["POST"])
+def scan_start():
+    try:
+        scan_session.start()
+    except RuntimeError as exc:
+        return _json_error(str(exc), 503)
+    return jsonify({"success": True, "status": scan_session.status()})
+
+
+@app.route("/api/scan/stop", methods=["POST"])
+def scan_stop():
+    scan_session.stop()
+    return jsonify({"success": True, "status": scan_session.status()})
+
+
+@app.route("/api/scan/status", methods=["GET"])
+def scan_status():
+    return jsonify({"success": True, "status": scan_session.status()})
+
+
+@app.route("/api/scan/pointcloud", methods=["GET"])
+def scan_pointcloud():
+    return jsonify({"success": True, **scan_session.get_pointcloud()})
+
+
+@app.route("/api/model/reconstruct", methods=["POST"])
+def model_reconstruct():
+    result = reconstruction_engine.reconstruct()
+    status_code = 200 if result["ok"] else 409
+    return jsonify({"success": result["ok"], **result}), status_code
+
+
+@app.route("/api/model/current", methods=["GET"])
+def model_current():
+    model_format = request.args.get("format", "stl").lower()
+    if model_format not in {"stl", "amf"}:
+        return _json_error("Format must be stl or amf", 400)
+    model = reconstruction_engine.get_model(model_format)
+    if model is None:
+        return _json_error("No reconstructed model available", 404)
+    return send_file(
+        BytesIO(model),
+        mimetype="application/octet-stream",
+        as_attachment=True,
+        download_name=f"horalscanner-model.{model_format}",
+    )
+
+
 @app.route("/api/status", methods=["GET"])
 def api_status():
+    gpio_ready = bool(
+        gpio_driver is not None
+        and (
+            getattr(gpio_driver, "simulation", True)
+            or getattr(gpio_driver, "hardware_available", False)
+        )
+    )
+    stm32_ready = bool(
+        stm32_driver is not None
+        and getattr(stm32_driver, "connected", True)
+    )
     return jsonify({
         "success": True,
         "status": {
             "api": "ok",
-            "gpio_driver": gpio_driver is not None,
-            "stm32_driver": stm32_driver is not None,
+            "gpio_driver": gpio_ready,
+            "stm32_driver": stm32_ready,
             "version": _VERSION,
         },
     })

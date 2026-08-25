@@ -103,24 +103,28 @@ class LogitechCamera:
     def is_open(self) -> bool:
         return self._cap is not None and self._cap.isOpened()
 
-    def capture_jpeg(self) -> bytes:
+    def capture_jpeg(self) -> bytes | None:
         """Capture one frame and return JPEG bytes."""
         with self._lock:
             if not self.is_open:
-                return _make_placeholder()
+                return None
             ret, frame = self._cap.read()
             if not ret:
-                return _make_placeholder()
+                return None
             _, buf = cv2.imencode(".jpg", frame)
             return buf.tobytes()
 
-    def capture_jpeg_b64(self) -> str:
-        return base64.b64encode(self.capture_jpeg()).decode()
+    def capture_jpeg_b64(self) -> str | None:
+        jpeg = self.capture_jpeg()
+        return base64.b64encode(jpeg).decode() if jpeg is not None else None
 
     def mjpeg_generator(self):
         """Yield MJPEG boundary chunks for streaming."""
         while self.is_open:
             jpeg = self.capture_jpeg()
+            if jpeg is None:
+                logger.error("USB camera stream capture failed")
+                break
             yield (
                 b"--frame\r\n"
                 b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
@@ -167,9 +171,9 @@ class PiCamera:
     def is_open(self) -> bool:
         return self._cam is not None
 
-    def capture_jpeg(self) -> bytes:
+    def capture_jpeg(self) -> bytes | None:
         if not self.is_open:
-            return _make_placeholder()
+            return None
         try:
             import numpy as np
             from PIL import Image
@@ -180,7 +184,39 @@ class PiCamera:
             return buf.getvalue()
         except Exception as exc:
             logger.error("PiCam capture failed: %s", exc)
-            return _make_placeholder()
+            return None
 
-    def capture_jpeg_b64(self) -> str:
-        return base64.b64encode(self.capture_jpeg()).decode()
+    def capture_jpeg_b64(self) -> str | None:
+        jpeg = self.capture_jpeg()
+        return base64.b64encode(jpeg).decode() if jpeg is not None else None
+
+
+def analyze_camera_frame(jpeg: bytes, checkerboard_size: tuple[int, int] = (9, 6)) -> dict:
+    """Measure image quality and detect a calibration checkerboard."""
+    if not _CV2_AVAILABLE:
+        return {"analysis_available": False}
+
+    try:
+        import numpy as np
+
+        image = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError("JPEG decode failed")
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        checkerboard_found, _ = cv2.findChessboardCorners(gray, checkerboard_size)
+        height, width = gray.shape
+        brightness = float(gray.mean())
+        sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        return {
+            "analysis_available": True,
+            "width": width,
+            "height": height,
+            "brightness": round(brightness, 1),
+            "sharpness": round(sharpness, 1),
+            "checkerboard_found": bool(checkerboard_found),
+            "checkerboard_columns": checkerboard_size[0],
+            "checkerboard_rows": checkerboard_size[1],
+        }
+    except Exception:
+        logger.exception("Camera frame analysis failed")
+        return {"analysis_available": False}

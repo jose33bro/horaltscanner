@@ -146,7 +146,7 @@ apt-get autoremove -y
 
 # Install essential packages
 apt-get install -y \
-    python3 python3-pip python3-venv \
+    python3 python3-pip python3-venv python3-picamera2 \
     python3-dev build-essential \
     git curl wget nano vim \
     libopencv-dev python3-opencv \
@@ -165,7 +165,7 @@ git clone https://github.com/jose33bro/horaltscanner.git /home/pi/horaltscanner
 cd /home/pi/horaltscanner
 
 # Setup Python environment
-python3 -m venv /home/pi/horaltscanner_env
+python3 -m venv --system-site-packages /home/pi/horaltscanner_env
 source /home/pi/horaltscanner_env/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
@@ -176,11 +176,26 @@ chown -R pi:pi /home/pi/horaltscanner
 chown -R pi:pi /home/pi/horaltscanner_env
 
 # Install systemd service
+cat > /etc/systemd/system/horalscanner-serial-setup.service <<'SERVICE'
+[Unit]
+Description=Detect HoralScanner Creality and TF-Luna serial devices
+Before=horalscanner.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'for attempt in {1..12}; do /bin/bash /home/pi/horaltscanner/software/scripts/configure_serial_devices.sh && exit 0; sleep 5; done; exit 1'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
 cat > /etc/systemd/system/horalscanner.service <<'SERVICE'
 [Unit]
 Description=HoralScanner 3D Scanner API
-After=network.target
+After=network.target horalscanner-serial-setup.service
 Wants=network-online.target
+Requires=horalscanner-serial-setup.service
 
 [Service]
 Type=simple
@@ -198,7 +213,7 @@ SyslogIdentifier=horalscanner
 WantedBy=multi-user.target
 SERVICE
 
-systemctl enable horalscanner
+systemctl enable horalscanner-serial-setup horalscanner
 
 # Configure GPIO access
 sed -i 's/^#dtparam=i2c_arm=on/dtparam=i2c_arm=on/' /boot/firmware/config.txt || true

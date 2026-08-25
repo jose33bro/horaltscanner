@@ -2,6 +2,7 @@ import copy
 import logging
 import re
 import threading
+import time
 from typing import Any, Callable
 
 
@@ -26,6 +27,7 @@ class STM32Driver:
         self._serial_factory = serial_factory
         self._serial = None
         self._serial_lock = threading.Lock()
+        self._motion_lock = threading.Lock()
         self._steps_per_mm = {}
         self._move_speed_steps_s = {}
         self._position_min = {}
@@ -36,7 +38,10 @@ class STM32Driver:
             rotation_distance = float(motor.get("rotation_distance", 1.0))
             self._steps_per_mm[axis] = (200 * microsteps) / rotation_distance
             speed_mm_s = float(motor.get("homing_speed", 50.0))
-            self._move_speed_steps_s[axis] = max(1, round(speed_mm_s * self._steps_per_mm[axis]))
+            self._move_speed_steps_s[axis] = min(
+                20_000,
+                max(1, round(speed_mm_s * self._steps_per_mm[axis])),
+            )
             self._position_min[axis] = float(motor.get("position_min", 0.0))
             self._position_max[axis] = float(motor.get("position_max", float("inf")))
         self._fan_status = {
@@ -107,7 +112,38 @@ class STM32Driver:
             return False
         return True
 
+    def _wait_for_motion(self, timeout):
+        if self.simulation:
+            return True
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                response = self._exchange("MOTION_STATUS")
+            except Exception:
+                logger.exception("Failed to read Creality motion status")
+                return False
+            if response == "OK MOTION_STATUS DONE":
+                return True
+            if response in {
+                "OK MOTION_STATUS STOPPED",
+                "OK MOTION_STATUS ERROR",
+            }:
+                logger.error("Creality motion ended with status: %s", response)
+                return False
+            if response != "OK MOTION_STATUS RUNNING":
+                logger.error("Invalid Creality motion status: %s", response)
+                return False
+            time.sleep(0.05)
+
+        logger.error("Creality motion timed out after %.1f seconds", timeout)
+        self._send_command("STOP ALL")
+        return False
+
     def move_motor(self, axis, distance):
+        with self._motion_lock:
+            return self._move_motor(axis, distance)
+
+    def _move_motor(self, axis, distance):
         axis = axis.lower()
         if axis not in self._motor_status["positions"]:
             return False
@@ -125,41 +161,79 @@ class STM32Driver:
             return False
         steps = round(float(distance) * self._steps_per_mm[axis])
         speed = self._move_speed_steps_s[axis]
+        self._motor_status["moving"][axis] = True
         if not self._send_command(f"MOVE {axis.upper()} {steps} {speed}"):
+            self._motor_status["moving"][axis] = False
+            self._motor_status["homed"][axis] = False
             return False
+        timeout = abs(steps) / speed + 2.0
+        if not self._wait_for_motion(timeout):
+            self._motor_status["moving"][axis] = False
+            self._motor_status["homed"][axis] = False
+            return False
+        self._motor_status["moving"][axis] = False
         self._motor_status["positions"][axis] = next_position
         return True
 
     def home_motor(self, target):
+        with self._motion_lock:
+            return self._home_motor(target)
+
+    def _home_motor(self, target):
         if target == "all":
+            for ax in self._motor_status["moving"]:
+                self._motor_status["moving"][ax] = True
+                self._motor_status["homed"][ax] = False
             if not self._send_command("HOME ALL"):
+                for ax in self._motor_status["moving"]:
+                    self._motor_status["moving"][ax] = False
+                return False
+            if not self._wait_for_motion(362.0):
+                for ax in self._motor_status["moving"]:
+                    self._motor_status["moving"][ax] = False
                 return False
             for ax in self._motor_status["positions"]:
+                self._motor_status["moving"][ax] = False
                 self._motor_status["positions"][ax] = 0.0
                 self._motor_status["homed"][ax] = True
         else:
             ax = target.lower()
             if ax not in self._motor_status["positions"]:
                 return False
+            self._motor_status["moving"][ax] = True
+            self._motor_status["homed"][ax] = False
             if not self._send_command(f"HOME {target.upper()}"):
+                self._motor_status["moving"][ax] = False
                 return False
+            if not self._wait_for_motion(122.0):
+                self._motor_status["moving"][ax] = False
+                return False
+            self._motor_status["moving"][ax] = False
             self._motor_status["positions"][ax] = 0.0
             self._motor_status["homed"][ax] = True
         return True
 
     def stop_motor(self, axis="all"):
         if axis == "all":
+            interrupted = [
+                ax for ax, moving in self._motor_status["moving"].items() if moving
+            ]
             if not self._send_command("STOP ALL"):
                 return False
             for ax in self._motor_status["moving"]:
                 self._motor_status["moving"][ax] = False
+            for ax in interrupted:
+                self._motor_status["homed"][ax] = False
         else:
             ax = axis.lower()
             if ax not in self._motor_status["moving"]:
                 return False
+            interrupted = self._motor_status["moving"][ax]
             if not self._send_command(f"STOP {axis.upper()}"):
                 return False
             self._motor_status["moving"][ax] = False
+            if interrupted:
+                self._motor_status["homed"][ax] = False
         return True
 
     def get_motor_status(self):

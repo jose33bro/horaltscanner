@@ -90,10 +90,10 @@
     }
   },
   "serial": {
-    "mcu_port": "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",
+    "mcu_port": "/dev/horalscanner_mcu",
     "baud": 115200,
     "timeout_s": 1.0,
-    "lidar_port": "/dev/ttyUSB0",
+    "lidar_port": "/dev/horalscanner_lidar",
     "lidar_baud": 115200
   },
   "cameras": {

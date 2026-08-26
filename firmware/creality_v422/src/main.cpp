@@ -11,7 +11,6 @@ constexpr uint32_t HOME_TIMEOUT_MS = 120000;
 constexpr uint32_t MAX_MOVE_STEPS = 200000;
 constexpr uint32_t MIN_STEP_RATE = 1;
 constexpr uint32_t MAX_STEP_RATE = 20000;
-constexpr uint32_t HOME_STEP_RATE = 1000;
 constexpr uint16_t STEP_PULSE_US = 4;
 
 constexpr uint32_t ENABLE_PIN = PC3;
@@ -27,12 +26,14 @@ struct Axis {
   uint32_t dir_pin;
   uint32_t endstop_pin;
   bool direction_inverted;
+  uint32_t start_step_rate;
+  uint32_t home_step_rate;
 };
 
 constexpr Axis AXES[] = {
-    {'X', PC2, PB9, PA5, false},
-    {'Y', PB8, PB7, PA6, true},
-    {'Z', PB6, PB5, PA7, false},
+    {'X', PC2, PB9, PA5, false, 100, 400},
+    {'Y', PB8, PB7, PA6, true, 20, 100},
+    {'Z', PB6, PB5, PA7, false, 100, 400},
 };
 constexpr size_t AXIS_COUNT = sizeof(AXES) / sizeof(AXES[0]);
 
@@ -50,7 +51,11 @@ MotionType motion_type = MotionType::IDLE;
 MotionResult motion_result = MotionResult::DONE;
 const Axis *motion_axis = nullptr;
 uint32_t motion_steps_remaining = 0;
+uint32_t motion_steps_completed = 0;
 uint32_t motion_period_us = 0;
+uint32_t motion_start_rate = 0;
+uint32_t motion_target_rate = 0;
+uint32_t motion_ramp_steps = 1;
 uint32_t motion_next_edge_us = 0;
 uint32_t motion_deadline_ms = 0;
 uint8_t home_axis_index = 0;
@@ -107,6 +112,17 @@ void finishMotion(MotionResult result) {
   step_pin_high = false;
 }
 
+void updateMotionPeriod() {
+  uint32_t ramp_position = min(motion_steps_completed + 1, motion_ramp_steps);
+  if (motion_type == MotionType::MOVE) {
+    ramp_position = min(ramp_position, motion_steps_remaining + 1);
+  }
+  const uint32_t rate_delta = motion_target_rate - motion_start_rate;
+  const uint32_t rate =
+      motion_start_rate + (rate_delta * ramp_position) / motion_ramp_steps;
+  motion_period_us = 1000000U / (rate == 0 ? 1 : rate);
+}
+
 void beginHomeAxis(uint8_t index) {
   home_axis_index = index;
   motion_axis = &AXES[index];
@@ -119,7 +135,11 @@ void beginHomeAxis(uint8_t index) {
     return;
   }
   setDirection(*motion_axis, false);
-  motion_period_us = 1000000U / HOME_STEP_RATE;
+  motion_steps_completed = 0;
+  motion_start_rate = motion_axis->start_step_rate;
+  motion_target_rate = motion_axis->home_step_rate;
+  motion_ramp_steps = 100;
+  updateMotionPeriod();
   motion_next_edge_us = micros();
   motion_deadline_ms = millis() + HOME_TIMEOUT_MS;
   motion_type = MotionType::HOME;
@@ -132,7 +152,13 @@ bool beginMove(const Axis &axis, int32_t steps, uint32_t rate) {
   motion_axis = &axis;
   motion_positive = steps > 0;
   motion_steps_remaining = static_cast<uint32_t>(labs(steps));
-  motion_period_us = 1000000U / rate;
+  motion_steps_completed = 0;
+  motion_start_rate = min(axis.start_step_rate, rate);
+  motion_target_rate = rate;
+  motion_ramp_steps = motion_steps_remaining / 2U;
+  if (motion_ramp_steps == 0) motion_ramp_steps = 1;
+  if (motion_ramp_steps > 100) motion_ramp_steps = 100;
+  updateMotionPeriod();
   motion_next_edge_us = micros();
   motion_type = MotionType::MOVE;
   motion_result = MotionResult::RUNNING;
@@ -189,6 +215,8 @@ void serviceMotion() {
     digitalWrite(motion_axis->step_pin, LOW);
     step_pin_high = false;
     if (motion_type == MotionType::MOVE) --motion_steps_remaining;
+    ++motion_steps_completed;
+    updateMotionPeriod();
     motion_next_edge_us =
         now + (motion_period_us > STEP_PULSE_US ? motion_period_us - STEP_PULSE_US : 1);
   }

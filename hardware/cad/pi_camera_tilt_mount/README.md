@@ -8,13 +8,15 @@ un axe de rotation M3.
 
 - base corrigée après essai imprimé: 38,20 × 30,45 mm;
 - deux avant-trous latéraux de 2,70 mm, profondeur 10 mm, pour vis M3;
-- centre des trous: 26,42 mm au-dessus du bas de la languette;
-- trous existants: 5,1 mm;
-- largeur du berceau: 32,14 mm.
+- deux parois latérales: longueur 24,00 mm, hauteur 6,20 mm;
+- deux oreilles centrales: longueur 8,70 mm, hauteur 5,99 mm;
+- espace entre les oreilles: 5,33 mm;
+- largeur de la fixation sous la caméra: 16,90 mm;
+- trou traversant M3: 3,40 mm.
 
-La profondeur utile autorise environ 27° théoriques. Le réglage conseillé est
-limité à 23° vers l'intérieur afin de conserver du jeu autour du berceau.
-La nappe CSI reste en dehors de cette base et ne traverse donc plus la pièce.
+Le support de caméra entre dans l'espace de 5,33 mm entre les oreilles. Une
+seule vis M3 traverse les deux oreilles et le support; un écrou M3 bloque
+l'angle. La nappe CSI reste en dehors de cette base.
 
 ## Fichiers
 
@@ -25,13 +27,11 @@ La nappe CSI reste en dehors de cette base et ne traverse donc plus la pièce.
 
 ## Visserie
 
-- 2 vis M3;
-- 2 écrous M3;
-- 4 rondelles M3.
+- 1 vis M3 traversante avec écrou et 2 rondelles pour le pivot caméra;
 - 2 vis M3 supplémentaires de 10 à 12 mm pour fixer la base au support rouge.
 
-Les rondelles doivent couvrir les trous de 5,1 mm du berceau blanc. Les deux
-vis serrent les flancs de la base contre le berceau afin de bloquer l'angle.
+La vis traversante serre les deux oreilles contre la patte centrale du support
+caméra afin de bloquer l'angle.
 
 ## Impression et montage
 
@@ -42,10 +42,9 @@ vis serrent les flancs de la base contre le berceau afin de bloquer l'angle.
    avec quatre périmètres et au moins 35 % de remplissage.
 4. Retirer le berceau blanc du support rouge sans débrancher brutalement la
    nappe CSI.
-5. Placer le berceau entre les deux flancs, aligner les trous et installer la
-   visserie M3 avec les rondelles.
-6. Placer la nouvelle base derrière le berceau, régler l'inclinaison entre 0 et
-   23° vers l'intérieur, puis serrer les deux vis.
+5. Placer la patte du support caméra dans l'espace central de 5,33 mm.
+6. Aligner les trous, installer la vis M3 traversante, régler l'inclinaison et
+   serrer l'écrou.
 7. Repérer les deux avant-trous latéraux, percer le support rouge à 3,2 mm puis
    fixer la base depuis chaque côté avec une vis M3 de 10 à 12 mm.
 

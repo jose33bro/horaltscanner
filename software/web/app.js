@@ -423,12 +423,21 @@ const HoralScannerUI = (() => {
 
   function renderCameraMetrics(camera, result) {
     const target = byId(`camera-${camera}-metrics`);
+    const checkerboard = result.checkerboard_found
+      ? `${result.checkerboard_columns} × ${result.checkerboard_rows}`
+      : "Non detectee";
     const rows = [
       ["Resolution", `${result.width} × ${result.height}`],
       ["Luminosite", result.brightness],
       ["Nettete", result.sharpness],
-      ["Mire 9 × 6", result.checkerboard_found ? "Detectee" : "Non detectee"],
+      ["Mire", checkerboard],
     ];
+    if (result.checkerboard_found) {
+      rows.push(
+        ["Decalage horizontal", `${formatSigned(result.center_offset_x_px)} px`],
+        ["Decalage vertical", `${formatSigned(result.center_offset_y_px)} px`],
+      );
+    }
     target.replaceChildren(...rows.map(([label, value]) => {
       const row = document.createElement("div");
       const name = document.createElement("span");
@@ -438,6 +447,11 @@ const HoralScannerUI = (() => {
       row.append(name, metric);
       return row;
     }));
+  }
+
+  function formatSigned(value) {
+    const number = Number(value);
+    return `${number > 0 ? "+" : ""}${number.toFixed(1)}`;
   }
 
   async function calibrationTest(camera) {
@@ -452,11 +466,13 @@ const HoralScannerUI = (() => {
       title.textContent = camera === "pi" ? "Pi Camera V3 NoIR" : "Logitech C270";
       const verdict = document.createElement("p");
       verdict.textContent = data.checkerboard_found
-        ? "Mire detectee. Cette vue est exploitable pour une calibration."
+        ? `Mire ${data.checkerboard_columns} × ${data.checkerboard_rows} detectee.`
         : "Mire non detectee. Ajustez le cadrage, la nettete ou l'eclairage.";
       const details = document.createElement("p");
       details.className = "muted";
-      details.textContent = `Resolution ${data.width} × ${data.height} · luminosite ${data.brightness} · nettete ${data.sharpness}`;
+      details.textContent = data.checkerboard_found
+        ? `Decalage du centre: horizontal ${formatSigned(data.center_offset_x_px)} px · vertical ${formatSigned(data.center_offset_y_px)} px`
+        : `Resolution ${data.width} × ${data.height} · luminosite ${data.brightness} · nettete ${data.sharpness}`;
       result.append(title, verdict, details);
     } catch (error) {
       result.textContent = error.message;

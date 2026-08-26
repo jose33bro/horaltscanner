@@ -11,12 +11,9 @@ from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 
 OUTPUT_DIR = Path(__file__).parent / "stl"
 
-# Free volume measured behind the existing white camera holder.
-CAVITY_WIDTH = 53.44
-CAVITY_HEIGHT = 31.70
-CAVITY_DEPTH = 16.03
-BASE_WIDTH = 52.80
-BASE_DEPTH = 15.50
+# Dimensions corrected after printing and measuring the first fit test.
+BASE_WIDTH = 38.20
+BASE_DEPTH = 30.45
 BASE_HEIGHT = 7.00
 SIDE_SCREW_PILOT_DIAMETER = 2.70
 SIDE_SCREW_PILOT_DEPTH = 10.00
@@ -25,7 +22,7 @@ SIDE_SCREW_HEIGHT = 3.50
 # Measurements taken from the existing removable white camera holder.
 HOLDER_WIDTH = 32.14
 PIVOT_HEIGHT = 26.42
-YOKE_WALL = 3.00
+YOKE_WALL = 2.80
 YOKE_CLEARANCE = 0.46
 YOKE_INNER_WIDTH = HOLDER_WIDTH + YOKE_CLEARANCE
 YOKE_OUTER_WIDTH = YOKE_INNER_WIDTH + (2 * YOKE_WALL)
@@ -115,4 +112,4 @@ def export_model(model: TopoDS_Shape, filename: str) -> None:
 
 if __name__ == "__main__":
     export_model(make_mount(), "pi_camera_tilt_base.stl")
-    export_model(make_fit_test(), "fit_test_rear_cavity_52.8x15.5.stl")
+    export_model(make_fit_test(), "fit_test_rear_cavity_38.2x30.45.stl")

@@ -6,8 +6,7 @@ un axe de rotation M3.
 
 ## Cotes utilisées
 
-- espace arrière disponible: 53,44 × 31,70 × 16,03 mm;
-- base avec jeu d'impression: 52,80 × 15,50 mm;
+- base corrigée après essai imprimé: 38,20 × 30,45 mm;
 - deux avant-trous latéraux de 2,70 mm, profondeur 10 mm, pour vis M3;
 - centre des trous: 26,42 mm au-dessus du bas de la languette;
 - trous existants: 5,1 mm;
@@ -19,7 +18,7 @@ La nappe CSI reste en dehors de cette base et ne traverse donc plus la pièce.
 
 ## Fichiers
 
-- `stl/fit_test_rear_cavity_52.8x15.5.stl`: test d'encombrement à imprimer en
+- `stl/fit_test_rear_cavity_38.2x30.45.stl`: test d'encombrement à imprimer en
   premier;
 - `stl/pi_camera_tilt_base.stl`: base orientable définitive;
 - `generate.py`: source paramétrique Python/OpenCascade.

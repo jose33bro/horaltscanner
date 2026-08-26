@@ -12,22 +12,27 @@ from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 OUTPUT_DIR = Path(__file__).parent / "stl"
 
 # Dimensions corrected after printing and measuring the first fit test.
-BASE_WIDTH = 38.20
-BASE_DEPTH = 30.45
-BASE_HEIGHT = 3.20
+PLATE_WIDTH = 38.20
+PLATE_HEIGHT = 30.45
+MATERIAL_THICKNESS = 3.20
+SHELF_PROJECTION = 24.00
+
 SIDE_SCREW_PILOT_DIAMETER = 2.70
 SIDE_SCREW_PILOT_DEPTH = 10.00
-SIDE_SCREW_HEIGHT = 1.60
+SIDE_SCREW_HEIGHT = 3.50
 
 SIDE_WALL_THICKNESS = 3.20
-SIDE_WALL_LENGTH = 24.00
 SIDE_WALL_HEIGHT = 6.20
 
-CAMERA_SUPPORT_WIDTH = 16.90
-EAR_LENGTH = 8.70
+EAR_PROJECTION = 8.70
+EAR_WIDTH = 8.50
 EAR_GAP = 5.33
 EAR_HEIGHT = 5.99
 PIVOT_CLEARANCE_DIAMETER = 3.40
+
+CSI_SLOT_WIDTH = 18.00
+CSI_SLOT_HEIGHT = 9.56
+CSI_SLOT_BOTTOM = 5.00
 
 
 def make_box(
@@ -58,43 +63,97 @@ def cut(shape: TopoDS_Shape, tool: TopoDS_Shape) -> TopoDS_Shape:
 
 
 def make_mount() -> TopoDS_Shape:
-    base = make_box(BASE_WIDTH, BASE_DEPTH, BASE_HEIGHT)
-    wall_x = (BASE_WIDTH - SIDE_WALL_THICKNESS) / 2
+    plate = make_box(
+        PLATE_WIDTH,
+        MATERIAL_THICKNESS,
+        PLATE_HEIGHT,
+    )
+
+    plate_front_y = -(MATERIAL_THICKNESS / 2)
+    shelf_front_y = plate_front_y - SHELF_PROJECTION
+    shelf_back_y = plate_front_y + 1.00
+    shelf_depth = shelf_back_y - shelf_front_y
+    shelf_y = (shelf_back_y + shelf_front_y) / 2
+    shelf = make_box(
+        PLATE_WIDTH,
+        shelf_depth,
+        MATERIAL_THICKNESS,
+        y=shelf_y,
+    )
+
+    wall_x = (PLATE_WIDTH - SIDE_WALL_THICKNESS) / 2
     left_wall = make_box(
         SIDE_WALL_THICKNESS,
-        SIDE_WALL_LENGTH,
+        shelf_depth,
         SIDE_WALL_HEIGHT,
         x=-wall_x,
-        z=BASE_HEIGHT,
+        y=shelf_y,
+        z=MATERIAL_THICKNESS,
     )
     right_wall = make_box(
         SIDE_WALL_THICKNESS,
-        SIDE_WALL_LENGTH,
+        shelf_depth,
         SIDE_WALL_HEIGHT,
         x=wall_x,
-        z=BASE_HEIGHT,
+        y=shelf_y,
+        z=MATERIAL_THICKNESS,
     )
 
-    ear_offset_y = (EAR_GAP + EAR_LENGTH) / 2
-    front_ear = make_box(
-        CAMERA_SUPPORT_WIDTH,
-        EAR_LENGTH,
+    ear_radius = EAR_HEIGHT / 2
+    ear_center_distance = EAR_PROJECTION - ear_radius
+    ear_tip_y = plate_front_y - ear_center_distance
+    ear_anchor_y = plate_front_y + 1.00
+    ear_box_depth = ear_anchor_y - ear_tip_y + 0.20
+    ear_body_y = (ear_anchor_y + ear_tip_y - 0.20) / 2
+    ear_x = (EAR_GAP + EAR_WIDTH) / 2
+    ear_z = PLATE_HEIGHT - EAR_HEIGHT
+    ear_center_z = PLATE_HEIGHT - ear_radius
+    left_ear_body = make_box(
+        EAR_WIDTH,
+        ear_box_depth,
         EAR_HEIGHT,
-        y=-ear_offset_y,
-        z=BASE_HEIGHT,
+        x=-ear_x,
+        y=ear_body_y,
+        z=ear_z,
     )
-    rear_ear = make_box(
-        CAMERA_SUPPORT_WIDTH,
-        EAR_LENGTH,
+    right_ear_body = make_box(
+        EAR_WIDTH,
+        ear_box_depth,
         EAR_HEIGHT,
-        y=ear_offset_y,
-        z=BASE_HEIGHT,
+        x=ear_x,
+        y=ear_body_y,
+        z=ear_z,
     )
+    left_ear_round = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(-ear_x - (EAR_WIDTH / 2), ear_tip_y, ear_center_z),
+            gp_Dir(1, 0, 0),
+        ),
+        ear_radius,
+        EAR_WIDTH,
+    ).Shape()
+    right_ear_round = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(ear_x - (EAR_WIDTH / 2), ear_tip_y, ear_center_z),
+            gp_Dir(1, 0, 0),
+        ),
+        ear_radius,
+        EAR_WIDTH,
+    ).Shape()
 
-    mount = fuse(base, left_wall, right_wall, front_ear, rear_ear)
+    mount = fuse(
+        plate,
+        shelf,
+        left_wall,
+        right_wall,
+        left_ear_body,
+        right_ear_body,
+        left_ear_round,
+        right_ear_round,
+    )
     left_screw_pilot = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(-(BASE_WIDTH / 2) - 1, 0, SIDE_SCREW_HEIGHT),
+            gp_Pnt(-(PLATE_WIDTH / 2) - 1, 0, SIDE_SCREW_HEIGHT),
             gp_Dir(1, 0, 0),
         ),
         SIDE_SCREW_PILOT_DIAMETER / 2,
@@ -102,7 +161,7 @@ def make_mount() -> TopoDS_Shape:
     ).Shape()
     right_screw_pilot = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt((BASE_WIDTH / 2) + 1, 0, SIDE_SCREW_HEIGHT),
+            gp_Pnt((PLATE_WIDTH / 2) + 1, 0, SIDE_SCREW_HEIGHT),
             gp_Dir(-1, 0, 0),
         ),
         SIDE_SCREW_PILOT_DIAMETER / 2,
@@ -111,17 +170,23 @@ def make_mount() -> TopoDS_Shape:
     mount = cut(cut(mount, left_screw_pilot), right_screw_pilot)
     pivot_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(0, -(EAR_GAP / 2) - EAR_LENGTH - 1, BASE_HEIGHT + (EAR_HEIGHT / 2)),
-            gp_Dir(0, 1, 0),
+            gp_Pnt(-(EAR_GAP / 2) - EAR_WIDTH - 1, ear_tip_y, ear_center_z),
+            gp_Dir(1, 0, 0),
         ),
         PIVOT_CLEARANCE_DIAMETER / 2,
-        (2 * EAR_LENGTH) + EAR_GAP + 2,
+        (2 * EAR_WIDTH) + EAR_GAP + 2,
     ).Shape()
-    return cut(mount, pivot_hole)
+    csi_slot = make_box(
+        CSI_SLOT_WIDTH,
+        MATERIAL_THICKNESS + 2,
+        CSI_SLOT_HEIGHT,
+        z=CSI_SLOT_BOTTOM,
+    )
+    return cut(cut(mount, pivot_hole), csi_slot)
 
 
 def make_fit_test() -> TopoDS_Shape:
-    return make_box(BASE_WIDTH, BASE_DEPTH, BASE_HEIGHT)
+    return make_box(PLATE_WIDTH, MATERIAL_THICKNESS, PLATE_HEIGHT)
 
 
 def export_model(model: TopoDS_Shape, filename: str) -> None:

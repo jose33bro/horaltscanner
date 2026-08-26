@@ -9,8 +9,9 @@ Ce firmware cible uniquement une carte Creality V4.2.2 équipée d'un
 - Les sorties chauffantes PA1 et PA2 sont forcées à l'arrêt.
 - Les moteurs sont désactivés au démarrage, après chaque mouvement et après
   cinq secondes sans commande.
-- Un déplacement vers la butée s'arrête dès que l'entrée correspondante passe
-  à l'état bas.
+- Un déplacement vers la butée s'arrête dès que l'entrée correspondante devient
+  active. Les contacts normalement fermés de X, Y et Z sont actifs à l'état
+  haut lorsqu'ils s'ouvrent sur la butée.
 - Une recherche d'origine est abandonnée après 120 secondes.
 - Le repère Y arrête uniquement `HOME Y`. Les rotations normales peuvent le
   franchir afin que le plateau circulaire accomplisse un tour complet.

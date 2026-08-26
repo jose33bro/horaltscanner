@@ -1,25 +1,25 @@
 # Support orientable pour Pi Camera V3
 
-Ce modèle réutilise le berceau blanc visible sur le scanner. La nouvelle base
-occupe l'espace libre derrière ce berceau et place ses deux trous latéraux sur
-un axe de rotation M3.
+Ce modèle en L réutilise le support blanc visible sur le scanner. Sa plaque
+verticale reprend l'espace validé, tandis qu'une tablette inférieure part vers
+l'avant. Deux oreilles arrondies en haut reçoivent l'axe M3 de la caméra.
 
 ## Cotes utilisées
 
-- base corrigée après essai imprimé: 38,20 × 30,45 mm;
+- plaque verticale corrigée après essai: 38,20 × 30,45 × 3,20 mm;
+- tablette inférieure vers l'avant: 24,00 mm;
 - deux avant-trous latéraux de 2,70 mm, profondeur 10 mm, pour vis M3;
-- deux parois latérales depuis l'arrière: longueur 24,00 mm, hauteur 6,20 mm;
-- bande centrale sous caméra: largeur 16,90 mm, abaissée de 5,00 mm par
-  rapport au haut des parois;
+- deux parois sur les côtés de la tablette: hauteur 6,20 mm;
 - deux oreilles arrondies sortant du bord avant: projection 8,70 mm, largeur
   8,50 mm, hauteur 5,99 mm;
 - espace entre les oreilles: 5,33 mm;
 - trou traversant M3: 3,40 mm.
+- fenêtre CSI fermée dans la plaque: 18,00 × 9,56 mm.
 
-Les oreilles sont centrées sur le bord avant de 30,45 mm. Le support de caméra
-entre dans leur espace de 5,33 mm. Une seule vis M3 traverse les deux arrondis
-et le support; un écrou M3 bloque l'angle. La nappe CSI reste en dehors de
-cette base.
+Les oreilles sont centrées en haut de la plaque de 38,20 mm. Le support de
+caméra entre dans leur espace de 5,33 mm. Une seule vis M3 traverse les deux
+arrondis et le support; un écrou M3 bloque l'angle. La nappe CSI traverse la
+fenêtre centrale sans ouverture jusqu'au bord de la pièce.
 
 ## Fichiers
 
@@ -39,9 +39,8 @@ caméra afin de bloquer l'angle.
 ## Impression et montage
 
 1. Imprimer d'abord le test d'encombrement à plat.
-2. Vérifier qu'il entre dans l'espace arrière sans forcer. Ajuster les
-   constantes `BASE_WIDTH` et `BASE_DEPTH` si nécessaire.
-3. Imprimer la base définitive dans la même orientation, en PETG recommandé,
+2. Vérifier qu'il correspond à l'espace arrière sans forcer.
+3. Imprimer la base définitive en PETG recommandé,
    avec quatre périmètres et au moins 35 % de remplissage.
 4. Retirer le berceau blanc du support rouge sans débrancher brutalement la
    nappe CSI.

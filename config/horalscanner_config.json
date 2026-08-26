@@ -12,7 +12,7 @@
       "endstop_pin": "PA5",
       "position_max": 210,
       "microsteps": 16,
-      "homing_speed": 5
+      "homing_speed": 20
     },
     "y": {
       "step_pin": "PB8",

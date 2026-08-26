@@ -11,7 +11,8 @@
       "rotation_distance": 40,
       "endstop_pin": "PA5",
       "position_max": 210,
-      "microsteps": 16
+      "microsteps": 16,
+      "homing_speed": 20
     },
     "y": {
       "step_pin": "PB8",
@@ -20,7 +21,8 @@
       "rotation_distance": 620,
       "endstop_pin": "PA6",
       "position_max": 628.32,
-      "microsteps": 16
+      "microsteps": 16,
+      "homing_speed": 5
     },
     "z": {
       "step_pin": "PB6",
@@ -29,7 +31,8 @@
       "rotation_distance": 8,
       "endstop_pin": "PA7",
       "position_max": 270,
-      "microsteps": 16
+      "microsteps": 16,
+      "homing_speed": 1
     }
   },
   "lasers": {

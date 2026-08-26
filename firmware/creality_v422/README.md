@@ -12,6 +12,10 @@ Ce firmware cible uniquement une carte Creality V4.2.2 équipée d'un
 - Un déplacement vers la butée s'arrête dès que l'entrée correspondante passe
   à l'état bas.
 - Une recherche d'origine est abandonnée après 120 secondes.
+- Les mouvements utilisent une rampe d'accélération et de décélération pour
+  éviter les résonances et pertes de pas du plateau.
+- La vitesse de référencement est limitée séparément pour chaque mécanique:
+  X et Z à 400 pas/s, Y à 100 pas/s après accélération progressive.
 - Les trois axes partagent la sortie d'activation PC3.
 
 Ne flashez pas ce binaire sur une carte GD32 ou une autre révision. Débranchez

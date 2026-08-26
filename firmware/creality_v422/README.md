@@ -12,6 +12,8 @@ Ce firmware cible uniquement une carte Creality V4.2.2 équipée d'un
 - Un déplacement vers la butée s'arrête dès que l'entrée correspondante passe
   à l'état bas.
 - Une recherche d'origine est abandonnée après 120 secondes.
+- Le repère Y arrête uniquement `HOME Y`. Les rotations normales peuvent le
+  franchir afin que le plateau circulaire accomplisse un tour complet.
 - Les mouvements utilisent une rampe d'accélération et de décélération pour
   éviter les résonances et pertes de pas du plateau.
 - La vitesse de référencement est limitée séparément pour chaque mécanique:

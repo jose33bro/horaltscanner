@@ -33,7 +33,7 @@ struct Axis {
 constexpr Axis AXES[] = {
     {'X', PC2, PB9, PA5, false, 100, 400},
     {'Y', PB8, PB7, PA6, true, 20, 100},
-    {'Z', PB6, PB5, PA7, false, 100, 400},
+    {'Z', PB6, PB5, PA7, true, 100, 400},
 };
 constexpr size_t AXIS_COUNT = sizeof(AXES) / sizeof(AXES[0]);
 
@@ -195,7 +195,8 @@ void serviceMotion() {
       finishMotion(MotionResult::ERROR);
       return;
     }
-  } else if (!motion_positive && endstopTriggered(*motion_axis)) {
+  } else if (motion_axis->name != 'Y' && !motion_positive &&
+             endstopTriggered(*motion_axis)) {
     finishMotion(MotionResult::DONE);
     return;
   }

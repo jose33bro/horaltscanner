@@ -18,11 +18,14 @@ MATERIAL_THICKNESS = 3.20
 SHELF_PROJECTION = 24.00
 
 SIDE_SCREW_PILOT_DIAMETER = 2.70
-SIDE_SCREW_PILOT_DEPTH = 10.00
-SIDE_SCREW_HEIGHT = 3.50
+SIDE_SCREW_PILOT_DEPTH = 6.00
 
 SIDE_WALL_THICKNESS = 3.20
 SIDE_WALL_HEIGHT = 6.20
+LOWER_RAIL_WIDTH = 5.00
+LOWER_RAIL_LENGTH = 16.00
+LOWER_RAIL_DROP = 5.00
+LOWER_RAIL_OVERLAP = 0.50
 
 EAR_PROJECTION = 8.70
 EAR_WIDTH = 8.50
@@ -99,6 +102,26 @@ def make_mount() -> TopoDS_Shape:
         z=MATERIAL_THICKNESS,
     )
 
+    rail_x = (PLATE_WIDTH - LOWER_RAIL_WIDTH) / 2
+    rail_y = shelf_front_y + (LOWER_RAIL_LENGTH / 2)
+    rail_height = LOWER_RAIL_DROP + LOWER_RAIL_OVERLAP
+    left_rail = make_box(
+        LOWER_RAIL_WIDTH,
+        LOWER_RAIL_LENGTH,
+        rail_height,
+        x=-rail_x,
+        y=rail_y,
+        z=-LOWER_RAIL_DROP,
+    )
+    right_rail = make_box(
+        LOWER_RAIL_WIDTH,
+        LOWER_RAIL_LENGTH,
+        rail_height,
+        x=rail_x,
+        y=rail_y,
+        z=-LOWER_RAIL_DROP,
+    )
+
     ear_radius = EAR_HEIGHT / 2
     ear_center_distance = EAR_PROJECTION - ear_radius
     ear_tip_y = plate_front_y - ear_center_distance
@@ -146,6 +169,8 @@ def make_mount() -> TopoDS_Shape:
         shelf,
         left_wall,
         right_wall,
+        left_rail,
+        right_rail,
         left_ear_body,
         right_ear_body,
         left_ear_round,
@@ -153,7 +178,7 @@ def make_mount() -> TopoDS_Shape:
     )
     left_screw_pilot = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(-(PLATE_WIDTH / 2) - 1, 0, SIDE_SCREW_HEIGHT),
+            gp_Pnt(-(PLATE_WIDTH / 2) - 1, rail_y, -(LOWER_RAIL_DROP / 2)),
             gp_Dir(1, 0, 0),
         ),
         SIDE_SCREW_PILOT_DIAMETER / 2,
@@ -161,7 +186,7 @@ def make_mount() -> TopoDS_Shape:
     ).Shape()
     right_screw_pilot = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt((PLATE_WIDTH / 2) + 1, 0, SIDE_SCREW_HEIGHT),
+            gp_Pnt((PLATE_WIDTH / 2) + 1, rail_y, -(LOWER_RAIL_DROP / 2)),
             gp_Dir(-1, 0, 0),
         ),
         SIDE_SCREW_PILOT_DIAMETER / 2,

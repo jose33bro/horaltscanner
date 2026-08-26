@@ -11,7 +11,6 @@ constexpr uint32_t HOME_TIMEOUT_MS = 120000;
 constexpr uint32_t MAX_MOVE_STEPS = 200000;
 constexpr uint32_t MIN_STEP_RATE = 1;
 constexpr uint32_t MAX_STEP_RATE = 20000;
-constexpr uint32_t HOME_STEP_RATE = 1000;
 constexpr uint16_t STEP_PULSE_US = 4;
 
 constexpr uint32_t ENABLE_PIN = PC3;
@@ -27,12 +26,13 @@ struct Axis {
   uint32_t dir_pin;
   uint32_t endstop_pin;
   bool direction_inverted;
+  uint32_t home_step_rate;
 };
 
 constexpr Axis AXES[] = {
-    {'X', PC2, PB9, PA5, false},
-    {'Y', PB8, PB7, PA6, true},
-    {'Z', PB6, PB5, PA7, false},
+    {'X', PC2, PB9, PA5, false, 400},
+    {'Y', PB8, PB7, PA6, true, 40},
+    {'Z', PB6, PB5, PA7, false, 400},
 };
 constexpr size_t AXIS_COUNT = sizeof(AXES) / sizeof(AXES[0]);
 
@@ -119,7 +119,7 @@ void beginHomeAxis(uint8_t index) {
     return;
   }
   setDirection(*motion_axis, false);
-  motion_period_us = 1000000U / HOME_STEP_RATE;
+  motion_period_us = 1000000U / motion_axis->home_step_rate;
   motion_next_edge_us = micros();
   motion_deadline_ms = millis() + HOME_TIMEOUT_MS;
   motion_type = MotionType::HOME;

@@ -12,8 +12,8 @@ from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 OUTPUT_DIR = Path(__file__).parent / "stl"
 
 # Dimensions corrected after printing and measuring the first fit test.
-BASE_WIDTH = 38.20
-BASE_DEPTH = 30.45
+BASE_WIDTH = 30.45
+BASE_DEPTH = 38.20
 BASE_HEIGHT = 3.20
 SIDE_SCREW_PILOT_DIAMETER = 2.70
 SIDE_SCREW_PILOT_DEPTH = 10.00
@@ -23,8 +23,10 @@ SIDE_WALL_THICKNESS = 3.20
 SIDE_WALL_LENGTH = 24.00
 SIDE_WALL_HEIGHT = 6.20
 
-CAMERA_SUPPORT_WIDTH = 16.90
-EAR_LENGTH = 8.70
+LOWERED_CENTER_WIDTH = 16.90
+LOWERED_CENTER_DROP = 5.00
+EAR_PROJECTION = 8.70
+EAR_WIDTH = 8.50
 EAR_GAP = 5.33
 EAR_HEIGHT = 5.99
 PIVOT_CLEARANCE_DIAMETER = 3.40
@@ -60,11 +62,14 @@ def cut(shape: TopoDS_Shape, tool: TopoDS_Shape) -> TopoDS_Shape:
 def make_mount() -> TopoDS_Shape:
     base = make_box(BASE_WIDTH, BASE_DEPTH, BASE_HEIGHT)
     wall_x = (BASE_WIDTH - SIDE_WALL_THICKNESS) / 2
+    rear_y = BASE_DEPTH / 2
+    wall_y = rear_y - (SIDE_WALL_LENGTH / 2)
     left_wall = make_box(
         SIDE_WALL_THICKNESS,
         SIDE_WALL_LENGTH,
         SIDE_WALL_HEIGHT,
         x=-wall_x,
+        y=wall_y,
         z=BASE_HEIGHT,
     )
     right_wall = make_box(
@@ -72,26 +77,70 @@ def make_mount() -> TopoDS_Shape:
         SIDE_WALL_LENGTH,
         SIDE_WALL_HEIGHT,
         x=wall_x,
+        y=wall_y,
         z=BASE_HEIGHT,
     )
 
-    ear_offset_y = (EAR_GAP + EAR_LENGTH) / 2
-    front_ear = make_box(
-        CAMERA_SUPPORT_WIDTH,
-        EAR_LENGTH,
-        EAR_HEIGHT,
-        y=-ear_offset_y,
-        z=BASE_HEIGHT,
-    )
-    rear_ear = make_box(
-        CAMERA_SUPPORT_WIDTH,
-        EAR_LENGTH,
-        EAR_HEIGHT,
-        y=ear_offset_y,
+    center_height = SIDE_WALL_HEIGHT - LOWERED_CENTER_DROP
+    center_support = make_box(
+        LOWERED_CENTER_WIDTH,
+        SIDE_WALL_LENGTH,
+        center_height,
+        y=wall_y,
         z=BASE_HEIGHT,
     )
 
-    mount = fuse(base, left_wall, right_wall, front_ear, rear_ear)
+    ear_radius = EAR_HEIGHT / 2
+    ear_center_distance = EAR_PROJECTION - ear_radius
+    front_y = -(BASE_DEPTH / 2)
+    ear_tip_y = front_y - ear_center_distance
+    ear_anchor_y = front_y + 1.00
+    ear_box_depth = ear_anchor_y - ear_tip_y + 0.20
+    ear_body_y = (ear_anchor_y + ear_tip_y - 0.20) / 2
+    ear_x = (EAR_GAP + EAR_WIDTH) / 2
+    left_ear_body = make_box(
+        EAR_WIDTH,
+        ear_box_depth,
+        EAR_HEIGHT,
+        x=-ear_x,
+        y=ear_body_y,
+        z=BASE_HEIGHT,
+    )
+    right_ear_body = make_box(
+        EAR_WIDTH,
+        ear_box_depth,
+        EAR_HEIGHT,
+        x=ear_x,
+        y=ear_body_y,
+        z=BASE_HEIGHT,
+    )
+    left_ear_round = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(-ear_x - (EAR_WIDTH / 2), ear_tip_y, BASE_HEIGHT + ear_radius),
+            gp_Dir(1, 0, 0),
+        ),
+        ear_radius,
+        EAR_WIDTH,
+    ).Shape()
+    right_ear_round = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(ear_x - (EAR_WIDTH / 2), ear_tip_y, BASE_HEIGHT + ear_radius),
+            gp_Dir(1, 0, 0),
+        ),
+        ear_radius,
+        EAR_WIDTH,
+    ).Shape()
+
+    mount = fuse(
+        base,
+        left_wall,
+        right_wall,
+        center_support,
+        left_ear_body,
+        right_ear_body,
+        left_ear_round,
+        right_ear_round,
+    )
     left_screw_pilot = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
             gp_Pnt(-(BASE_WIDTH / 2) - 1, 0, SIDE_SCREW_HEIGHT),
@@ -111,11 +160,11 @@ def make_mount() -> TopoDS_Shape:
     mount = cut(cut(mount, left_screw_pilot), right_screw_pilot)
     pivot_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(0, -(EAR_GAP / 2) - EAR_LENGTH - 1, BASE_HEIGHT + (EAR_HEIGHT / 2)),
-            gp_Dir(0, 1, 0),
+            gp_Pnt(-(EAR_GAP / 2) - EAR_WIDTH - 1, ear_tip_y, BASE_HEIGHT + ear_radius),
+            gp_Dir(1, 0, 0),
         ),
         PIVOT_CLEARANCE_DIAMETER / 2,
-        (2 * EAR_LENGTH) + EAR_GAP + 2,
+        (2 * EAR_WIDTH) + EAR_GAP + 2,
     ).Shape()
     return cut(mount, pivot_hole)
 

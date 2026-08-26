@@ -191,7 +191,10 @@ class PiCamera:
         return base64.b64encode(jpeg).decode() if jpeg is not None else None
 
 
-def analyze_camera_frame(jpeg: bytes, checkerboard_size: tuple[int, int] = (9, 6)) -> dict:
+def analyze_camera_frame(
+    jpeg: bytes,
+    checkerboard_sizes: tuple[tuple[int, int], ...] = ((12, 7), (11, 6), (9, 6)),
+) -> dict:
     """Measure image quality and detect a calibration checkerboard."""
     if not _CV2_AVAILABLE:
         return {"analysis_available": False}
@@ -203,19 +206,44 @@ def analyze_camera_frame(jpeg: bytes, checkerboard_size: tuple[int, int] = (9, 6
         if image is None:
             raise ValueError("JPEG decode failed")
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        checkerboard_found, _ = cv2.findChessboardCorners(gray, checkerboard_size)
+        checkerboard_found = False
+        checkerboard_size = None
+        checkerboard_corners = None
+        for candidate_size in checkerboard_sizes:
+            found, corners = cv2.findChessboardCorners(gray, candidate_size)
+            if found:
+                checkerboard_found = True
+                checkerboard_size = candidate_size
+                checkerboard_corners = corners
+                break
+
         height, width = gray.shape
         brightness = float(gray.mean())
         sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        center_x = None
+        center_y = None
+        offset_x = None
+        offset_y = None
+        if checkerboard_corners is not None:
+            points = checkerboard_corners.reshape(-1, 2)
+            center_x = float(points[:, 0].mean())
+            center_y = float(points[:, 1].mean())
+            offset_x = center_x - ((width - 1) / 2.0)
+            offset_y = center_y - ((height - 1) / 2.0)
+
         return {
             "analysis_available": True,
             "width": width,
             "height": height,
             "brightness": round(brightness, 1),
             "sharpness": round(sharpness, 1),
-            "checkerboard_found": bool(checkerboard_found),
-            "checkerboard_columns": checkerboard_size[0],
-            "checkerboard_rows": checkerboard_size[1],
+            "checkerboard_found": checkerboard_found,
+            "checkerboard_columns": checkerboard_size[0] if checkerboard_size else None,
+            "checkerboard_rows": checkerboard_size[1] if checkerboard_size else None,
+            "checkerboard_center_x_px": round(center_x, 1) if center_x is not None else None,
+            "checkerboard_center_y_px": round(center_y, 1) if center_y is not None else None,
+            "center_offset_x_px": round(offset_x, 1) if offset_x is not None else None,
+            "center_offset_y_px": round(offset_y, 1) if offset_y is not None else None,
         }
     except Exception:
         logger.exception("Camera frame analysis failed")

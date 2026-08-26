@@ -14,23 +14,20 @@ OUTPUT_DIR = Path(__file__).parent / "stl"
 # Dimensions corrected after printing and measuring the first fit test.
 BASE_WIDTH = 38.20
 BASE_DEPTH = 30.45
-BASE_HEIGHT = 7.00
+BASE_HEIGHT = 3.20
 SIDE_SCREW_PILOT_DIAMETER = 2.70
 SIDE_SCREW_PILOT_DEPTH = 10.00
-SIDE_SCREW_HEIGHT = 3.50
+SIDE_SCREW_HEIGHT = 1.60
 
-# Measurements taken from the existing removable white camera holder.
-HOLDER_WIDTH = 32.14
-PIVOT_HEIGHT = 26.42
-YOKE_WALL = 2.80
-YOKE_CLEARANCE = 0.46
-YOKE_INNER_WIDTH = HOLDER_WIDTH + YOKE_CLEARANCE
-YOKE_OUTER_WIDTH = YOKE_INNER_WIDTH + (2 * YOKE_WALL)
-YOKE_DEPTH = BASE_DEPTH
-PIVOT_FROM_FRONT = 2.00
-PIVOT_Y = -(BASE_DEPTH / 2) + PIVOT_FROM_FRONT
+SIDE_WALL_THICKNESS = 3.20
+SIDE_WALL_LENGTH = 24.00
+SIDE_WALL_HEIGHT = 6.20
+
+CAMERA_SUPPORT_WIDTH = 16.90
+EAR_LENGTH = 8.70
+EAR_GAP = 5.33
+EAR_HEIGHT = 5.99
 PIVOT_CLEARANCE_DIAMETER = 3.40
-PIVOT_TOP_MARGIN = 4.00
 
 
 def make_box(
@@ -62,13 +59,39 @@ def cut(shape: TopoDS_Shape, tool: TopoDS_Shape) -> TopoDS_Shape:
 
 def make_mount() -> TopoDS_Shape:
     base = make_box(BASE_WIDTH, BASE_DEPTH, BASE_HEIGHT)
-    arm_height = PIVOT_HEIGHT + PIVOT_TOP_MARGIN - BASE_HEIGHT
-    arm_z = BASE_HEIGHT
-    arm_offset = (YOKE_INNER_WIDTH + YOKE_WALL) / 2
-    left_arm = make_box(YOKE_WALL, YOKE_DEPTH, arm_height, x=-arm_offset, z=arm_z)
-    right_arm = make_box(YOKE_WALL, YOKE_DEPTH, arm_height, x=arm_offset, z=arm_z)
+    wall_x = (BASE_WIDTH - SIDE_WALL_THICKNESS) / 2
+    left_wall = make_box(
+        SIDE_WALL_THICKNESS,
+        SIDE_WALL_LENGTH,
+        SIDE_WALL_HEIGHT,
+        x=-wall_x,
+        z=BASE_HEIGHT,
+    )
+    right_wall = make_box(
+        SIDE_WALL_THICKNESS,
+        SIDE_WALL_LENGTH,
+        SIDE_WALL_HEIGHT,
+        x=wall_x,
+        z=BASE_HEIGHT,
+    )
 
-    mount = fuse(base, left_arm, right_arm)
+    ear_offset_y = (EAR_GAP + EAR_LENGTH) / 2
+    front_ear = make_box(
+        CAMERA_SUPPORT_WIDTH,
+        EAR_LENGTH,
+        EAR_HEIGHT,
+        y=-ear_offset_y,
+        z=BASE_HEIGHT,
+    )
+    rear_ear = make_box(
+        CAMERA_SUPPORT_WIDTH,
+        EAR_LENGTH,
+        EAR_HEIGHT,
+        y=ear_offset_y,
+        z=BASE_HEIGHT,
+    )
+
+    mount = fuse(base, left_wall, right_wall, front_ear, rear_ear)
     left_screw_pilot = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
             gp_Pnt(-(BASE_WIDTH / 2) - 1, 0, SIDE_SCREW_HEIGHT),
@@ -88,11 +111,11 @@ def make_mount() -> TopoDS_Shape:
     mount = cut(cut(mount, left_screw_pilot), right_screw_pilot)
     pivot_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(-(BASE_WIDTH / 2) - 1, PIVOT_Y, PIVOT_HEIGHT),
-            gp_Dir(1, 0, 0),
+            gp_Pnt(0, -(EAR_GAP / 2) - EAR_LENGTH - 1, BASE_HEIGHT + (EAR_HEIGHT / 2)),
+            gp_Dir(0, 1, 0),
         ),
         PIVOT_CLEARANCE_DIAMETER / 2,
-        BASE_WIDTH + 2,
+        (2 * EAR_LENGTH) + EAR_GAP + 2,
     ).Shape()
     return cut(mount, pivot_hole)
 

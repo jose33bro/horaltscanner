@@ -17,7 +17,10 @@ CAVITY_HEIGHT = 31.70
 CAVITY_DEPTH = 16.03
 BASE_WIDTH = 52.80
 BASE_DEPTH = 15.50
-BASE_HEIGHT = 3.00
+BASE_HEIGHT = 7.00
+SIDE_SCREW_PILOT_DIAMETER = 2.70
+SIDE_SCREW_PILOT_DEPTH = 10.00
+SIDE_SCREW_HEIGHT = 3.50
 
 # Measurements taken from the existing removable white camera holder.
 HOLDER_WIDTH = 32.14
@@ -69,6 +72,23 @@ def make_mount() -> TopoDS_Shape:
     right_arm = make_box(YOKE_WALL, YOKE_DEPTH, arm_height, x=arm_offset, z=arm_z)
 
     mount = fuse(base, left_arm, right_arm)
+    left_screw_pilot = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(-(BASE_WIDTH / 2) - 1, 0, SIDE_SCREW_HEIGHT),
+            gp_Dir(1, 0, 0),
+        ),
+        SIDE_SCREW_PILOT_DIAMETER / 2,
+        SIDE_SCREW_PILOT_DEPTH + 1,
+    ).Shape()
+    right_screw_pilot = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt((BASE_WIDTH / 2) + 1, 0, SIDE_SCREW_HEIGHT),
+            gp_Dir(-1, 0, 0),
+        ),
+        SIDE_SCREW_PILOT_DIAMETER / 2,
+        SIDE_SCREW_PILOT_DEPTH + 1,
+    ).Shape()
+    mount = cut(cut(mount, left_screw_pilot), right_screw_pilot)
     pivot_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
             gp_Pnt(-(BASE_WIDTH / 2) - 1, PIVOT_Y, PIVOT_HEIGHT),
@@ -81,7 +101,7 @@ def make_mount() -> TopoDS_Shape:
 
 
 def make_fit_test() -> TopoDS_Shape:
-    return make_box(BASE_WIDTH, BASE_DEPTH, 5.00)
+    return make_box(BASE_WIDTH, BASE_DEPTH, BASE_HEIGHT)
 
 
 def export_model(model: TopoDS_Shape, filename: str) -> None:

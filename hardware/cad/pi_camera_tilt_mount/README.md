@@ -8,8 +8,11 @@ l'avant. Deux oreilles arrondies en haut reçoivent l'axe M3 de la caméra.
 
 - plaque verticale corrigée après essai: 38,20 × 30,45 × 3,20 mm;
 - tablette inférieure vers l'avant: 24,00 mm;
-- deux avant-trous latéraux de 2,70 mm, profondeur 10 mm, pour vis M3;
 - deux parois sur les côtés de la tablette: hauteur 6,20 mm;
+- deux rails sous la tablette, depuis le bord avant: largeur 5,00 mm, longueur
+  16,00 mm, descente 5,00 mm;
+- un avant-trou horizontal de 2,70 mm dans chaque rail pour une vis M3 depuis
+  le côté;
 - deux oreilles arrondies sortant du bord avant: projection 8,70 mm, largeur
   8,50 mm, hauteur 5,99 mm;
 - espace entre les oreilles: 5,33 mm;
@@ -47,8 +50,9 @@ caméra afin de bloquer l'angle.
 5. Placer la patte du support caméra dans l'espace central de 5,33 mm.
 6. Aligner les trous, installer la vis M3 traversante, régler l'inclinaison et
    serrer l'écrou.
-7. Repérer les deux avant-trous latéraux, percer le support rouge à 3,2 mm puis
-   fixer la base depuis chaque côté avec une vis M3 de 10 à 12 mm.
+7. Repérer les deux avant-trous dans les rails inférieurs, percer le support
+   rouge à 3,2 mm puis fixer la base horizontalement depuis chaque côté avec
+   une vis M3.
 
 Maintenir la nappe CSI à l'extérieur de la base. Ne pas la pincer ni la plier
 fortement pendant l'inclinaison.

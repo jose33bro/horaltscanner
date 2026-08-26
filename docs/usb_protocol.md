@@ -15,6 +15,8 @@ Transport attendu: USB CDC (liaison série virtuelle).
    - `AXIS`: `X`, `Y`, `Z` ou `ALL`.
    - Référence l'axe demandé sur son endstop.
    - Réponse: `OK HOME`
+   - Sur Y, le capteur est un repère angulaire: il arrête le référencement,
+     mais pas une commande `MOVE Y` pendant un tour normal.
 
 4. `ENDSTOP Y`
    - Réponse: `OK ENDSTOP 0` ou `OK ENDSTOP 1`

@@ -18,8 +18,11 @@ Transport attendu: USB CDC (liaison série virtuelle).
    - Sur Y, le capteur est un repère angulaire: il arrête le référencement,
      mais pas une commande `MOVE Y` pendant un tour normal.
 
-4. `ENDSTOP Y`
+4. `ENDSTOP <AXIS>`
+   - `AXIS`: `X`, `Y`, `Z`
    - Réponse: `OK ENDSTOP 0` ou `OK ENDSTOP 1`
+   - `1` signifie que le capteur est activé, indépendamment de sa polarité
+     électrique.
 
 5. `SYNC <TOKEN>`
    - Barrière de synchronisation moteurs/capteurs

@@ -26,14 +26,15 @@ struct Axis {
   uint32_t dir_pin;
   uint32_t endstop_pin;
   bool direction_inverted;
+  bool endstop_active_high;
   uint32_t start_step_rate;
   uint32_t home_step_rate;
 };
 
 constexpr Axis AXES[] = {
-    {'X', PC2, PB9, PA5, false, 100, 400},
-    {'Y', PB8, PB7, PA6, true, 20, 100},
-    {'Z', PB6, PB5, PA7, true, 100, 400},
+    {'X', PC2, PB9, PA5, false, true, 100, 400},
+    {'Y', PB8, PB7, PA6, true, true, 20, 100},
+    {'Z', PB6, PB5, PA7, true, true, 100, 400},
 };
 constexpr size_t AXIS_COUNT = sizeof(AXES) / sizeof(AXES[0]);
 
@@ -76,7 +77,7 @@ void setSteppersEnabled(bool enabled) {
 }
 
 bool endstopTriggered(const Axis &axis) {
-  return digitalRead(axis.endstop_pin) == LOW;
+  return digitalRead(axis.endstop_pin) == (axis.endstop_active_high ? HIGH : LOW);
 }
 
 void setDirection(const Axis &axis, bool positive) {

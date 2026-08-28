@@ -63,29 +63,34 @@ jobs:
           if [ -n "$INPUT_BASE_IMAGE_URL" ]; then
             RESOLVED_RPI_OS_URL="$INPUT_BASE_IMAGE_URL"
           else
-            OS_LIST_URL="https://downloads.raspberrypi.com/os_list_imagingutility_v3.json"
-            RESOLVED_RPI_OS_URL=$(curl -fsSL "$OS_LIST_URL" \
-              | python3 -c '
-import json, sys
+            IMAGE_INDEX_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/"
+            IMAGE_DIR=$(curl -fsSL "$IMAGE_INDEX_URL" \
+              | grep -oE 'href="raspios_lite_arm64-[0-9-]+/?"' \
+              | sed 's/^href="//; s/"$//' \
+              | tr -d '/' \
+              | sort -V \
+              | tail -n 1)
+            test -n "$IMAGE_DIR"
 
-def find_url(items):
-    for item in items:
-        name = item.get("name", "")
-        url = item.get("url", "")
-        if "Lite" in name and "64-bit" in name and url.endswith(".img.xz"):
-            return url
-        result = find_url(item.get("subitems", []))
-        if result:
-            return result
-    return None
+            IMAGE_DIR_URL="${IMAGE_INDEX_URL}${IMAGE_DIR}/"
+            IMAGE_PATH=$(curl -fsSL "$IMAGE_DIR_URL" \
+              | grep -oE 'href="[^"]*bookworm[^"]*arm64-lite[^"]*\.img\.xz"' \
+              | sed 's/^href="//; s/"$//' \
+              | sort -V \
+              | tail -n 1)
+            test -n "$IMAGE_PATH"
 
-data = json.load(sys.stdin)
-url = find_url(data.get("os_list", []))
-if not url:
-    sys.exit(1)
-print(url)
-')
-            test -n "$RESOLVED_RPI_OS_URL"
+            case "$IMAGE_PATH" in
+              http://*|https://*)
+                RESOLVED_RPI_OS_URL="$IMAGE_PATH"
+                ;;
+              /*)
+                RESOLVED_RPI_OS_URL="https://downloads.raspberrypi.com${IMAGE_PATH}"
+                ;;
+              *)
+                RESOLVED_RPI_OS_URL="${IMAGE_DIR_URL}${IMAGE_PATH}"
+                ;;
+            esac
           fi
 
           {

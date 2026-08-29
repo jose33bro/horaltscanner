@@ -18,15 +18,18 @@ l'avant. Deux oreilles arrondies en haut reçoivent l'axe M3 de la caméra.
 - espace entre les oreilles: 5,33 mm;
 - trou traversant M3: 3,40 mm.
 - hauteur totale caméra + support entre les oreilles: 34,00 mm;
-- trou de réglage inférieur traversant: M5 (Ø 5,30 mm de passage);
+- trou de réglage inférieur traversant dans la plaque verticale: M5 (Ø 5,30 mm
+  de passage);
 - vis de réglage inférieure: M5 × 45 (pas standard 0,80 mm);
 - fenêtre CSI centrée dans la tablette horizontale: 18,00 × 9,56 mm.
 
 Les oreilles sont centrées en haut de la plaque (hauteur 38,20 mm). Le support de
 caméra entre dans leur espace de 5,33 mm. Une seule vis M3 traverse les deux
 arrondis et le support; un écrou M3 bloque l'angle. La vis inférieure de
-réglage M5 × 45 traverse la section basse avec un passage imprimable de 5,30 mm.
-La nappe CSI traverse la fenêtre centrée dans la tablette horizontale.
+réglage M5 × 45 traverse maintenant la plaque verticale avec un passage
+imprimable de 5,30 mm et environ 3,0 mm de matière sous le trou pour
+l'impression. La nappe CSI traverse la fenêtre centrée dans la tablette
+horizontale.
 
 ## Fichiers
 

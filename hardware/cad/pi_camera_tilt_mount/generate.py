@@ -75,6 +75,7 @@ def make_mount() -> TopoDS_Shape:
         PLATE_HEIGHT,
     )
 
+    plate_back_y = MATERIAL_THICKNESS / 2
     plate_front_y = -(MATERIAL_THICKNESS / 2)
     shelf_front_y = plate_front_y - SHELF_PROJECTION
     shelf_back_y = plate_front_y + 1.00
@@ -212,7 +213,7 @@ def make_mount() -> TopoDS_Shape:
     # Drill the lower adjustment passage through the vertical plate thickness
     # (rear -> front), not across the mount width (left -> right).
     lower_adjustment_screw_x = 0.00
-    lower_adjustment_screw_y = (MATERIAL_THICKNESS / 2) + 1.00
+    lower_adjustment_screw_y = plate_back_y + 1.00
     lower_adjustment_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
             gp_Pnt(lower_adjustment_screw_x, lower_adjustment_screw_y, lower_adjustment_screw_z),

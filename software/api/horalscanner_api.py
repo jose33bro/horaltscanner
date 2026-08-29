@@ -15,7 +15,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory
 from software.api import config_manager
-from software.api.camera_driver import LogitechCamera, PiCamera, analyze_camera_frame
+from software.api.camera_driver import LogitechCamera, PiCamera, analyze_camera_frame, analyze_laser_line
 from software.api.lidar_driver import LidarDriver
 from software.api.scanner_engine import ReconstructionEngine, ScanSession
 
@@ -481,6 +481,68 @@ def camera_test(camera_name: str):
     if not result["analysis_available"]:
         return _json_error("OpenCV camera analysis unavailable", 503)
     return jsonify({"success": True, "camera": camera_name, "result": result})
+
+
+@app.route("/api/laser/align/<side>", methods=["POST"])
+def laser_align(side: str):
+    """Automatic laser alignment check using the Pi Camera.
+
+    Turns on the requested laser (left or right), captures a Pi Camera frame,
+    analyses the laser line orientation, then turns the laser back off.
+
+    Returns JSON:
+      - side: which laser was tested
+      - line_detected: whether a laser line was found in the image
+      - angle_deg: measured angle from vertical (0 = perfectly vertical)
+      - correction_deg: signed correction to apply (negative = rotate left,
+                        positive = rotate right)
+      - instruction: human-readable guidance in French
+    """
+    if side not in ("left", "right"):
+        return _json_error("Invalid side; use 'left' or 'right'", 400)
+
+    if gpio_driver is None:
+        return _json_error("GPIO driver unavailable", 503)
+
+    if not _ensure_camera_open(pi_camera):
+        return _json_error("Pi Camera unavailable", 503)
+
+    side_label = "gauche" if side == "left" else "droit"
+
+    try:
+        # Turn off both lasers, then enable only the requested one
+        gpio_driver.laser_off("left")
+        gpio_driver.laser_off("right")
+        gpio_driver.laser_on(side)
+
+        jpeg = pi_camera.capture_jpeg()
+
+        gpio_driver.laser_off(side)
+    except Exception:
+        # Best-effort cleanup
+        try:
+            gpio_driver.laser_off(side)
+        except Exception:
+            pass
+        logger.exception("Laser align route failed")
+        return _json_error("Internal server error", 500)
+
+    if jpeg is None:
+        return _json_error("Pi Camera capture failed", 503)
+
+    result = analyze_laser_line(jpeg)
+    if not result.get("analysis_available", False):
+        return _json_error("OpenCV laser analysis unavailable", 503)
+
+    return jsonify({
+        "success": True,
+        "side": side,
+        "side_label": side_label,
+        "line_detected": result.get("line_detected", False),
+        "angle_deg": result.get("angle_deg"),
+        "correction_deg": result.get("correction_deg"),
+        "instruction": f"Laser {side_label}: {result.get('instruction', '')}",
+    })
 
 
 @app.route("/api/scan/start", methods=["POST"])

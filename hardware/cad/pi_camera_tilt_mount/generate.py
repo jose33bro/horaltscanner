@@ -3,7 +3,7 @@ from pathlib import Path
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere
 from OCP.StlAPI import StlAPI_Writer
 from OCP.TopoDS import TopoDS_Shape
 from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
@@ -31,6 +31,9 @@ CAMERA_SUPPORT_HEIGHT_IN_EARS = 34.00
 LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER = 5.30
 LOWER_ADJUSTMENT_SCREW_MIN_EDGE_MARGIN = 3.00
 LOWER_ADJUSTMENT_HOLE_OVERTRAVEL = 1.00
+# The lower adjustment hole has been moved up by 5 mm relative to its
+# previous calculated position (rear -> front axis through vertical plate).
+LOWER_ADJUSTMENT_HOLE_UPSHIFT = 5.00
 
 EAR_PROJECTION = 8.70
 EAR_WIDTH = 8.50
@@ -40,6 +43,20 @@ PIVOT_CLEARANCE_DIAMETER = 3.40
 
 CSI_SLOT_WIDTH_X = 18.00
 CSI_SLOT_DEPTH_Y = 9.56
+
+# Ball-end adjustment screw: M5 x 40 mm with Ø6.5 mm ball at the end.
+# The ball must be able to pass through the threaded section (M5 bore ≈ 5.3 mm
+# passage, ball Ø6.5 mm fits with a small chamfer entry).
+BALL_SCREW_LENGTH = 40.00
+BALL_SCREW_SHAFT_DIAMETER = 5.00
+BALL_DIAMETER = 6.50
+BALL_SOCKET_DIAMETER = 6.90  # slight clearance so the ball can articulate
+
+# Camera support plate (ball-socket side).
+CAM_SUPPORT_WIDTH = 28.05
+CAM_SUPPORT_DEPTH = 7.00
+CAM_SUPPORT_THICKNESS = 1.00
+CAM_SUPPORT_M3_DIAMETER = 3.20  # M3 clearance hole
 
 
 def make_box(
@@ -206,10 +223,13 @@ def make_mount() -> TopoDS_Shape:
         PIVOT_CLEARANCE_DIAMETER / 2,
         (2 * EAR_WIDTH) + EAR_GAP + 2,
     ).Shape()
-    lower_adjustment_screw_z = max(
-        (LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER / 2)
-        + LOWER_ADJUSTMENT_SCREW_MIN_EDGE_MARGIN,
-        ear_center_z - CAMERA_SUPPORT_HEIGHT_IN_EARS,
+    lower_adjustment_screw_z = (
+        max(
+            (LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER / 2)
+            + LOWER_ADJUSTMENT_SCREW_MIN_EDGE_MARGIN,
+            ear_center_z - CAMERA_SUPPORT_HEIGHT_IN_EARS,
+        )
+        + LOWER_ADJUSTMENT_HOLE_UPSHIFT
     )
     # Drill the lower adjustment passage through the vertical plate thickness
     # (rear -> front), not across the mount width (left -> right).
@@ -240,6 +260,56 @@ def make_fit_test() -> TopoDS_Shape:
     return make_box(PLATE_WIDTH, MATERIAL_THICKNESS, PLATE_HEIGHT)
 
 
+def make_ball_screw() -> TopoDS_Shape:
+    """M5 x 40 mm shaft with a Ø6.5 mm ball at the tip.
+
+    The ball is centred at the end of the shaft so it can pass through the M5
+    threaded section (passage Ø5.3 mm) using a small chamfered entry.
+    """
+    # Shaft: cylinder along +Z, length = BALL_SCREW_LENGTH
+    shaft = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)),
+        BALL_SCREW_SHAFT_DIAMETER / 2,
+        BALL_SCREW_LENGTH,
+    ).Shape()
+    # Ball centred at the tip of the shaft
+    ball_center = gp_Pnt(0, 0, BALL_SCREW_LENGTH)
+    ball = BRepPrimAPI_MakeSphere(ball_center, BALL_DIAMETER / 2).Shape()
+    return fuse(shaft, ball)
+
+
+def make_camera_support_plate() -> TopoDS_Shape:
+    """Rectangular camera support plate: 28.05 x 7 x 1 mm.
+
+    Contains:
+    - a centred Ø6.9 mm ball socket (blind, half-sphere depth ≈ ball radius)
+    - an M3 clearance hole (Ø3.2 mm) through the full thickness, offset toward
+      one short edge so the socket and the M3 hole do not overlap.
+    """
+    plate = make_box(
+        CAM_SUPPORT_WIDTH,
+        CAM_SUPPORT_DEPTH,
+        CAM_SUPPORT_THICKNESS,
+    )
+    # Ball socket: half-sphere pocket centred on the plate face (top face at z=1)
+    socket_depth = BALL_DIAMETER / 2  # hemisphere
+    socket_center = gp_Pnt(0, 0, CAM_SUPPORT_THICKNESS + socket_depth)
+    socket = BRepPrimAPI_MakeSphere(socket_center, BALL_SOCKET_DIAMETER / 2).Shape()
+    plate = cut(plate, socket)
+
+    # M3 clearance hole through thickness, offset +8 mm along X from centre
+    m3_offset_x = 8.00
+    m3_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(m3_offset_x, 0, -0.5),
+            gp_Dir(0, 0, 1),
+        ),
+        CAM_SUPPORT_M3_DIAMETER / 2,
+        CAM_SUPPORT_THICKNESS + 1.0,
+    ).Shape()
+    return cut(plate, m3_hole)
+
+
 def export_model(model: TopoDS_Shape, filename: str) -> None:
     if not BRepCheck_Analyzer(model).IsValid():
         raise ValueError(f"Invalid solid: {filename}")
@@ -252,3 +322,5 @@ def export_model(model: TopoDS_Shape, filename: str) -> None:
 if __name__ == "__main__":
     export_model(make_mount(), "pi_camera_tilt_base.stl")
     export_model(make_fit_test(), "fit_test_rear_cavity_30.45x38.2.stl")
+    export_model(make_ball_screw(), "ball_screw_M5x40_ball6.5.stl")
+    export_model(make_camera_support_plate(), "camera_support_plate_28.05x7x1.stl")

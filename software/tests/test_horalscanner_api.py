@@ -352,6 +352,29 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertEqual(data["target"]["y_mm"], 0.0)
         self.assertIsNone(data["target"]["z_mm"])
         self.assertIn(("home_motor", "all"), self.fake_stm32.calls)
+        # X and Y moves must always be issued (even at 0.0) so any
+        # non-zero offset in a future pose is applied correctly
+        self.assertIn(("move_motor", "x", 0.0), self.fake_stm32.calls)
+        self.assertIn(("move_motor", "y", 0.0), self.fake_stm32.calls)
+
+    def test_calibration_pose_nonzero_values_trigger_moves(self):
+        original_poses = self.api_module.CALIBRATION_POSES
+        self.api_module.CALIBRATION_POSES = {
+            "test_cam": {
+                "label": "Test Camera",
+                "description": "Test pose.",
+                "x_mm": 15.0,
+                "y_mm": 90.0,
+                "z_mm": None,
+            }
+        }
+        self.addCleanup(setattr, self.api_module, "CALIBRATION_POSES", original_poses)
+
+        response = self.client.post("/api/calibration/pose/test_cam")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(("move_motor", "x", 15.0), self.fake_stm32.calls)
+        self.assertIn(("move_motor", "y", 90.0), self.fake_stm32.calls)
 
     def test_calibration_pose_unknown_camera_returns_400(self):
         response = self.client.post("/api/calibration/pose/unknown")

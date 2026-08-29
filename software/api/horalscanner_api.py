@@ -592,24 +592,30 @@ def calibration_pose(camera_name: str):
         return _json_error("STM32 driver unavailable", 503)
 
     try:
-        # Home all axes to establish a known reference position
+        # Home all axes to establish a known reference position (coordinate 0)
         if not stm32_driver.home_motor("all"):
             return _json_error("Homing failed", 502)
 
-        # Centre the turntable plate (X axis)
-        if pose["x_mm"] != 0.0:
-            if not stm32_driver.move_motor("x", pose["x_mm"]):
-                return _json_error("X move failed", 502)
+        # Move X to centre the turntable plate.
+        # After homing, the position is 0; we issue the move unconditionally so
+        # that any non-zero calibration offset is always applied correctly.
+        if not stm32_driver.move_motor("x", pose["x_mm"]):
+            return _json_error("X move failed", 502)
 
-        # Rotate to the correct orientation (Y axis)
-        if pose["y_mm"] != 0.0:
-            if not stm32_driver.move_motor("y", pose["y_mm"]):
-                return _json_error("Y move failed", 502)
+        # Rotate the turntable to the correct orientation (Y axis)
+        if not stm32_driver.move_motor("y", pose["y_mm"]):
+            return _json_error("Y move failed", 502)
 
-        # Height adjustment (Z axis) – only when explicitly required
+        # Height adjustment (Z axis) – only when explicitly required for this pose
         if pose["z_mm"] is not None:
             if not stm32_driver.move_motor("z", pose["z_mm"]):
                 return _json_error("Z move failed", 502)
+
+        try:
+            motor_status = stm32_driver.get_motor_status()
+        except Exception:
+            logger.warning("Could not fetch motor status after calibration pose move")
+            motor_status = None
 
         return jsonify({
             "success": True,
@@ -621,7 +627,7 @@ def calibration_pose(camera_name: str):
                 "y_mm": pose["y_mm"],
                 "z_mm": pose["z_mm"],
             },
-            "status": stm32_driver.get_motor_status(),
+            "status": motor_status,
         })
     except Exception:
         logger.exception("Calibration pose route failed")

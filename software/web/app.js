@@ -392,6 +392,8 @@ const HoralScannerUI = (() => {
     document.querySelectorAll(".camera-calibrate").forEach(button => {
       button.addEventListener("click", () => calibrationTest(button.dataset.camera));
     });
+    byId("align-laser-left").addEventListener("click", () => alignLaser("left"));
+    byId("align-laser-right").addEventListener("click", () => alignLaser("right"));
   }
 
   async function refreshCamera(camera, notify = false) {
@@ -476,6 +478,32 @@ const HoralScannerUI = (() => {
       result.append(title, verdict, details);
     } catch (error) {
       result.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
+  async function alignLaser(side) {
+    const resultEl = byId("laser-align-result");
+    const label = side === "left" ? "gauche" : "droit";
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Analyse du laser ${label} en cours…`;
+    try {
+      const response = await api(`/api/laser/align/${side}`, { method: "POST" });
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = `Laser ${label}`;
+      const verdict = document.createElement("p");
+      verdict.textContent = response.instruction;
+      resultEl.append(title, verdict);
+      if (response.line_detected) {
+        const details = document.createElement("p");
+        details.className = "muted";
+        details.textContent =
+          `Angle mesuré: ${formatSigned(response.angle_deg)}° · Correction: ${formatSigned(response.correction_deg)}°`;
+        resultEl.append(details);
+      }
+    } catch (error) {
+      resultEl.textContent = error.message;
       toast(error.message, true);
     }
   }

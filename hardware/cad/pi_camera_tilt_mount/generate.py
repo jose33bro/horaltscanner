@@ -32,7 +32,8 @@ LOWER_RAIL_DROP = 5.00
 LOWER_RAIL_OVERLAP = 0.50
 
 CAMERA_SUPPORT_HEIGHT_IN_EARS = 34.00
-LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER = 5.30
+# M5 fine pitch (0.5 mm) requires tap drill Ø4.5-4.7 mm
+LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER = 4.60  # tap drill size for M5×0.5
 LOWER_ADJUSTMENT_SCREW_MIN_EDGE_MARGIN = 3.00
 LOWER_ADJUSTMENT_HOLE_OVERTRAVEL = 1.00
 # The lower adjustment hole has been moved up by 5 mm relative to its
@@ -48,13 +49,14 @@ PIVOT_CLEARANCE_DIAMETER = 3.40
 CSI_SLOT_WIDTH_X = 18.00
 CSI_SLOT_DEPTH_Y = 9.56
 
-# Ball-end adjustment screw: M5 x 40 mm with Ø6.5 mm ball at the end.
-# The ball must be able to pass through the threaded section (M5 bore ≈ 5.3 mm
-# passage, ball Ø6.5 mm fits with a small chamfer entry).
+# Ball-end adjustment screw: M5 × 0.5 (fine pitch) × 40 mm with Ø6.5 mm ball at the end.
+# The threaded shaft screws into a tapped M5×0.5 hole in the base.
+# The ball embeds in a petal snap-fit socket on the camera support plate.
 BALL_SCREW_LENGTH = 40.00
-BALL_SCREW_SHAFT_DIAMETER = 5.00
+BALL_SCREW_SHAFT_DIAMETER = 5.00  # nominal M5 major diameter
 BALL_DIAMETER = 6.50
 BALL_SOCKET_DIAMETER = 6.90  # slight clearance so the ball can articulate
+M5_FINE_PITCH = 0.50  # M5×0.5 fine pitch instead of 0.8mm standard
 
 # Camera support plate (ball-socket side).
 CAM_SUPPORT_WIDTH = 28.05
@@ -245,7 +247,7 @@ def make_mount() -> TopoDS_Shape:
         )
         + LOWER_ADJUSTMENT_HOLE_UPSHIFT
     )
-    # Drill the lower adjustment passage through the vertical plate thickness
+    # Drill the lower adjustment tapped hole (M5×0.5 fine pitch) through the vertical plate
     # (rear -> front), not across the mount width (left -> right).
     lower_adjustment_screw_x = 0.00
     lower_adjustment_screw_y = plate_back_y + LOWER_ADJUSTMENT_HOLE_OVERTRAVEL
@@ -255,7 +257,7 @@ def make_mount() -> TopoDS_Shape:
             gp_Pnt(lower_adjustment_screw_x, lower_adjustment_screw_y, lower_adjustment_screw_z),
             gp_Dir(0, -1, 0),
         ),
-        LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER / 2,
+        LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER / 2,  # tap drill for M5×0.5
         lower_adjustment_hole_depth,
     ).Shape()
     csi_slot_height = MATERIAL_THICKNESS + 2
@@ -275,14 +277,14 @@ def make_fit_test() -> TopoDS_Shape:
 
 
 def make_ball_screw() -> TopoDS_Shape:
-    """M5 × 40 mm threaded shaft with a Ø6.5 mm ball at the tip.
+    """M5 × 0.5 (fine pitch) × 40 mm threaded shaft with Ø6.5 mm ball at tip.
 
-    The shaft carries a printable ISO M5 external thread (pitch 0.8 mm,
+    The shaft carries a printable ISO M5 external thread (pitch 0.5 mm fine,
     outer Ø 5.0 mm, core Ø ≈ 4.13 mm).  A right-hand helix profile is swept
     along the full 40 mm length using CadQuery.  The Ø6.5 mm ball is fused at
-    the tip of the shaft.
+    the tip and will embed in a petal snap-fit socket on the camera support.
     """
-    pitch = 0.80         # M5 pitch [mm]
+    pitch = M5_FINE_PITCH  # 0.5 mm fine pitch
     major_r = BALL_SCREW_SHAFT_DIAMETER / 2          # 2.5 mm
     minor_r = 2.067      # M5 minor radius (ISO 68-1)
     thread_h = major_r - minor_r  # radial thread depth ≈ 0.433 mm
@@ -291,8 +293,7 @@ def make_ball_screw() -> TopoDS_Shape:
     core = cq.Workplane("XY").circle(minor_r).extrude(BALL_SCREW_LENGTH)
 
     # Thread profile: right-hand isosceles triangle with apex at major radius.
-    # The profile origin sits at (minor_r, 0) and rides along the helix that
-    # is built at major_r radius.
+    # The profile origin sits at (minor_r, 0) and rides along the helix.
     helix = cq.Wire.makeHelix(
         pitch=pitch,
         height=BALL_SCREW_LENGTH,

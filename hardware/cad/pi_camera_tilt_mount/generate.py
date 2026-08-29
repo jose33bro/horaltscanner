@@ -30,6 +30,7 @@ LOWER_RAIL_OVERLAP = 0.50
 CAMERA_SUPPORT_HEIGHT_IN_EARS = 34.00
 LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER = 5.30
 LOWER_ADJUSTMENT_SCREW_MIN_EDGE_MARGIN = 3.00
+LOWER_ADJUSTMENT_HOLE_OVERTRAVEL = 1.00
 
 EAR_PROJECTION = 8.70
 EAR_WIDTH = 8.50
@@ -213,14 +214,15 @@ def make_mount() -> TopoDS_Shape:
     # Drill the lower adjustment passage through the vertical plate thickness
     # (rear -> front), not across the mount width (left -> right).
     lower_adjustment_screw_x = 0.00
-    lower_adjustment_screw_y = plate_back_y + 1.00
+    lower_adjustment_screw_y = plate_back_y + LOWER_ADJUSTMENT_HOLE_OVERTRAVEL
+    lower_adjustment_hole_depth = MATERIAL_THICKNESS + (2 * LOWER_ADJUSTMENT_HOLE_OVERTRAVEL)
     lower_adjustment_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
             gp_Pnt(lower_adjustment_screw_x, lower_adjustment_screw_y, lower_adjustment_screw_z),
             gp_Dir(0, -1, 0),
         ),
         LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER / 2,
-        MATERIAL_THICKNESS + 2,
+        lower_adjustment_hole_depth,
     ).Shape()
     csi_slot_height = MATERIAL_THICKNESS + 2
     csi_slot_z = (MATERIAL_THICKNESS - csi_slot_height) / 2

@@ -12,8 +12,8 @@ from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 OUTPUT_DIR = Path(__file__).parent / "stl"
 
 # Dimensions corrected after printing and measuring the first fit test.
-PLATE_WIDTH = 38.20
-PLATE_HEIGHT = 30.45
+PLATE_WIDTH = 30.45
+PLATE_HEIGHT = 38.20
 MATERIAL_THICKNESS = 3.20
 SHELF_PROJECTION = 24.00
 
@@ -225,4 +225,4 @@ def export_model(model: TopoDS_Shape, filename: str) -> None:
 
 if __name__ == "__main__":
     export_model(make_mount(), "pi_camera_tilt_base.stl")
-    export_model(make_fit_test(), "fit_test_rear_cavity_38.2x30.45.stl")
+    export_model(make_fit_test(), "fit_test_rear_cavity_30.45x38.2.stl")

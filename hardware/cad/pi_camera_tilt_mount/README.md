@@ -6,7 +6,7 @@ l'avant. Deux oreilles arrondies en haut reçoivent l'axe M3 de la caméra.
 
 ## Cotes utilisées
 
-- plaque verticale corrigée après essai: 38,20 × 30,45 × 3,20 mm;
+- plaque verticale corrigée après essai: 30,45 × 38,20 × 3,20 mm;
 - tablette inférieure vers l'avant: 24,00 mm;
 - deux parois sur les côtés de la tablette: hauteur 6,20 mm;
 - deux rails sous la tablette, depuis le bord avant: largeur 5,00 mm, longueur
@@ -26,7 +26,7 @@ fenêtre centrale sans ouverture jusqu'au bord de la pièce.
 
 ## Fichiers
 
-- `stl/fit_test_rear_cavity_38.2x30.45.stl`: test d'encombrement à imprimer en
+- `stl/fit_test_rear_cavity_30.45x38.2.stl`: test d'encombrement à imprimer en
   premier;
 - `stl/pi_camera_tilt_base.stl`: base orientable définitive;
 - `generate.py`: source paramétrique Python/OpenCascade.

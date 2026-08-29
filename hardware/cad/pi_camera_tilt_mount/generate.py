@@ -29,7 +29,7 @@ LOWER_RAIL_OVERLAP = 0.50
 
 CAMERA_SUPPORT_HEIGHT_IN_EARS = 34.00
 LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER = 5.30
-LOWER_ADJUSTMENT_SCREW_FRONT_OFFSET = 6.00
+LOWER_ADJUSTMENT_SCREW_MIN_EDGE_MARGIN = 3.00
 
 EAR_PROJECTION = 8.70
 EAR_WIDTH = 8.50
@@ -205,10 +205,11 @@ def make_mount() -> TopoDS_Shape:
         (2 * EAR_WIDTH) + EAR_GAP + 2,
     ).Shape()
     lower_adjustment_screw_z = max(
-        MATERIAL_THICKNESS / 2,
+        (LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER / 2)
+        + LOWER_ADJUSTMENT_SCREW_MIN_EDGE_MARGIN,
         ear_center_z - CAMERA_SUPPORT_HEIGHT_IN_EARS,
     )
-    lower_adjustment_screw_y = shelf_front_y + LOWER_ADJUSTMENT_SCREW_FRONT_OFFSET
+    lower_adjustment_screw_y = 0.00
     lower_adjustment_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
             gp_Pnt(-(PLATE_WIDTH / 2) - 1, lower_adjustment_screw_y, lower_adjustment_screw_z),

@@ -394,6 +394,7 @@ const HoralScannerUI = (() => {
     });
     byId("align-laser-left").addEventListener("click", () => alignLaser("left"));
     byId("align-laser-right").addEventListener("click", () => alignLaser("right"));
+    byId("goto-pose-pi").addEventListener("click", () => gotoCalibrationPose("pi"));
   }
 
   async function refreshCamera(camera, notify = false) {
@@ -478,6 +479,30 @@ const HoralScannerUI = (() => {
       result.append(title, verdict, details);
     } catch (error) {
       result.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
+  async function gotoCalibrationPose(camera) {
+    const resultEl = byId("calibration-pose-result");
+    const label = camera === "pi" ? "Pi Camera V3" : camera;
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Deplacement vers la pose ${label} en cours…`;
+    try {
+      const response = await api(`/api/calibration/pose/${camera}`, { method: "POST" });
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = response.label;
+      const desc = document.createElement("p");
+      desc.textContent = response.description;
+      const details = document.createElement("p");
+      details.className = "muted";
+      const z = response.target.z_mm !== null ? ` · Z ${response.target.z_mm} mm` : "";
+      details.textContent = `X ${response.target.x_mm} mm · Y ${response.target.y_mm} mm${z}`;
+      resultEl.append(title, desc, details);
+      toast(`Pose ${response.label} atteinte`);
+    } catch (error) {
+      resultEl.textContent = error.message;
       toast(error.message, true);
     }
   }

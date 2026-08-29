@@ -12,8 +12,8 @@ from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 OUTPUT_DIR = Path(__file__).parent / "stl"
 
 # Dimensions corrected after printing and measuring the first fit test.
-PLATE_WIDTH = 38.20
-PLATE_HEIGHT = 30.45
+PLATE_WIDTH = 30.45
+PLATE_HEIGHT = 38.20
 MATERIAL_THICKNESS = 3.20
 SHELF_PROJECTION = 24.00
 
@@ -27,15 +27,18 @@ LOWER_RAIL_LENGTH = 16.00
 LOWER_RAIL_DROP = 5.00
 LOWER_RAIL_OVERLAP = 0.50
 
+CAMERA_SUPPORT_HEIGHT_IN_EARS = 34.00
+LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER = 5.30
+LOWER_ADJUSTMENT_SCREW_FRONT_OFFSET = 6.00
+
 EAR_PROJECTION = 8.70
 EAR_WIDTH = 8.50
 EAR_GAP = 5.33
 EAR_HEIGHT = 5.99
 PIVOT_CLEARANCE_DIAMETER = 3.40
 
-CSI_SLOT_WIDTH = 18.00
-CSI_SLOT_HEIGHT = 9.56
-CSI_SLOT_BOTTOM = 5.00
+CSI_SLOT_WIDTH_X = 18.00
+CSI_SLOT_DEPTH_Y = 9.56
 
 
 def make_box(
@@ -201,13 +204,29 @@ def make_mount() -> TopoDS_Shape:
         PIVOT_CLEARANCE_DIAMETER / 2,
         (2 * EAR_WIDTH) + EAR_GAP + 2,
     ).Shape()
-    csi_slot = make_box(
-        CSI_SLOT_WIDTH,
-        MATERIAL_THICKNESS + 2,
-        CSI_SLOT_HEIGHT,
-        z=CSI_SLOT_BOTTOM,
+    lower_adjustment_screw_z = max(
+        MATERIAL_THICKNESS / 2,
+        ear_center_z - CAMERA_SUPPORT_HEIGHT_IN_EARS,
     )
-    return cut(cut(mount, pivot_hole), csi_slot)
+    lower_adjustment_screw_y = shelf_front_y + LOWER_ADJUSTMENT_SCREW_FRONT_OFFSET
+    lower_adjustment_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(-(PLATE_WIDTH / 2) - 1, lower_adjustment_screw_y, lower_adjustment_screw_z),
+            gp_Dir(1, 0, 0),
+        ),
+        LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER / 2,
+        PLATE_WIDTH + 2,
+    ).Shape()
+    csi_slot_height = MATERIAL_THICKNESS + 2
+    csi_slot_z = (MATERIAL_THICKNESS - csi_slot_height) / 2
+    csi_slot = make_box(
+        CSI_SLOT_WIDTH_X,
+        CSI_SLOT_DEPTH_Y,
+        csi_slot_height,
+        y=shelf_y,
+        z=csi_slot_z,
+    )
+    return cut(cut(cut(mount, pivot_hole), lower_adjustment_hole), csi_slot)
 
 
 def make_fit_test() -> TopoDS_Shape:
@@ -225,4 +244,4 @@ def export_model(model: TopoDS_Shape, filename: str) -> None:
 
 if __name__ == "__main__":
     export_model(make_mount(), "pi_camera_tilt_base.stl")
-    export_model(make_fit_test(), "fit_test_rear_cavity_38.2x30.45.stl")
+    export_model(make_fit_test(), "fit_test_rear_cavity_30.45x38.2.stl")

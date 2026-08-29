@@ -6,7 +6,7 @@ l'avant. Deux oreilles arrondies en haut reçoivent l'axe M3 de la caméra.
 
 ## Cotes utilisées
 
-- plaque verticale corrigée après essai: 38,20 × 30,45 × 3,20 mm;
+- plaque verticale corrigée après essai: 30,45 × 38,20 × 3,20 mm;
 - tablette inférieure vers l'avant: 24,00 mm;
 - deux parois sur les côtés de la tablette: hauteur 6,20 mm;
 - deux rails sous la tablette, depuis le bord avant: largeur 5,00 mm, longueur
@@ -17,16 +17,20 @@ l'avant. Deux oreilles arrondies en haut reçoivent l'axe M3 de la caméra.
   8,50 mm, hauteur 5,99 mm;
 - espace entre les oreilles: 5,33 mm;
 - trou traversant M3: 3,40 mm.
-- fenêtre CSI fermée dans la plaque: 18,00 × 9,56 mm.
+- hauteur totale caméra + support entre les oreilles: 34,00 mm;
+- trou de réglage inférieur traversant: M5 (Ø 5,30 mm de passage);
+- vis de réglage inférieure: M5 × 45 (pas standard 0,80 mm);
+- fenêtre CSI centrée dans la tablette horizontale: 18,00 × 9,56 mm.
 
-Les oreilles sont centrées en haut de la plaque de 38,20 mm. Le support de
+Les oreilles sont centrées en haut de la plaque (hauteur 38,20 mm). Le support de
 caméra entre dans leur espace de 5,33 mm. Une seule vis M3 traverse les deux
-arrondis et le support; un écrou M3 bloque l'angle. La nappe CSI traverse la
-fenêtre centrale sans ouverture jusqu'au bord de la pièce.
+arrondis et le support; un écrou M3 bloque l'angle. La vis inférieure de
+réglage M5 × 45 traverse la section basse avec un passage imprimable de 5,30 mm.
+La nappe CSI traverse la fenêtre centrée dans la tablette horizontale.
 
 ## Fichiers
 
-- `stl/fit_test_rear_cavity_38.2x30.45.stl`: test d'encombrement à imprimer en
+- `stl/fit_test_rear_cavity_30.45x38.2.stl`: test d'encombrement à imprimer en
   premier;
 - `stl/pi_camera_tilt_base.stl`: base orientable définitive;
 - `generate.py`: source paramétrique Python/OpenCascade.
@@ -34,6 +38,7 @@ fenêtre centrale sans ouverture jusqu'au bord de la pièce.
 ## Visserie
 
 - 1 vis M3 traversante avec écrou et 2 rondelles pour le pivot caméra;
+- 1 vis M5 × 45 (pas 0,80 mm) pour le réglage inférieur;
 - 2 vis M3 supplémentaires de 10 à 12 mm pour fixer la base au support rouge.
 
 La vis traversante serre les deux oreilles contre la patte centrale du support

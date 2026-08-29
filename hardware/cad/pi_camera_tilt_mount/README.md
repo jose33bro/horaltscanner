@@ -22,7 +22,7 @@ l'avant. Deux oreilles arrondies en haut reçoivent l'axe M3 de la caméra.
 - vis de réglage inférieure: M5 × 45 (pas standard 0,80 mm);
 - fenêtre CSI centrée dans la tablette horizontale: 18,00 × 9,56 mm.
 
-Les oreilles sont centrées en haut de la plaque de 38,20 mm. Le support de
+Les oreilles sont centrées en haut de la plaque (hauteur 38,20 mm). Le support de
 caméra entre dans leur espace de 5,33 mm. Une seule vis M3 traverse les deux
 arrondis et le support; un écrou M3 bloque l'angle. La vis inférieure de
 réglage M5 × 45 traverse la section basse avec un passage imprimable de 5,30 mm.

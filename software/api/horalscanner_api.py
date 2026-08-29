@@ -112,6 +112,31 @@ reconstruction_engine = ReconstructionEngine(scan_session)
 _initialize_driver(stm32_driver, "STM32Driver")
 _initialize_driver(gpio_driver, "GPIODriver")
 
+# ---------------------------------------------------------------------------
+# Calibration poses
+# ---------------------------------------------------------------------------
+# Each pose defines the motor target positions used to centre the mire
+# relative to a specific camera for calibration.
+#
+# Motor convention:
+#   X – advance / retract to centre the turntable plate
+#   Y – rotation of the turntable (degrees or mm depending on firmware)
+#   Z – height; mainly used for Logitech C270 / LiDAR geometry compensation
+#
+# Pi Camera: the mire faces the Pi camera directly.
+#   X = 0.0  (plate centred, no advance needed)
+#   Y = 0.0  (mire already facing the Pi camera side)
+#   Z = None (no height adjustment required for Pi camera calibration)
+CALIBRATION_POSES: dict[str, dict] = {
+    "pi": {
+        "label": "Pi Camera V3",
+        "description": "Centre le plateau et oriente la mire vers la Pi Camera.",
+        "x_mm": 0.0,
+        "y_mm": 0.0,
+        "z_mm": None,
+    },
+}
+
 
 def _get_camera(camera_name: str):
     cameras = {
@@ -543,6 +568,64 @@ def laser_align(side: str):
         "correction_deg": result.get("correction_deg"),
         "instruction": f"Laser {side_label}: {result.get('instruction', '')}",
     })
+
+
+@app.route("/api/calibration/pose/<camera_name>", methods=["POST"])
+def calibration_pose(camera_name: str):
+    """Move the scanner to the calibration pose for the specified camera.
+
+    Homes all axes first, then moves X and Y to the predefined calibration
+    positions so the mire / checkerboard is centred relative to that camera.
+
+    Supported camera names: ``pi``
+
+    Returns JSON with the target positions that were commanded.
+    """
+    pose = CALIBRATION_POSES.get(camera_name)
+    if pose is None:
+        return _json_error(
+            f"Unknown camera '{camera_name}'. Supported: {', '.join(CALIBRATION_POSES)}",
+            400,
+        )
+
+    if stm32_driver is None:
+        return _json_error("STM32 driver unavailable", 503)
+
+    try:
+        # Home all axes to establish a known reference position
+        if not stm32_driver.home_motor("all"):
+            return _json_error("Homing failed", 502)
+
+        # Centre the turntable plate (X axis)
+        if pose["x_mm"] != 0.0:
+            if not stm32_driver.move_motor("x", pose["x_mm"]):
+                return _json_error("X move failed", 502)
+
+        # Rotate to the correct orientation (Y axis)
+        if pose["y_mm"] != 0.0:
+            if not stm32_driver.move_motor("y", pose["y_mm"]):
+                return _json_error("Y move failed", 502)
+
+        # Height adjustment (Z axis) – only when explicitly required
+        if pose["z_mm"] is not None:
+            if not stm32_driver.move_motor("z", pose["z_mm"]):
+                return _json_error("Z move failed", 502)
+
+        return jsonify({
+            "success": True,
+            "camera": camera_name,
+            "label": pose["label"],
+            "description": pose["description"],
+            "target": {
+                "x_mm": pose["x_mm"],
+                "y_mm": pose["y_mm"],
+                "z_mm": pose["z_mm"],
+            },
+            "status": stm32_driver.get_motor_status(),
+        })
+    except Exception:
+        logger.exception("Calibration pose route failed")
+        return _json_error("Internal server error", 500)
 
 
 @app.route("/api/scan/start", methods=["POST"])

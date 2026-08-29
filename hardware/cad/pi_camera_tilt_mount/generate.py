@@ -5,7 +5,7 @@ import cadquery as cq
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCone, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere
 from OCP.StlAPI import StlAPI_Writer
 from OCP.TopAbs import TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
@@ -312,12 +312,15 @@ def make_ball_screw() -> TopoDS_Shape:
     shaft = core.union(thread_solid)
     ball = cq.Workplane("XY").workplane(offset=BALL_SCREW_LENGTH).sphere(BALL_DIAMETER / 2)
     result = shaft.union(ball)
-    # CadQuery's union may return a Compound; extract the last (fused) solid
-    # which is the one that passes BRepCheck validation.
+    # CadQuery's union may return a Compound; collect all solid handles and
+    # return the last one, which is the fully-fused result that passes
+    # BRepCheck validation.  Use explorer.Value() to get a stable copy of
+    # each shape handle rather than the mutable iterator reference from
+    # explorer.Current().
     solids: list[TopoDS_Shape] = []
     explorer = TopExp_Explorer(result.val().wrapped, TopAbs_SOLID)
     while explorer.More():
-        solids.append(explorer.Current())
+        solids.append(explorer.Value())
         explorer.Next()
     if solids:
         return solids[-1]
@@ -374,18 +377,17 @@ def make_camera_support_plate() -> TopoDS_Shape:
     # Entry chamfer: truncated cone at the rim widens the bore opening so the
     # ball can spread the petals on entry.  Only cut the inner taper (cone),
     # keeping the outer wall intact.
-    entry_cone = (
-        cq.Workplane("XY")
-        .workplane(offset=CAM_SUPPORT_THICKNESS + PETAL_HEIGHT - PETAL_ENTRY_CHAMFER)
-        .add(
-            cq.Solid.makeCone(
-                PETAL_INNER_RADIUS,
-                PETAL_INNER_RADIUS + PETAL_ENTRY_CHAMFER,
-                PETAL_ENTRY_CHAMFER,
-            )
-        )
+    # The chamfer sits at the very top of the petal ring.
+    chamfer_z = CAM_SUPPORT_THICKNESS + PETAL_HEIGHT - PETAL_ENTRY_CHAMFER
+    chamfer_cone_shape = BRepPrimAPI_MakeCone(
+        gp_Ax2(gp_Pnt(0, 0, chamfer_z), gp_Dir(0, 0, 1)),
+        PETAL_INNER_RADIUS,                        # r1 at base of chamfer
+        PETAL_INNER_RADIUS + PETAL_ENTRY_CHAMFER,  # r2 at rim
+        PETAL_ENTRY_CHAMFER,                       # height of chamfer band
+    ).Shape()
+    petal_ring = petal_ring.cut(
+        cq.Workplane("XY").add(cq.Shape.cast(chamfer_cone_shape))
     )
-    petal_ring = petal_ring.cut(entry_cone)
 
     result = plate.union(petal_ring)
 

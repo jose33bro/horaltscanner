@@ -209,14 +209,17 @@ def make_mount() -> TopoDS_Shape:
         + LOWER_ADJUSTMENT_SCREW_MIN_EDGE_MARGIN,
         ear_center_z - CAMERA_SUPPORT_HEIGHT_IN_EARS,
     )
-    lower_adjustment_screw_y = 0.00
+    # Drill the lower adjustment passage through the vertical plate thickness
+    # (rear -> front), not across the mount width (left -> right).
+    lower_adjustment_screw_x = 0.00
+    lower_adjustment_screw_y = (MATERIAL_THICKNESS / 2) + 1.00
     lower_adjustment_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(-(PLATE_WIDTH / 2) - 1, lower_adjustment_screw_y, lower_adjustment_screw_z),
-            gp_Dir(1, 0, 0),
+            gp_Pnt(lower_adjustment_screw_x, lower_adjustment_screw_y, lower_adjustment_screw_z),
+            gp_Dir(0, -1, 0),
         ),
         LOWER_ADJUSTMENT_SCREW_CLEARANCE_DIAMETER / 2,
-        PLATE_WIDTH + 2,
+        MATERIAL_THICKNESS + 2,
     ).Shape()
     csi_slot_height = MATERIAL_THICKNESS + 2
     csi_slot_z = (MATERIAL_THICKNESS - csi_slot_height) / 2

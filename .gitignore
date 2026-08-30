@@ -1,5 +1,15 @@
+.venv/
 __pycache__/
 *.py[cod]
 
 # Local virtualenv
 horalscanner_env/
+__pycache__/
+.pytest_cache/
+
+# PlatformIO firmware build outputs
+.pio/
+firmware/creality_v422/build/
+
+# Runtime-generated scan pose memory (user-specific, not for version control)
+config/scan_poses.json

@@ -1,7 +1,7 @@
 # HoralScanner
 
 **Modular 3D Scanner & Reconstruction System**  
-Raspberry Pi 4 + Creality V4.2.2 with custom USB firmware (no Marlin/Klipper)
+Raspberry Pi 4 + Creality V4.2.2 with custom USB firmware
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -12,7 +12,7 @@ Raspberry Pi 4 + Creality V4.2.2 with custom USB firmware (no Marlin/Klipper)
 
 ## 🎯 What is HoralScanner?
 
-HoralScanner is a complete **3D scanning and reconstruction system** built from the ground up for **Raspberry Pi 4**. Instead of relying on Marlin/Klipper/Moonraker, it uses:
+HoralScanner is a complete **3D scanning and reconstruction system** built from the ground up for **Raspberry Pi 4**. It uses:
 
 ✅ **Custom STM32 USB firmware** — Direct motor/stepper control via USB CDC protocol  
 ✅ **Flask REST API** — Lightweight web service on port 5000  
@@ -52,19 +52,7 @@ sudo reboot
 
 ---
 
-### Path B: Migrate from Klipper
-```bash
-# If you have existing Klipper installation:
-sudo bash -c "curl -sSL https://raw.githubusercontent.com/jose33bro/horaltscanner/main/remove_klipper_install_horaltscanner.sh | bash"
-
-# Follow prompts to flash STM32 firmware
-# Reboot and verify
-```
-**Time:** 45-60 minutes | **Difficulty:** ⭐⭐ Medium
-
----
-
-### Path C: Manual Setup
+### Path B: Manual Setup
 See [QUICK_START.md](QUICK_START.md) for step-by-step instructions.
 
 ---
@@ -213,7 +201,6 @@ horaltscanner/
 │   └── usb_protocol.md         # USB CDC protocol spec
 │
 ├── setup_pi.sh                 # Complete Pi setup script
-├── remove_klipper_install_horaltscanner.sh  # Klipper → HoralScanner migration
 ├── QUICK_START.md              # Installation guide (3 paths)
 ├── DEPLOYMENT.md               # Production deployment guide
 ├── USAGE.md                    # API reference & examples
@@ -250,16 +237,6 @@ sudo bash setup_pi.sh --install       # Skip system updates
 sudo bash setup_pi.sh --update        # Update code only
 sudo bash setup_pi.sh --quick-test    # Test imports
 ```
-
-### `remove_klipper_install_horaltscanner.sh` — Klipper Migration
-```bash
-sudo bash remove_klipper_install_horaltscanner.sh
-```
-- Stops Klipper/Moonraker
-- Backs up configuration
-- Removes legacy services
-- Compiles & flashes STM32 firmware
-- Installs HoralScanner
 
 ### `software/scripts/update.sh` — Auto-Update
 ```bash

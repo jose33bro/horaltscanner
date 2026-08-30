@@ -40,8 +40,10 @@ class ScannerApp:
         self._sensors = sensors
 
         # Backward-compatible orchestration mode used by the older app tests.
+        # Default to simulation when running in the newer scan-sequence mode.
+        _use_board = use_gpio if controller is None else False
         self.usb = USBDriver()
-        self.gpio = GPIOLaserControl(use_board=use_gpio)
+        self.gpio = GPIOLaserControl(use_board=_use_board)
         self.motors = MotorController(self.usb)
         self.running = False
         self.scan_active = False

@@ -288,13 +288,27 @@
           </div>
           <div id="calibration-result" class="calibration-result empty">Aucun test lance.</div>
           <hr>
-          <h2>Mise en pose automatique</h2>
-          <p class="muted">Deplace le scanner vers la pose de calibration de la camera selectionnee (origine, centrage plateau, orientation mire).</p>
+          <h2>Positionnement automatique</h2>
+          <p class="muted">Deplace les moteurs vers la pose de calibration recommandee pour la camera selectionnee (Pi Camera : X/Y uniquement ; Logitech : X/Y/Z). La distance TF-Luna est lue si disponible.</p>
           <div class="calibration-choice">
-            <button id="goto-pose-pi" class="button secondary"><span>Pi Camera V3</span><b>Aller a la pose</b></button>
+            <button class="camera-goto-pose" data-camera="pi"><span>Pi Camera V3</span><b>Aller à la pose</b></button>
+            <button class="camera-goto-pose" data-camera="usb"><span>Logitech C270</span><b>Aller à la pose</b></button>
           </div>
-          <div id="calibration-pose-result" class="calibration-result empty">Aucun deplacement lance.</div>
+          <div id="pose-result" class="calibration-result empty">Aucun positionnement lance.</div>
           <hr>
+          <h2>Mémorisation de la pose de scan</h2>
+          <p class="muted">Sauvegardez la position actuelle comme pose de depart du scan, ou retournez a la pose memorisee.</p>
+          <div class="calibration-choice">
+            <button class="camera-save-pose" data-camera="pi"><span>Pi Camera V3</span><b>Mémoriser la pose</b></button>
+            <button class="camera-save-pose" data-camera="usb"><span>Logitech C270</span><b>Mémoriser la pose</b></button>
+          </div>
+          <div class="calibration-choice" style="margin-top:0.5rem">
+            <button class="camera-goto-scan-pose" data-camera="pi"><span>Pi Camera V3</span><b>Retour à la pose</b></button>
+            <button class="camera-goto-scan-pose" data-camera="usb"><span>Logitech C270</span><b>Retour à la pose</b></button>
+          </div>
+          <div id="scan-pose-result" class="calibration-result empty">Aucune pose memorisee.</div>
+          <hr>
+          <h2>Alignement laser</h2>
           <p class="muted">Allume un laser à la fois, capture l'image Pi Camera et calcule la correction d'angle.</p>
           <div class="calibration-choice">
             <button id="align-laser-left" class="button secondary"><span>Laser gauche</span><b>Aligner</b></button>

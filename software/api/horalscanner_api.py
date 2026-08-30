@@ -28,7 +28,6 @@ from software.api.calibration_pose import (
     read_lidar_distance,
 )
 from software.api.camera_driver import LogitechCamera, PiCamera, analyze_camera_frame, analyze_laser_line
-from software.api.calibration_pose import PoseMemory, get_default_pose, move_to_pose, read_lidar_distance
 from software.api.lidar_driver import LidarDriver
 from software.api.scanner_engine import ReconstructionEngine, ScanSession
 
@@ -546,7 +545,7 @@ def camera_goto_calibration_pose(camera_name: str):
         return _json_error("Pose de calibration introuvable", 500)
 
     try:
-        moved = move_to_pose(stm32_driver, pose)
+        moved = default_move_to_pose(stm32_driver, pose)
     except (ConnectionError, RuntimeError) as exc:
         logger.error("goto_calibration_pose failed: %s", exc)
         return _json_error("Déplacement moteur échoué", 503)
@@ -631,7 +630,7 @@ def camera_goto_scan_pose(camera_name: str):
         return _json_error("Aucune pose de scan mémorisée pour cette caméra", 404)
 
     try:
-        moved = move_to_pose(stm32_driver, saved)
+        moved = default_move_to_pose(stm32_driver, saved)
     except (ConnectionError, RuntimeError) as exc:
         logger.error("goto_scan_pose failed: %s", exc)
         return _json_error("Déplacement moteur échoué", 503)

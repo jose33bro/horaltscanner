@@ -255,6 +255,42 @@ bash /home/pi/horaltscanner/software/scripts/update.sh
 
 ---
 
+## 🚀 Running the API
+
+The Flask API is packaged as a Python module and should be launched from the
+`software/` directory:
+
+```bash
+cd /home/pi/horaltscanner/software
+python3 -m api.app
+```
+
+The systemd service is configured to do this automatically:
+
+```ini
+WorkingDirectory=/home/pi/horaltscanner/software
+Environment="PYTHONPATH=/home/pi/horaltscanner/software"
+ExecStart=/home/pi/horaltscanner_env/bin/python3 -m api.app
+```
+
+### Useful validation commands
+
+```bash
+# Check scan status
+curl http://127.0.0.1:5000/scan/status
+
+# Start a scan
+curl -X POST http://127.0.0.1:5000/scan/start
+
+# Stop the scan
+curl -X POST http://127.0.0.1:5000/scan/stop
+
+# Restart the system service and verify it is running
+sudo systemctl restart horalscanner.service && systemctl status horalscanner.service
+```
+
+---
+
 ## ✅ Verification Checklist
 
 After installation, verify:

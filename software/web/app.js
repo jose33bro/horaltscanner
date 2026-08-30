@@ -394,6 +394,8 @@ const HoralScannerUI = (() => {
     });
     byId("align-laser-left").addEventListener("click", () => alignLaser("left"));
     byId("align-laser-right").addEventListener("click", () => alignLaser("right"));
+    byId("align-pose-pi").addEventListener("click", () => alignCameraPose("pi"));
+    byId("align-pose-logitech").addEventListener("click", () => alignCameraPose("logitech"));
   }
 
   async function refreshCamera(camera, notify = false) {
@@ -502,6 +504,27 @@ const HoralScannerUI = (() => {
           `Angle mesuré: ${formatSigned(response.angle_deg)}° · Correction: ${formatSigned(response.correction_deg)}°`;
         resultEl.append(details);
       }
+    } catch (error) {
+      resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
+  async function alignCameraPose(camera) {
+    const resultEl = byId("camera-pose-result");
+    const label = camera === "pi" ? "Pi Camera V3 NoIR" : "Logitech C270";
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Positionnement ${label} en cours (homing + déplacement)…`;
+    try {
+      const response = await api(`/api/camera/pose/${camera}`, { method: "POST" });
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = label;
+      const verdict = document.createElement("p");
+      const pose = response.pose;
+      verdict.textContent = `Pose atteinte — X: ${pose.x} mm, Y: ${pose.y} mm, Z: ${pose.z} mm`;
+      resultEl.append(title, verdict);
+      toast(`Positionnement ${label} terminé`);
     } catch (error) {
       resultEl.textContent = error.message;
       toast(error.message, true);

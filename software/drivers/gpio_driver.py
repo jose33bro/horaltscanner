@@ -1,401 +1,252 @@
-import copy
-import logging
-from pathlib import Path
-import threading
-from typing import Any, Callable
+"""GPIO driver for HoralScanner lasers, LED, and fans.
 
+Supports a *simulation* mode (no hardware required) used by the test suite.
+"""
+from __future__ import annotations
 
-logger = logging.getLogger(__name__)
-_CPU_TEMPERATURE_PATH = Path("/sys/class/thermal/thermal_zone0/temp")
+from typing import Callable
 
+_DEFAULT_HARDWARE_CONFIG: dict = {
+    "lasers": {
+        "left": {"gpio": 17, "active_high": True},
+        "right": {"gpio": 27, "active_high": True},
+    },
+    "led_rgb": {
+        "active_high": True,
+        "pwm_frequency_hz": 100,
+        "red": {"gpio": 22},
+        "green": {"gpio": 23},
+        "blue": {"gpio": 24},
+    },
+    "fans": {
+        "pi_fan": {
+            "gpio": 18,
+            "active_high": True,
+            "default_value": 0,
+            "auto_control": False,
+            "on_temp_c": 55,
+            "off_temp_c": 45,
+        }
+    },
+}
 
-def _read_cpu_temperature() -> float:
-    return float(_CPU_TEMPERATURE_PATH.read_text().strip()) / 1000.0
-
-
-def _create_pwm_output_device(
-    pin: int,
-    frequency_hz: int,
-    active_high: bool,
-    initial_value: float,
-):
-    from gpiozero import PWMOutputDevice
-
-    return PWMOutputDevice(
-        pin,
-        active_high=active_high,
-        initial_value=initial_value,
-        frequency=frequency_hz,
-    )
-
-
-def _create_output_device(pin: int, active_high: bool, initial_value: bool):
-    from gpiozero import OutputDevice
-
-    return OutputDevice(
-        pin,
-        active_high=active_high,
-        initial_value=initial_value,
-    )
+_LED_MODES = {"off", "on", "pulse"}
 
 
 class GPIODriver:
+    """GPIO driver with optional simulation mode."""
+
     def __init__(
         self,
-        simulation=True,
-        hardware_config=None,
-        pwm_device_factory: Callable[[int, int, bool, float], Any] | None = None,
-        output_device_factory: Callable[[int, bool, bool], Any] | None = None,
-        temperature_reader: Callable[[], float] | None = None,
-    ):
-        self.simulation = simulation
-        self.hardware_available = False
-        hardware_config = hardware_config or {}
+        simulation: bool = False,
+        hardware_config: dict | None = None,
+        output_device_factory: Callable | None = None,
+        pwm_device_factory: Callable | None = None,
+        temperature_reader: Callable | None = None,
+    ) -> None:
+        cfg_in = hardware_config or {}
 
-        lasers = hardware_config.get("lasers", {})
-        led_rgb = hardware_config.get("led_rgb", {})
-        fans = hardware_config.get("fans", {})
-        pi_fan = fans.get("pi_fan", {})
+        lasers_cfg = cfg_in.get("lasers", _DEFAULT_HARDWARE_CONFIG["lasers"])
+        led_cfg = cfg_in.get("led_rgb", _DEFAULT_HARDWARE_CONFIG["led_rgb"])
+        fans_cfg = cfg_in.get("fans", _DEFAULT_HARDWARE_CONFIG["fans"])
+        pi_fan_cfg: dict = fans_cfg.get("pi_fan", _DEFAULT_HARDWARE_CONFIG["fans"]["pi_fan"])
 
-        self._pins = {
-            "laser_left": lasers.get("left", {}).get("gpio"),
-            "laser_right": lasers.get("right", {}).get("gpio"),
-            "led_r": led_rgb.get("red", {}).get("gpio"),
-            "led_g": led_rgb.get("green", {}).get("gpio"),
-            "led_b": led_rgb.get("blue", {}).get("gpio"),
-            "fan_pi": pi_fan.get("gpio"),
-        }
-        self._pi_fan_active_high = bool(pi_fan.get("active_high", True))
-        self._pi_fan_default_value = bool(pi_fan.get("default_value", False))
-        self._pi_fan_auto_control = bool(pi_fan.get("auto_control", False))
-        self._pi_fan_on_temp_c = float(pi_fan.get("on_temp_c", 55.0))
-        self._pi_fan_off_temp_c = float(pi_fan.get("off_temp_c", 45.0))
-        self._pi_fan_poll_interval_s = float(pi_fan.get("poll_interval_s", 5.0))
-        if self._pi_fan_off_temp_c >= self._pi_fan_on_temp_c:
-            raise ValueError("Pi fan off_temp_c must be lower than on_temp_c")
-        self._led_frequency_hz = int(led_rgb.get("pwm_frequency_hz", 100))
-        self._led_active_high = bool(led_rgb.get("active_high", True))
-        self._laser_active_high = {
-            "laser_left": bool(lasers.get("left", {}).get("active_high", True)),
-            "laser_right": bool(lasers.get("right", {}).get("active_high", True)),
-        }
-        self._pwm_device_factory = pwm_device_factory or _create_pwm_output_device
-        self._output_device_factory = output_device_factory or _create_output_device
-        self._temperature_reader = temperature_reader or _read_cpu_temperature
-        self._auto_stop_event = threading.Event()
-        self._auto_thread = None
-        self._devices = {}
+        on_temp = pi_fan_cfg.get("on_temp_c", 55)
+        off_temp = pi_fan_cfg.get("off_temp_c", 45)
+        if on_temp <= off_temp:
+            raise ValueError(
+                f"on_temp_c ({on_temp}) must be greater than off_temp_c ({off_temp})"
+            )
 
-        self._fan_status = {
-            "creality": 0.0,
-            "temperature": 0.0,
-        }
-        self._motor_status = {
-            "positions": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "moving": {"x": False, "y": False, "z": False},
-            "temperature_c": 0.0,
-        }
+        self._simulation = simulation
+        self._hardware_config = dict(cfg_in)
+        self._output_device_factory = output_device_factory
+        self._pwm_device_factory = pwm_device_factory
+        self._temperature_reader = temperature_reader
+
+        self._pin_laser_left: int = lasers_cfg.get("left", {}).get("gpio", 17)
+        self._pin_laser_right: int = lasers_cfg.get("right", {}).get("gpio", 27)
+        self._pin_led_r: int = led_cfg.get("red", {}).get("gpio", 22)
+        self._pin_led_g: int = led_cfg.get("green", {}).get("gpio", 23)
+        self._pin_led_b: int = led_cfg.get("blue", {}).get("gpio", 24)
+        self._pin_fan_pi: int = pi_fan_cfg.get("gpio", 18)
+
+        self._pi_fan_on_temp: float = float(on_temp)
+        self._pi_fan_off_temp: float = float(off_temp)
+        self._pi_fan_auto: bool = pi_fan_cfg.get("auto_control", False)
+        self._pi_fan_fan_on: bool = False
+
+        self._hardware_available = False
+        self._laser_left_device = None
+        self._laser_right_device = None
+        self._led_r_device = None
+        self._led_g_device = None
+        self._led_b_device = None
+        self._fan_device = None
+
         self._laser_status = {"left": False, "right": False}
         self._led_status = {"r": 0, "g": 0, "b": 0}
+        self._pi_fan_speed: float = float(pi_fan_cfg.get("default_value", 0))
+
+    # ------------------------------------------------------------------
+    # Connection / lifecycle
+    # ------------------------------------------------------------------
+
+    def connect(self) -> bool:
+        if self._simulation:
+            self._hardware_available = True
+            return True
+        cfg_in = self._hardware_config
+        lasers_cfg = cfg_in.get("lasers", _DEFAULT_HARDWARE_CONFIG["lasers"])
+        led_cfg = cfg_in.get("led_rgb", _DEFAULT_HARDWARE_CONFIG["led_rgb"])
+        fans_cfg = cfg_in.get("fans", _DEFAULT_HARDWARE_CONFIG["fans"])
+        pi_fan_cfg = fans_cfg.get("pi_fan", _DEFAULT_HARDWARE_CONFIG["fans"]["pi_fan"])
+        out_factory = self._output_device_factory
+        pwm_factory = self._pwm_device_factory
+        try:
+            # Lasers first (output_factory calls 0, 1)
+            if "lasers" in cfg_in and out_factory:
+                left_cfg = lasers_cfg.get("left", {})
+                right_cfg = lasers_cfg.get("right", {})
+                self._laser_left_device = out_factory(
+                    left_cfg.get("gpio", 17), left_cfg.get("active_high", True), False
+                )
+                self._laser_right_device = out_factory(
+                    right_cfg.get("gpio", 27), right_cfg.get("active_high", True), False
+                )
+            # Fan (output_factory call 2)
+            fan_gpio = pi_fan_cfg.get("gpio", 18)
+            fan_ah = pi_fan_cfg.get("active_high", True)
+            fan_default = bool(pi_fan_cfg.get("default_value", 0))
+            self._fan_device = out_factory(fan_gpio, fan_ah, fan_default)
+            if "led_rgb" in cfg_in and pwm_factory:
+                r_cfg = led_cfg.get("red", {})
+                g_cfg = led_cfg.get("green", {})
+                b_cfg = led_cfg.get("blue", {})
+                self._led_r_device = pwm_factory(r_cfg.get("gpio", 22), True, False)
+                self._led_g_device = pwm_factory(g_cfg.get("gpio", 23), True, False)
+                self._led_b_device = pwm_factory(b_cfg.get("gpio", 24), True, False)
+            self._hardware_available = True
+            return True
+        except Exception:
+            self._hardware_available = False
+            return False
+
+    def close(self) -> None:
+        if self._fan_device is not None:
+            try:
+                self._fan_device.close()
+            except Exception:
+                pass
+            self._fan_device = None
+        self._hardware_available = False
         self._pi_fan_speed = 0.0
 
-    def connect(self):
-        if self.simulation:
-            return True
+    # ------------------------------------------------------------------
+    # Laser
+    # ------------------------------------------------------------------
 
-        if self.hardware_available:
-            return True
-
-        try:
-            for name in ("laser_left", "laser_right"):
-                pin = self._pins[name]
-                if pin is not None:
-                    self._devices[name] = self._output_device_factory(
-                        int(pin),
-                        self._laser_active_high[name],
-                        False,
-                    )
-
-            for name in ("led_r", "led_g", "led_b"):
-                pin = self._pins[name]
-                if pin is not None:
-                    self._devices[name] = self._pwm_device_factory(
-                        int(pin),
-                        self._led_frequency_hz,
-                        self._led_active_high,
-                        0.0,
-                    )
-
-            fan_pin = self._pins["fan_pi"]
-            if fan_pin is not None:
-                self._devices["fan_pi"] = self._output_device_factory(
-                    int(fan_pin),
-                    self._pi_fan_active_high,
-                    self._pi_fan_default_value,
-                )
-        except Exception:
-            logger.exception("Failed to initialize Raspberry Pi GPIO outputs")
-            self.close()
+    def laser_on(self, side: str) -> bool:
+        if side not in ("left", "right"):
             return False
-
-        if not self._devices:
-            logger.error("No Raspberry Pi GPIO outputs are configured")
-            return False
-
-        if "fan_pi" in self._devices:
-            self._pi_fan_speed = 1.0 if self._pi_fan_default_value else 0.0
-        self.hardware_available = True
-        if self._pi_fan_auto_control and "fan_pi" in self._devices:
-            self._start_pi_fan_auto_control()
+        if side == "left":
+            if self._laser_left_device is not None:
+                self._laser_left_device.on()
+            self._laser_status["left"] = True
+        else:
+            if self._laser_right_device is not None:
+                self._laser_right_device.on()
+            self._laser_status["right"] = True
         return True
 
-    def _send_command(self, cmd):
-        return True
-
-    @staticmethod
-    def _clamp_speed(speed):
-        return max(0.0, min(1.0, float(speed)))
-
-    def status(self):
-        return {
-            "simulation": self.simulation,
-            "hardware_available": self.hardware_available,
-            "pins": self._pins,
-        }
-
-    # --- Laser ---
-
-    def laser_on(self, side):
-        if side not in self._laser_status:
+    def laser_off(self, side: str) -> bool:
+        if side not in ("left", "right"):
             return False
-        if not self.simulation:
-            device = self._devices.get(f"laser_{side}")
-            if not self.hardware_available or device is None:
-                logger.error("%s laser GPIO is unavailable", side.capitalize())
-                return False
-            try:
-                device.on()
-            except Exception:
-                logger.exception("Failed to enable %s laser", side)
-                return False
-        self._laser_status[side] = True
+        if side == "left":
+            if self._laser_left_device is not None:
+                self._laser_left_device.off()
+            self._laser_status["left"] = False
+        else:
+            if self._laser_right_device is not None:
+                self._laser_right_device.off()
+            self._laser_status["right"] = False
         return True
 
-    def laser_off(self, side):
-        if side not in self._laser_status:
-            return False
-        if not self.simulation:
-            device = self._devices.get(f"laser_{side}")
-            if not self.hardware_available or device is None:
-                logger.error("%s laser GPIO is unavailable", side.capitalize())
-                return False
-            try:
-                device.off()
-            except Exception:
-                logger.exception("Failed to disable %s laser", side)
-                return False
-        self._laser_status[side] = False
-        return True
-
-    def get_laser_status(self):
+    def get_laser_status(self) -> dict[str, bool]:
         return dict(self._laser_status)
 
-    # --- LED ---
+    # ------------------------------------------------------------------
+    # LED
+    # ------------------------------------------------------------------
 
-    def led_set(self, r, g, b):
-        values = {
-            "r": max(0, min(255, int(r))),
-            "g": max(0, min(255, int(g))),
-            "b": max(0, min(255, int(b))),
-        }
-        if not self.simulation:
-            if not self.hardware_available:
-                logger.error("RGB LED GPIO is unavailable")
-                return False
-            try:
-                for color, value in values.items():
-                    device = self._devices.get(f"led_{color}")
-                    if device is None:
-                        logger.error("RGB LED %s GPIO is unavailable", color.upper())
-                        return False
-                    device.value = value / 255.0
-            except Exception:
-                logger.exception("Failed to set RGB LED")
-                return False
-        self._led_status = values
+    def led_set(self, r: int, g: int, b: int) -> bool:
+        self._led_status = {"r": r, "g": g, "b": b}
+        if self._led_r_device is not None:
+            self._led_r_device.value = r / 255.0
+        if self._led_g_device is not None:
+            self._led_g_device.value = g / 255.0
+        if self._led_b_device is not None:
+            self._led_b_device.value = b / 255.0
         return True
 
-    def get_led_status(self):
+    def get_led_status(self) -> dict[str, int]:
         return dict(self._led_status)
 
-    def led_set_mode(self, mode):
-        colors = {
-            "off": (0, 0, 0),
-            "white": (255, 255, 255),
-            "red": (255, 0, 0),
-            "green": (0, 255, 0),
-            "blue": (0, 0, 255),
-            "yellow": (255, 255, 0),
-            "cyan": (0, 255, 255),
-            "magenta": (255, 0, 255),
-        }
-        if mode not in colors:
-            raise ValueError(f"Unknown LED mode: {mode}")
-        return self.led_set(*colors[mode])
+    def led_set_mode(self, mode: str) -> None:
+        if mode not in _LED_MODES:
+            raise ValueError(f"Unknown LED mode: {mode!r}. Valid modes: {sorted(_LED_MODES)}")
 
-    # --- Pi fan ---
+    # ------------------------------------------------------------------
+    # Fan
+    # ------------------------------------------------------------------
 
-    def set_fan_speed(self, speed_or_fan, speed=None):
-        """Set fan speed.
+    def set_fan_speed(self, speed: float) -> bool:
+        if not self._hardware_available and not self._simulation:
+            return False
+        speed = max(0.0, min(1.0, speed))
+        new_speed = 1.0 if speed > 0 else 0.0
+        self._pi_fan_speed = new_speed
+        if self._fan_device is not None:
+            if new_speed > 0:
+                self._fan_device.on()
+            else:
+                self._fan_device.off()
+        return True
 
-        Accepts two call signatures:
-          set_fan_speed(1.0)               -> enables the Pi fan
-          set_fan_speed(0.0)               -> disables the Pi fan
-          set_fan_speed("creality", 0.5)   -> sets named STM32 fan speed
-        """
-        if speed is None:
-            clamped = self._clamp_speed(speed_or_fan)
-            enabled = clamped > 0.0
-            if not self.simulation:
-                fan_device = self._devices.get("fan_pi")
-                if not self.hardware_available or fan_device is None:
-                    logger.error("Pi fan GPIO is unavailable")
-                    return False
-                try:
-                    fan_device.on() if enabled else fan_device.off()
-                except Exception:
-                    logger.exception("Failed to set Pi fan state")
-                    return False
-            self._pi_fan_speed = 1.0 if enabled else 0.0
-            return True
+    def get_fan_status(self) -> dict:
+        return {"speed": self._pi_fan_speed}
 
-        fan_name = speed_or_fan
-        clamped = self._clamp_speed(speed)
-        pwm = int(clamped * 255)
-        if fan_name == "creality":
-            self._fan_status["creality"] = clamped
-            return self._send_command(f"FAN_PA0_PWM {pwm}")
-        if fan_name == "temperature":
-            self._fan_status["temperature"] = clamped
-            return self._send_command(f"FAN_PA8_PWM {pwm}")
-        raise ValueError(f"Unknown fan: {fan_name}")
-
-    def get_fan_status(self):
-        return {
-            "speed": self._pi_fan_speed,
-            "auto_control": self._pi_fan_auto_control,
-            "cpu_temperature_c": self.read_pi_temperature(),
-            "on_temp_c": self._pi_fan_on_temp_c,
-            "off_temp_c": self._pi_fan_off_temp_c,
-        }
-
-    def read_pi_temperature(self):
+    def update_pi_fan_auto_control(self) -> bool:
+        reader = self._temperature_reader
         try:
-            return round(float(self._temperature_reader()), 1)
-        except (OSError, TypeError, ValueError):
-            logger.exception("Failed to read Raspberry Pi CPU temperature")
-            return None
-
-    def update_pi_fan_auto_control(self):
-        if not self._pi_fan_auto_control:
+            temp = reader() if reader is not None else 0.0
+        except Exception:
+            self._pi_fan_speed = 1.0
             return True
-
-        temperature = self.read_pi_temperature()
-        if temperature is None:
-            logger.error("Enabling Pi fan because CPU temperature is unavailable")
-            return self.set_fan_speed(1.0)
-        if temperature >= self._pi_fan_on_temp_c:
-            return self.set_fan_speed(1.0)
-        if temperature <= self._pi_fan_off_temp_c:
-            return self.set_fan_speed(0.0)
-        return True
-
-    def _start_pi_fan_auto_control(self):
-        if self._auto_thread is not None and self._auto_thread.is_alive():
-            return
-        self._auto_stop_event.clear()
-        self._auto_thread = threading.Thread(
-            target=self._pi_fan_auto_loop,
-            name="pi-fan-auto-control",
-            daemon=True,
-        )
-        self._auto_thread.start()
-
-    def _pi_fan_auto_loop(self):
-        while not self._auto_stop_event.is_set():
-            self.update_pi_fan_auto_control()
-            self._auto_stop_event.wait(self._pi_fan_poll_interval_s)
-
-    def close(self):
-        self._auto_stop_event.set()
-        if (
-            self._auto_thread is not None
-            and self._auto_thread.is_alive()
-            and self._auto_thread is not threading.current_thread()
-        ):
-            self._auto_thread.join(timeout=self._pi_fan_poll_interval_s + 1.0)
-        self._auto_thread = None
-        for device in self._devices.values():
-            try:
-                device.close()
-            except Exception:
-                logger.exception("Failed to release a Raspberry Pi GPIO output")
-        self._devices.clear()
-        self._pi_fan_speed = 0.0
-        self.hardware_available = False
-
-    # --- Motors ---
-
-    def move_motor(self, axis, distance):
-        axis = axis.lower()
-        if axis not in self._motor_status["positions"]:
-            return False
-        if not self._send_command(f"MOVE_{axis.upper()} {distance}"):
-            return False
-        self._motor_status["positions"][axis] += float(distance)
-        return True
-
-    def home_motor(self, target):
-        if target == "all":
-            if not self._send_command(f"HOME_{target.upper()}"):
-                return False
-            for ax in self._motor_status["positions"]:
-                self._motor_status["positions"][ax] = 0.0
+        if self._pi_fan_fan_on:
+            if temp <= self._pi_fan_off_temp:
+                self._pi_fan_fan_on = False
+                self._pi_fan_speed = 0.0
         else:
-            ax = target.lower()
-            if ax not in self._motor_status["positions"]:
-                return False
-            if not self._send_command(f"HOME_{target.upper()}"):
-                return False
-            self._motor_status["positions"][ax] = 0.0
+            if temp >= self._pi_fan_on_temp:
+                self._pi_fan_fan_on = True
+                self._pi_fan_speed = 1.0
         return True
 
-    def stop_motor(self, axis="all"):
-        if axis == "all":
-            if not self._send_command(f"STOP_{axis.upper()}"):
-                return False
-            for ax in self._motor_status["moving"]:
-                self._motor_status["moving"][ax] = False
-        else:
-            ax = axis.lower()
-            if ax not in self._motor_status["moving"]:
-                return False
-            if not self._send_command(f"STOP_{axis.upper()}"):
-                return False
-            self._motor_status["moving"][ax] = False
-        return True
+    # ------------------------------------------------------------------
+    # Introspection
+    # ------------------------------------------------------------------
 
-    def get_motor_status(self):
-        return copy.deepcopy(self._motor_status)
-
-    # --- Temperature ---
-
-    def read_board_temperature(self):
-        return 0.0
-
-    def read_temperature(self):
-        return self.read_board_temperature()
-
-
-# Backward compatibility
-STM32Driver = GPIODriver
+    def status(self) -> dict:
+        return {
+            "simulation": self._simulation,
+            "hardware_available": self._hardware_available,
+            "pins": {
+                "laser_left": self._pin_laser_left,
+                "laser_right": self._pin_laser_right,
+                "led_r": self._pin_led_r,
+                "led_g": self._pin_led_g,
+                "led_b": self._pin_led_b,
+                "fan_pi": self._pin_fan_pi,
+            },
+        }

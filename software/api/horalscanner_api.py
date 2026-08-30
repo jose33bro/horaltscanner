@@ -519,7 +519,7 @@ def camera_goto_calibration_pose(camera_name: str):
         moved = move_to_pose(stm32_driver, pose)
     except (ConnectionError, RuntimeError) as exc:
         logger.error("goto_calibration_pose failed: %s", exc)
-        return _json_error(f"Déplacement moteur échoué : {exc}", 503)
+        return _json_error("Déplacement moteur échoué", 503)
 
     lidar_dist = read_lidar_distance(lidar_driver)
 
@@ -600,7 +600,7 @@ def camera_goto_scan_pose(camera_name: str):
         moved = move_to_pose(stm32_driver, saved)
     except (ConnectionError, RuntimeError) as exc:
         logger.error("goto_scan_pose failed: %s", exc)
-        return _json_error(f"Déplacement moteur échoué : {exc}", 503)
+        return _json_error("Déplacement moteur échoué", 503)
 
     lidar_dist = read_lidar_distance(lidar_driver)
 

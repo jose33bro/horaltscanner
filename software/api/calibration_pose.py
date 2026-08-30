@@ -98,7 +98,9 @@ class PoseMemory:
             self._data = {}
 
     def _save(self) -> None:
-        os.makedirs(os.path.dirname(self._path), exist_ok=True)
+        parent = Path(self._path).parent
+        if str(parent) not in ("", "."):
+            os.makedirs(str(parent), exist_ok=True)
         with open(self._path, "w") as fh:
             json.dump(self._data, fh, indent=2)
         logger.info("Scan poses saved to %s", self._path)
@@ -154,8 +156,7 @@ def move_to_pose(
         current = current_positions.get(axis_lower, 0.0)
         delta = target_mm - current
         if abs(delta) < 0.01:
-            # Already at target; skip
-            moved.append(axis_lower)
+            # Already at target; skip (not counted as moved)
             continue
         success = stm32_driver.move_motor(axis_lower, delta)
         if success:

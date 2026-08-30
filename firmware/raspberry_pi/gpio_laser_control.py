@@ -57,21 +57,22 @@ class LaserController:
         self.disable_both()
 
 
-class GPIOLaserControl:
-    """Compatibility wrapper around LaserController for legacy tests."""
+class _NullGPIOBackend:
+    def setup_output(self, pin: int) -> None:
+        return None
 
+    def write(self, pin: int, value: bool) -> None:
+        return None
+
+
+class GPIOLaserControl:
     def __init__(self, use_board: bool = True):
         self.use_board = use_board
         self.laser_gauche = None
         self.laser_droit = None
-        self._controller: LaserController | None = None
+        self._controller = LaserController(RpiGPIOBackend()) if use_board else None
 
-        if use_board:
-            self._controller = LaserController(RpiGPIOBackend())
-
-    # --- laser ---
-
-    def laser_on(self, side: str = "both") -> None:
+    def laser_on(self, side="both"):
         if self._controller is None:
             return
         if side in ("both", "gauche", "left"):
@@ -79,65 +80,55 @@ class GPIOLaserControl:
         if side in ("both", "droit", "right"):
             self._controller.enable_right()
 
-    def laser_off(self, side: str = "both") -> None:
-        # LaserController only exposes disable_both(); selective per-side disable
-        # is not supported by the underlying hardware driver.
+    def laser_off(self, side="both"):
         if self._controller is None:
             return
         self._controller.disable_both()
 
-    def laser_pulse(self, duration_ms: float, side: str = "both") -> None:
+    def laser_pulse(self, duration_ms, side="both"):
         self.laser_on(side)
         time.sleep(duration_ms / 1000.0)
         self.laser_off(side)
 
-    # --- LED (no-ops in simulation; hardware layer not required by tests) ---
+    def led_set_color(self, r, g, b):
+        return None
 
-    def led_set_color(self, r: float, g: float, b: float) -> None:
-        pass
+    def led_on(self, color="white"):
+        return None
 
-    def led_on(self, color: str = "white") -> None:
-        pass
+    def led_off(self):
+        return None
 
-    def led_off(self) -> None:
-        pass
-
-    def led_pulse(self, color: str, duration_ms: float) -> None:
+    def led_pulse(self, color, duration_ms):
         time.sleep(duration_ms / 1000.0)
 
-    # --- fan ---
+    def fan_on(self, speed=1.0):
+        return None
 
-    def fan_on(self, speed: float = 1.0) -> None:
-        pass
+    def fan_off(self):
+        return None
 
-    def fan_off(self) -> None:
-        pass
+    def fan_set_speed(self, speed):
+        return None
 
-    def fan_set_speed(self, speed: float) -> None:
-        pass
+    def status_idle(self):
+        return None
 
-    # --- status presets ---
+    def status_ready(self):
+        return None
 
-    def status_idle(self) -> None:
-        pass
+    def status_scanning(self):
+        return None
 
-    def status_ready(self) -> None:
-        pass
+    def status_error(self):
+        return None
 
-    def status_scanning(self) -> None:
-        pass
-
-    def status_error(self) -> None:
-        pass
-
-    # --- lifecycle ---
-
-    def shutdown(self) -> None:
-        if self._controller is not None:
+    def shutdown(self):
+        if self._controller:
             self._controller.disable_both()
 
-    def __enter__(self) -> "GPIOLaserControl":
+    def __enter__(self):
         return self
 
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+    def __exit__(self, exc_type, exc, tb):
         self.shutdown()

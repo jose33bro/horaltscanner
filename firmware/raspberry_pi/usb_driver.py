@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 import logging
-import re
-import serial
 import struct
 from typing import Protocol
-
 
 CMD_MOVE_X = 0x01
 CMD_MOVE_Y = 0x02
@@ -146,22 +142,27 @@ class USBScannerDriver:
         return self._exchange(CMD_STOP)
 
 
-class USBDriver:
-    """Compatibility wrapper exposing the connect/disconnect/home/move API expected by legacy tests."""
+class USBDriver(USBScannerDriver):
+    def __init__(self):
+        self.connected = True
 
-    def __init__(self) -> None:
-        self.connected = False
-
-    def connect(self) -> bool:
+    def connect(self):
         self.connected = True
         return True
 
-    def disconnect(self) -> bool:
+    def disconnect(self):
         self.connected = False
         return True
 
-    def home(self, axis: str) -> bool:
-        return True
+    def home(self, axis):
+        return self.home_axis(axis)
 
-    def move(self, axis: str, steps: int, speed: int = 0) -> bool:
-        return True
+    def move(self, axis, steps, speed=0):
+        axis = axis.upper()
+        if axis == "X":
+            return self.move_x(steps, speed=speed)
+        if axis == "Y":
+            return self.move_y(steps, speed=speed)
+        if axis == "Z":
+            return self.move_z(steps, speed=speed)
+        raise ValueError(f"Unsupported axis: {axis}")

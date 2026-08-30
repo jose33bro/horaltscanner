@@ -282,6 +282,25 @@
           </ol>
         </article>
         <article class="panel">
+          <h2>Pose automatique de calibration</h2>
+          <p class="muted">Deplace les moteurs vers la bonne pose selon la camera choisie, puis memorise la position pour le lancement du scan.</p>
+          <div class="calibration-choice">
+            <button id="pose-camera-pi" class="button"><span>Pi Camera V3</span><b>Aller en pose (X/Y)</b></button>
+            <button id="pose-camera-usb" class="button"><span>Logitech C270</span><b>Aller en pose (X/Y/Z)</b></button>
+          </div>
+          <div id="pose-result" class="calibration-result empty">Aucun deplacement lance.</div>
+          <div id="pose-lidar-row" style="display:none" class="muted">Distance TF-Luna : <b id="pose-lidar-distance">--</b> mm</div>
+          <hr>
+          <h2>Memorisation du scan</h2>
+          <p class="muted">Retourne a la pose memorisee lors de la derniere calibration.</p>
+          <div class="calibration-choice">
+            <button id="goto-scan-pose" class="button secondary"><span>Pose scan</span><b>Retourner</b></button>
+            <button id="save-scan-pose" class="button secondary"><span>Position actuelle</span><b>Memoriser</b></button>
+          </div>
+          <div id="scan-pose-result" class="calibration-result empty">Aucune pose memorisee.</div>
+          <hr>
+          <h2>Test de calibration image</h2>
+          <p class="muted">Analysez la mire damier une fois en pose.</p>
           <div class="calibration-choice">
             <button class="camera-calibrate" data-camera="pi"><span>Pi Camera V3</span><b>Lancer le test</b></button>
             <button class="camera-calibrate" data-camera="usb"><span>Logitech C270</span><b>Lancer le test</b></button>

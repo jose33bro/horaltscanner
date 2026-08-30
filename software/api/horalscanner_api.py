@@ -760,7 +760,7 @@ def camera_calibrate_pose(camera_name: str):
 
     lidar: Any = lidar_driver if (lidar_driver is not None and lidar_driver.connected) else None
 
-    result = move_to_calibration_pose(camera_name, stm32_driver, lidar_driver=lidar)
+    result = move_to_calibration_pose(stm32_driver, camera_name, lidar_driver=lidar)
     if not result.get("ok"):
         return _json_error(result.get("error", "Erreur inconnue"), 500)
 
@@ -770,7 +770,7 @@ def camera_calibrate_pose(camera_name: str):
 @app.route("/api/scan/pose", methods=["GET"])
 def scan_pose_get():
     """Return all saved scan poses."""
-    return jsonify({"success": True, "poses": get_all_saved_poses()})
+    return jsonify({"success": True, "poses": pose_memory.get_all_poses()})
 
 
 @app.route("/api/scan/pose/save", methods=["POST"])

@@ -403,8 +403,6 @@ const HoralScannerUI = (() => {
     });
     byId("align-laser-left").addEventListener("click", () => alignLaser("left"));
     byId("align-laser-right").addEventListener("click", () => alignLaser("right"));
-    byId("align-pose-pi").addEventListener("click", () => alignCameraPose("pi"));
-    byId("align-pose-logitech").addEventListener("click", () => alignCameraPose("logitech"));
   }
 
   async function refreshCamera(camera, notify = false) {
@@ -519,27 +517,6 @@ const HoralScannerUI = (() => {
     }
   }
 
-  async function alignCameraPose(camera) {
-    const resultEl = byId("camera-pose-result");
-    const label = camera === "pi" ? "Pi Camera V3 NoIR" : "Logitech C270";
-    resultEl.className = "calibration-result";
-    resultEl.textContent = `Positionnement ${label} en cours (homing + déplacement)…`;
-    try {
-      const response = await api(`/api/camera/pose/${camera}`, { method: "POST" });
-      resultEl.replaceChildren();
-      const title = document.createElement("h2");
-      title.textContent = label;
-      const verdict = document.createElement("p");
-      const pose = response.pose;
-      verdict.textContent = `Pose atteinte — X: ${pose.x} mm, Y: ${pose.y} mm, Z: ${pose.z} mm`;
-      resultEl.append(title, verdict);
-      toast(`Positionnement ${label} terminé`);
-    } catch (error) {
-      resultEl.textContent = error.message;
-      toast(error.message, true);
-    }
-  }
-
   async function postSimple(path, successMessage) {
     try {
       await api(path, { method: "POST" });
@@ -564,7 +541,8 @@ const HoralScannerUI = (() => {
       const axes = Object.entries(response.pose)
         .map(([ax, val]) => `${ax.toUpperCase()} = ${Number(val).toFixed(1)} mm`)
         .join(" · ");
-      details.textContent = axes;
+      const lidar = renderLidarValidation(response, resultEl);
+      details.textContent = lidar ? `${axes} · ${lidar}` : axes;
       resultEl.append(title, verdict, details);
       toast(response.instruction);
     } catch (error) {
@@ -616,13 +594,27 @@ const HoralScannerUI = (() => {
       const axes = Object.entries(response.pose)
         .map(([ax, val]) => `${ax.toUpperCase()} = ${Number(val).toFixed(1)} mm`)
         .join(" · ");
-      details.textContent = axes;
+      const lidar = renderLidarValidation(response, resultEl);
+      details.textContent = lidar ? `${axes} · ${lidar}` : axes;
       resultEl.append(title, verdict, details);
       toast(response.instruction);
     } catch (error) {
       resultEl.textContent = error.message;
       toast(error.message, true);
     }
+  }
+
+  function renderLidarValidation(response, resultEl) {
+    if (response.lidar_distance_mm == null) return null;
+    const tolerance = Number(response.lidar_tolerance_mm ?? 0);
+    const distance = Number(response.lidar_distance_mm).toFixed(1);
+    const expected = Number(response.lidar_expected_mm ?? 0).toFixed(1);
+    if (response.lidar_out_of_tolerance) {
+      resultEl.className = "calibration-result warning";
+      return `TF-Luna ${distance} mm (cible ${expected} ±${tolerance.toFixed(1)} mm)`;
+    }
+    resultEl.className = "calibration-result";
+    return `TF-Luna ${distance} mm`;
   }
 
   function initialize() {

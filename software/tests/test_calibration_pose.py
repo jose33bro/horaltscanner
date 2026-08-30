@@ -189,10 +189,12 @@ class TestCalibrationPoseAPIEndpoints(unittest.TestCase):
         os.unlink(self.tmp.name)
         from software.api.calibration_pose import PoseMemory
         self.api_module.pose_memory = PoseMemory(path=self.tmp.name)
+        self.original_lidar_driver = self.api_module.lidar_driver
 
         self.client = self.api_module.app.test_client()
 
     def tearDown(self):
+        self.api_module.lidar_driver = self.original_lidar_driver
         if os.path.exists(self.tmp.name):
             os.unlink(self.tmp.name)
 
@@ -268,6 +270,39 @@ class TestCalibrationPoseAPIEndpoints(unittest.TestCase):
         r = self.client.post("/api/camera/pi/goto_scan_pose")
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.get_json()["success"])
+
+    def test_scan_pose_memory_is_isolated_per_camera(self):
+        self.fake_stm32._positions.update({"x": 10.0, "y": 20.0, "z": 30.0})
+        self.client.post("/api/camera/pi/save_scan_pose")
+        self.fake_stm32._positions.update({"x": 100.0, "y": 200.0, "z": 300.0})
+        self.client.post("/api/camera/usb/save_scan_pose")
+        poses = self.client.get("/api/camera/scan_poses").get_json()["poses"]
+        self.assertEqual(poses["pi"], {"x": 10.0, "y": 20.0})
+        self.assertEqual(poses["usb"], {"x": 100.0, "y": 200.0, "z": 300.0})
+
+    def test_goto_calibration_pose_with_lidar_connected_returns_distance(self):
+        class FakeLidar:
+            connected = True
+
+            def read_distance_mm(self):
+                return 300.0
+
+        self.api_module.lidar_driver = FakeLidar()
+        r = self.client.post("/api/camera/pi/goto_calibration_pose")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["lidar_distance_mm"], 300.0)
+
+    def test_goto_calibration_pose_with_lidar_disconnected_returns_null_distance(self):
+        class FakeLidar:
+            connected = False
+
+            def connect(self):
+                return False
+
+        self.api_module.lidar_driver = FakeLidar()
+        r = self.client.post("/api/camera/pi/goto_calibration_pose")
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNone(r.get_json()["lidar_distance_mm"])
 
     # ------------------------------------------------------------------
     # scan_poses GET

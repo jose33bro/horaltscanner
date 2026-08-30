@@ -14,7 +14,7 @@ Complete guide for installing or updating HoralScanner on Raspberry Pi 4.
 1. [Quick Overview](#quick-overview)
 2. [Installation Methods](#installation-methods)
 3. [Method A: Fresh Pi OS Install](#method-a-fresh-pi-os-install)
-4. [Method B: Create Pre-configured OS Image](#method-b-create-pre-configured-os-image)
+4. [Method C: Create Pre-configured OS Image](#method-c-create-pre-configured-os-image)
 5. [Verification & Testing](#verification--testing)
 6. [Troubleshooting](#troubleshooting)
 
@@ -46,7 +46,7 @@ Complete guide for installing or updating HoralScanner on Raspberry Pi 4.
 
 ---
 
-### Method B: Create Pre-configured OS Image
+### Method B: Create Pre-configured OS Image Create Pre-configured OS Image
 **For:** Building a reusable image to flash multiple Pis or as backup
 
 **Steps:**
@@ -136,7 +136,7 @@ sudo journalctl -u horalscanner -f
 
 ---
 
-## ✅ Method B: Create Pre-configured OS Image
+## ✅ Method B: Create Pre-configured OS Image Create Pre-configured OS Image
 
 ### Prerequisites
 - Linux host with 20GB+ free disk space

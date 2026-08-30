@@ -23,10 +23,6 @@ DEFAULT_CONFIG = {
         "support": False,
         "nozzle_temp": 200,
     },
-    "moonraker": {
-        "url": "http://192.168.1.40:7125",
-        "api_key": "",
-    },
     "system": {
         "log_level": "INFO",
         "port": 5000,

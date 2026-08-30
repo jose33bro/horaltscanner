@@ -392,6 +392,15 @@ const HoralScannerUI = (() => {
     document.querySelectorAll(".camera-calibrate").forEach(button => {
       button.addEventListener("click", () => calibrationTest(button.dataset.camera));
     });
+    document.querySelectorAll(".camera-goto-pose").forEach(button => {
+      button.addEventListener("click", () => gotoCameraCalibrationPose(button.dataset.camera));
+    });
+    document.querySelectorAll(".camera-save-pose").forEach(button => {
+      button.addEventListener("click", () => saveCameraScanPose(button.dataset.camera));
+    });
+    document.querySelectorAll(".camera-goto-scan-pose").forEach(button => {
+      button.addEventListener("click", () => gotoCameraScanPose(button.dataset.camera));
+    });
     byId("align-laser-left").addEventListener("click", () => alignLaser("left"));
     byId("align-laser-right").addEventListener("click", () => alignLaser("right"));
     byId("align-pose-pi").addEventListener("click", () => alignCameraPose("pi"));
@@ -536,6 +545,84 @@ const HoralScannerUI = (() => {
       await api(path, { method: "POST" });
       toast(successMessage);
     } catch (error) { toast(error.message, true); }
+  }
+
+  async function gotoCameraCalibrationPose(camera) {
+    const resultEl = byId("pose-result");
+    const label = camera === "pi" ? "Pi Camera V3" : "Logitech C270";
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Déplacement vers la pose de calibration ${label}…`;
+    try {
+      const response = await api(`/api/camera/${camera}/goto_calibration_pose`, { method: "POST" });
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = label;
+      const verdict = document.createElement("p");
+      verdict.textContent = response.instruction;
+      const details = document.createElement("p");
+      details.className = "muted";
+      const axes = Object.entries(response.pose)
+        .map(([ax, val]) => `${ax.toUpperCase()} = ${Number(val).toFixed(1)} mm`)
+        .join(" · ");
+      details.textContent = axes;
+      resultEl.append(title, verdict, details);
+      toast(response.instruction);
+    } catch (error) {
+      resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
+  async function saveCameraScanPose(camera) {
+    const resultEl = byId("scan-pose-result");
+    const label = camera === "pi" ? "Pi Camera V3" : "Logitech C270";
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Mémorisation de la pose ${label}…`;
+    try {
+      const response = await api(`/api/camera/${camera}/save_scan_pose`, { method: "POST" });
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = label;
+      const verdict = document.createElement("p");
+      verdict.textContent = response.instruction;
+      const details = document.createElement("p");
+      details.className = "muted";
+      const axes = Object.entries(response.saved_pose)
+        .map(([ax, val]) => `${ax.toUpperCase()} = ${Number(val).toFixed(1)} mm`)
+        .join(" · ");
+      details.textContent = axes;
+      resultEl.append(title, verdict, details);
+      toast(response.instruction);
+    } catch (error) {
+      resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
+  async function gotoCameraScanPose(camera) {
+    const resultEl = byId("scan-pose-result");
+    const label = camera === "pi" ? "Pi Camera V3" : "Logitech C270";
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Retour à la pose de scan ${label}…`;
+    try {
+      const response = await api(`/api/camera/${camera}/goto_scan_pose`, { method: "POST" });
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = label;
+      const verdict = document.createElement("p");
+      verdict.textContent = response.instruction;
+      const details = document.createElement("p");
+      details.className = "muted";
+      const axes = Object.entries(response.pose)
+        .map(([ax, val]) => `${ax.toUpperCase()} = ${Number(val).toFixed(1)} mm`)
+        .join(" · ");
+      details.textContent = axes;
+      resultEl.append(title, verdict, details);
+      toast(response.instruction);
+    } catch (error) {
+      resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
   }
 
   function initialize() {

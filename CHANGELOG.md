@@ -22,7 +22,7 @@ All notable changes to HoralScanner are documented in this file.
 - Static file serving from `software/web/`
 
 **Fan Control**
-- `POST /api/fan/pi` — Pi GPIO23 fan PWM
+- `POST /api/fan/pi` — Pi GPIO23 fan output (0 = off, any positive value = on)
 - `POST /api/fan/creality` — Creality PA0 fan PWM
 - `POST /api/fan/temperature` — Temperature PA8 fan PWM
 - `GET /api/fan/status` — aggregated fan status
@@ -34,7 +34,7 @@ All notable changes to HoralScanner are documented in this file.
 
 **Drivers**
 - `STM32Driver`: fan state tracking (PA0, PA8), `get_fan_status()`, `read_board_temperature()`
-- `GPIODriver`: Pi fan PWM on GPIO23
+- `GPIODriver`: Pi fan digital output on GPIO23
 
 **Documentation**
 - `DEPLOYMENT.md` — installation and systemd service instructions

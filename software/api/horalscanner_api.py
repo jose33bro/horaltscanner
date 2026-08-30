@@ -618,6 +618,74 @@ def api_status():
 
 
 
+# ---------------------------------------------------------------------------
+# Camera alignment poses
+# ---------------------------------------------------------------------------
+# Each pose defines the absolute X/Y/Z target positions (in mm) for the
+# corresponding camera's calibration viewpoint.
+#
+# Pi Camera: X=0 places the mire facing the Pi camera (home/reference side).
+#   Y=0, Z=135 positions the mire at mid-height for a centred framing.
+#
+# Logitech C270: X=20 rotates the mire 180° from home (rotation_distance=40mm
+#   per full revolution, so 20mm = 180°) so the Logitech side faces the target.
+#   Y=0, Z=135 keeps the mire centred vertically.
+
+CAMERA_ALIGNMENT_POSES: dict[str, dict[str, float]] = {
+    "pi": {"x": 0.0, "y": 0.0, "z": 135.0},
+    "logitech": {"x": 20.0, "y": 0.0, "z": 135.0},
+}
+
+
+@app.route("/api/camera/pose/<camera_name>", methods=["POST"])
+def camera_align_pose(camera_name: str):
+    """Move motors to the calibration pose for the requested camera.
+
+    Supported camera names: ``pi``, ``logitech``.
+
+    Workflow
+    --------
+    1. Validate the camera name against ``CAMERA_ALIGNMENT_POSES``.
+    2. Home all axes so positions are at a known zero reference.
+    3. Move each axis by the target offset (absolute, from zero).
+
+    Returns JSON with ``success``, ``camera``, ``pose`` (the target
+    coordinates), and the updated ``motor_status``.
+    """
+    if camera_name not in CAMERA_ALIGNMENT_POSES:
+        return _json_error(
+            f"Unknown camera '{camera_name}'; use one of: {', '.join(CAMERA_ALIGNMENT_POSES)}",
+            400,
+        )
+
+    if stm32_driver is None:
+        return _json_error("STM32 driver unavailable", 503)
+
+    pose = CAMERA_ALIGNMENT_POSES[camera_name]
+
+    try:
+        # Home all axes to establish a zero reference
+        if not stm32_driver.home_motor("all"):
+            return _json_error("Homing failed", 502)
+
+        # Move each axis to the target position (absolute from the homed zero)
+        for axis in ("x", "y", "z"):
+            target_mm = pose.get(axis, 0.0)
+            if target_mm != 0.0:
+                if not stm32_driver.move_motor(axis, target_mm):
+                    return _json_error(f"Move failed on axis {axis}", 502)
+
+        return jsonify({
+            "success": True,
+            "camera": camera_name,
+            "pose": pose,
+            "status": stm32_driver.get_motor_status(),
+        })
+    except Exception:
+        logger.exception("Camera align pose route failed")
+        return _json_error("Internal server error", 500)
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200

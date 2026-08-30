@@ -52,19 +52,7 @@ sudo reboot
 
 ---
 
-### Path B: Migrate from Klipper
-```bash
-# If you have existing Klipper installation:
-sudo bash -c "curl -sSL https://raw.githubusercontent.com/jose33bro/horaltscanner/main/remove_klipper_install_horaltscanner.sh | bash"
-
-# Follow prompts to flash STM32 firmware
-# Reboot and verify
-```
-**Time:** 45-60 minutes | **Difficulty:** ⭐⭐ Medium
-
----
-
-### Path C: Manual Setup
+### Path B: Manual Setup
 See [QUICK_START.md](QUICK_START.md) for step-by-step instructions.
 
 ---
@@ -98,7 +86,7 @@ GPIO22  → Laser Right (digital)
 GPIO18  → LED Red (PWM)
 GPIO13  → LED Green (PWM)
 GPIO19  → LED Blue (PWM)
-GPIO23  → Pi Fan (PWM)
+GPIO23  → Pi Fan automatique (marche à 55 °C, arrêt à 45 °C)
 ```
 
 **STM32F103 Mapping (Creality V4.2.2):**
@@ -147,6 +135,12 @@ POST /api/fan/pi           {"percent": 50}      # Set Pi fan to 50%
 POST /api/fan/creality     {"speed": 0.75}      # Set Creality fan
 POST /api/fan/temperature  {"pwm": 0.5}         # Set temp fan
 GET  /api/fan/status                            # Get all speeds
+```
+
+Sur Raspberry Pi OS ARM64, activez la reconstruction Open3D avec:
+
+```bash
+bash software/scripts/install_open3d_pi.sh
 ```
 
 ### Temperature
@@ -213,8 +207,7 @@ horaltscanner/
 │   └── usb_protocol.md         # USB CDC protocol spec
 │
 ├── setup_pi.sh                 # Complete Pi setup script
-├── remove_klipper_install_horaltscanner.sh  # Klipper → HoralScanner migration
-├── QUICK_START.md              # Installation guide (3 paths)
+├── QUICK_START.md              # Installation guide
 ├── DEPLOYMENT.md               # Production deployment guide
 ├── USAGE.md                    # API reference & examples
 ├── CHANGELOG.md                # Version history
@@ -251,16 +244,6 @@ sudo bash setup_pi.sh --update        # Update code only
 sudo bash setup_pi.sh --quick-test    # Test imports
 ```
 
-### `remove_klipper_install_horaltscanner.sh` — Klipper Migration
-```bash
-sudo bash remove_klipper_install_horaltscanner.sh
-```
-- Stops Klipper/Moonraker
-- Backs up configuration
-- Removes legacy services
-- Compiles & flashes STM32 firmware
-- Installs HoralScanner
-
 ### `software/scripts/update.sh` — Auto-Update
 ```bash
 bash /home/pi/horaltscanner/software/scripts/update.sh
@@ -269,6 +252,42 @@ bash /home/pi/horaltscanner/software/scripts/update.sh
 - Pulls latest code
 - Updates Python deps
 - Restarts service
+
+---
+
+## 🚀 Running the API
+
+The Flask API is packaged as a Python module and should be launched from the
+`software/` directory:
+
+```bash
+cd /home/pi/horaltscanner/software
+python3 -m api.app
+```
+
+The systemd service is configured to do this automatically:
+
+```ini
+WorkingDirectory=/home/pi/horaltscanner/software
+Environment="PYTHONPATH=/home/pi/horaltscanner/software"
+ExecStart=/home/pi/horaltscanner_env/bin/python3 -m api.app
+```
+
+### Useful validation commands
+
+```bash
+# Check scan status
+curl http://127.0.0.1:5000/scan/status
+
+# Start a scan
+curl -X POST http://127.0.0.1:5000/scan/start
+
+# Stop the scan
+curl -X POST http://127.0.0.1:5000/scan/stop
+
+# Restart the system service and verify it is running
+sudo systemctl restart horalscanner.service && systemctl status horalscanner.service
+```
 
 ---
 

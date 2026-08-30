@@ -95,6 +95,7 @@ install_system_deps() {
         python3-dev \
         python3-pip \
         python3-venv \
+        python3-picamera2 \
         git \
         curl \
         wget \
@@ -133,8 +134,8 @@ configure_gpio() {
         sed -i 's/^#dtparam=spi=on/dtparam=spi=on/' /boot/firmware/config.txt || true
         sed -i 's/^#enable_uart=1/enable_uart=1/' /boot/firmware/config.txt || true
         
-        # Ensure dtoverlay is enabled
-        grep -q "dtoverlay=gpio-ir" /boot/firmware/config.txt || echo "dtoverlay=gpio-ir" >> /boot/firmware/config.txt || true
+        # GPIO18 drives the red LED channel and must not be claimed by gpio-ir.
+        sed -i '/^[[:space:]]*dtoverlay=gpio-ir/d' /boot/firmware/config.txt || true
     else
         log_warn "Boot config not found at /boot/firmware/config.txt"
     fi
@@ -169,6 +170,23 @@ clone_repo() {
     log_success "Repository ready"
 }
 
+configure_serial_devices() {
+    if is_image_build; then
+        return
+    fi
+
+    mapfile -t serial_devices < <(
+        find /dev -maxdepth 1 \( -name 'ttyUSB*' -o -name 'ttyACM*' \) -print
+    )
+    if [ "${#serial_devices[@]}" -ge 2 ]; then
+        log_info "Creating stable Creality and TF-Luna device aliases..."
+        bash "$INSTALL_DIR/software/scripts/configure_serial_devices.sh" ||
+            log_warn "Serial aliases could not be configured automatically"
+    else
+        log_warn "Connect Creality and TF-Luna, then run software/scripts/configure_serial_devices.sh"
+    fi
+}
+
 # Step 5: Create virtual environment and install Python deps
 setup_python() {
     log_info "Setting up Python virtual environment..."
@@ -180,7 +198,8 @@ setup_python() {
     fi
     
     # Create venv
-    python3 -m venv "$VENV_DIR"
+    # Picamera2/libcamera are supplied by Raspberry Pi OS, not by PyPI.
+    python3 -m venv --system-site-packages "$VENV_DIR"
     source "$VENV_DIR/bin/activate"
     
     # Upgrade pip
@@ -193,6 +212,11 @@ setup_python() {
     else
         log_warn "requirements.txt not found, installing basic packages..."
         pip install flask flask-cors pillow numpy requests pyserial
+    fi
+
+    if [ "$(uname -m)" = "aarch64" ]; then
+        log_info "Open3D ARM64 installer available at software/scripts/install_open3d_pi.sh"
+        log_info "Run it after setup to enable Poisson mesh reconstruction"
     fi
     
     deactivate
@@ -336,6 +360,7 @@ main() {
             install_system_deps
             configure_gpio
             clone_repo
+            configure_serial_devices
             setup_python
             install_service
             backup_system
@@ -359,6 +384,7 @@ main() {
             install_system_deps
             configure_gpio
             clone_repo
+            configure_serial_devices
             setup_python
             install_service
             quick_start

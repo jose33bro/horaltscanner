@@ -22,6 +22,7 @@ from software.api.camera_calibration import (
     save_scan_pose,
 )
 from software.api.camera_driver import LogitechCamera, PiCamera, analyze_camera_frame, analyze_laser_line
+from software.api.calibration_pose import PoseMemory, get_default_pose, move_to_pose, read_lidar_distance
 from software.api.lidar_driver import LidarDriver
 from software.api.scanner_engine import ReconstructionEngine, ScanSession
 
@@ -114,6 +115,9 @@ pi_camera = PiCamera()
 usb_camera = LogitechCamera(device_id=int(camera_config.get("usb_device_id", 0)))
 scan_session = ScanSession(simulation=bool(scanner_config.get("simulation", False)))
 reconstruction_engine = ReconstructionEngine(scan_session)
+pose_memory = PoseMemory()
+_CALIBRATION_LIDAR_TARGET_MM = {"pi": 300.0, "usb": 300.0}
+_CALIBRATION_LIDAR_TOLERANCE_MM = 20.0
 
 _initialize_driver(stm32_driver, "STM32Driver")
 _initialize_driver(gpio_driver, "GPIODriver")
@@ -137,6 +141,22 @@ def _ensure_lidar_connected() -> bool:
 
 def _json_error(message: str, status_code: int = 400):
     return jsonify({"success": False, "error": message}), status_code
+
+
+def _lidar_validation(camera_name: str, lidar_distance_mm: float | None) -> dict[str, Any]:
+    expected = _CALIBRATION_LIDAR_TARGET_MM.get(camera_name, 300.0)
+    validation: dict[str, Any] = {
+        "lidar_connected": lidar_distance_mm is not None,
+        "lidar_expected_mm": expected,
+        "lidar_tolerance_mm": _CALIBRATION_LIDAR_TOLERANCE_MM,
+        "lidar_out_of_tolerance": False,
+    }
+    if lidar_distance_mm is None:
+        return validation
+    validation["lidar_out_of_tolerance"] = (
+        abs(float(lidar_distance_mm) - expected) > _CALIBRATION_LIDAR_TOLERANCE_MM
+    )
+    return validation
 
 
 def _parse_pwm_speed(data: dict[str, Any]) -> float:
@@ -489,6 +509,158 @@ def camera_test(camera_name: str):
     return jsonify({"success": True, "camera": camera_name, "result": result})
 
 
+# ---------------------------------------------------------------------------
+# Camera calibration pose endpoints
+# ---------------------------------------------------------------------------
+
+@app.route("/api/camera/<camera_name>/goto_calibration_pose", methods=["POST"])
+def camera_goto_calibration_pose(camera_name: str):
+    """Move motors to the default calibration pose for *camera_name*.
+
+    Pi Camera  → moves X and Y only (Z is never touched).
+    Logitech   → moves X, Y, and Z.
+
+    After positioning, reads the TF-Luna distance when available.
+
+    Returns JSON:
+      - camera: camera name
+      - pose: target axes and their positions (mm)
+      - moved_axes: axes that were successfully moved
+      - lidar_distance_mm: measured distance or null
+      - instruction: French status message
+    """
+    if camera_name not in ("pi", "usb"):
+        return _json_error("Caméra inconnue ; utilisez 'pi' ou 'usb'", 404)
+
+    if stm32_driver is None:
+        return _json_error("Contrôleur moteur non disponible", 503)
+
+    pose = get_default_pose(camera_name)
+    if pose is None:
+        return _json_error("Pose de calibration introuvable", 500)
+
+    try:
+        moved = move_to_pose(stm32_driver, pose)
+    except (ConnectionError, RuntimeError) as exc:
+        logger.error("goto_calibration_pose failed: %s", exc)
+        return _json_error("Déplacement moteur échoué", 503)
+
+    lidar_dist = read_lidar_distance(lidar_driver)
+    lidar_validation = _lidar_validation(camera_name, lidar_dist)
+
+    camera_label = "Pi Camera" if camera_name == "pi" else "Caméra USB Logitech"
+    instruction = f"Pose de calibration {camera_label} atteinte."
+    if lidar_dist is not None:
+        instruction += f" Distance TF-Luna : {lidar_dist:.1f} mm."
+        if lidar_validation["lidar_out_of_tolerance"]:
+            instruction += " ⚠️ Hors tolérance."
+
+    return jsonify({
+        "success": True,
+        "camera": camera_name,
+        "pose": pose,
+        "moved_axes": moved,
+        "lidar_distance_mm": lidar_dist,
+        **lidar_validation,
+        "instruction": instruction,
+    })
+
+
+@app.route("/api/camera/<camera_name>/save_scan_pose", methods=["POST"])
+def camera_save_scan_pose(camera_name: str):
+    """Save the current motor position as the scan pose for *camera_name*.
+
+    The saved pose is used to return the machine to the correct position
+    before starting a scan.
+
+    Returns JSON:
+      - camera: camera name
+      - saved_pose: the pose that was saved
+    """
+    if camera_name not in ("pi", "usb"):
+        return _json_error("Caméra inconnue ; utilisez 'pi' ou 'usb'", 404)
+
+    if stm32_driver is None:
+        return _json_error("Contrôleur moteur non disponible", 503)
+
+    status = stm32_driver.get_motor_status()
+    positions = status.get("positions", {})
+
+    # For Pi Camera keep only X/Y; for Logitech keep X/Y/Z
+    if camera_name == "pi":
+        saved = {k: v for k, v in positions.items() if k in ("x", "y")}
+    else:
+        saved = {k: v for k, v in positions.items() if k in ("x", "y", "z")}
+
+    pose_memory.save_pose(camera_name, saved)
+
+    camera_label = "Pi Camera" if camera_name == "pi" else "Caméra USB Logitech"
+    return jsonify({
+        "success": True,
+        "camera": camera_name,
+        "saved_pose": saved,
+        "instruction": f"Pose de scan {camera_label} mémorisée.",
+    })
+
+
+@app.route("/api/camera/<camera_name>/goto_scan_pose", methods=["POST"])
+def camera_goto_scan_pose(camera_name: str):
+    """Return the machine to the previously saved scan pose for *camera_name*.
+
+    Returns JSON:
+      - camera: camera name
+      - pose: restored axes and positions (mm)
+      - moved_axes: axes that were successfully moved
+      - lidar_distance_mm: measured distance or null
+      - instruction: French status message
+    """
+    if camera_name not in ("pi", "usb"):
+        return _json_error("Caméra inconnue ; utilisez 'pi' ou 'usb'", 404)
+
+    if stm32_driver is None:
+        return _json_error("Contrôleur moteur non disponible", 503)
+
+    saved = pose_memory.get_pose(camera_name)
+    if saved is None:
+        return _json_error("Aucune pose de scan mémorisée pour cette caméra", 404)
+
+    try:
+        moved = move_to_pose(stm32_driver, saved)
+    except (ConnectionError, RuntimeError) as exc:
+        logger.error("goto_scan_pose failed: %s", exc)
+        return _json_error("Déplacement moteur échoué", 503)
+
+    lidar_dist = read_lidar_distance(lidar_driver)
+    lidar_validation = _lidar_validation(camera_name, lidar_dist)
+
+    camera_label = "Pi Camera" if camera_name == "pi" else "Caméra USB Logitech"
+    instruction = f"Retour à la pose de scan {camera_label}."
+    if lidar_dist is not None:
+        instruction += f" Distance TF-Luna : {lidar_dist:.1f} mm."
+        if lidar_validation["lidar_out_of_tolerance"]:
+            instruction += " ⚠️ Hors tolérance."
+
+    return jsonify({
+        "success": True,
+        "camera": camera_name,
+        "pose": saved,
+        "moved_axes": moved,
+        "lidar_distance_mm": lidar_dist,
+        **lidar_validation,
+        "instruction": instruction,
+    })
+
+
+@app.route("/api/camera/scan_poses", methods=["GET"])
+def camera_scan_poses():
+    """Return all saved scan poses.
+
+    Returns JSON:
+      - poses: dict keyed by camera name
+    """
+    return jsonify({"success": True, "poses": pose_memory.all_poses()})
+
+
 @app.route("/api/laser/align/<side>", methods=["POST"])
 def laser_align(side: str):
     """Automatic laser alignment check using the Pi Camera.
@@ -621,8 +793,6 @@ def api_status():
             "version": _VERSION,
         },
     })
-
-
 
 @app.route("/health", methods=["GET"])
 def health():

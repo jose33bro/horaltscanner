@@ -340,6 +340,5 @@ class HoralScannerAPITests(unittest.TestCase):
         response = self.client.post("/api/laser/align/left")
         self.assertEqual(response.status_code, 503)
 
-
 if __name__ == "__main__":
     unittest.main()

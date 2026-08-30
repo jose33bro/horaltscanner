@@ -175,6 +175,7 @@ main { max-width: 1540px; margin: 0 auto; padding: 30px 34px 60px; }
 .camera-calibrate b { margin-top: 7px; color: var(--cyan); }
 .calibration-result { min-height: 220px; margin-top: 16px; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: #0a1118; }
 .calibration-result.empty { display: grid; place-items: center; color: var(--muted); }
+.calibration-result.warning { border-color: var(--amber); }
 
 #toast { position: fixed; right: 24px; bottom: 24px; max-width: min(420px, calc(100vw - 48px)); padding: 13px 17px; border: 1px solid var(--line); border-left: 4px solid var(--cyan); border-radius: 9px; background: #15202b; box-shadow: var(--shadow); opacity: 0; transform: translateY(12px); pointer-events: none; transition: .2s; z-index: 50; }
 #toast.show { opacity: 1; transform: translateY(0); }

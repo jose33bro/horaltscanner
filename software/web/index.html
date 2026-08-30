@@ -288,6 +288,23 @@
           </div>
           <div id="calibration-result" class="calibration-result empty">Aucun test lance.</div>
           <hr>
+          <h2>Pose automatique de calibration</h2>
+          <p class="muted">Place les moteurs dans la pose de calibration de la camera selectionnee, puis memorise cette pose pour le lancement du scan.</p>
+          <div class="calibration-choice">
+            <button id="pose-pi" class="button secondary"><span>Pi Camera</span><b>Mise en pose (X/Y)</b></button>
+            <button id="pose-usb" class="button secondary"><span>Logitech USB</span><b>Mise en pose (X/Y/Z)</b></button>
+          </div>
+          <div id="pose-result" class="calibration-result empty">Aucune pose lancee.</div>
+          <div class="calibration-choice" style="margin-top:0.5rem">
+            <button id="pose-save-pi" class="button secondary small"><span>Pi Camera</span><b>Enregistrer la pose</b></button>
+            <button id="pose-save-usb" class="button secondary small"><span>Logitech USB</span><b>Enregistrer la pose</b></button>
+          </div>
+          <div class="calibration-choice">
+            <button id="pose-restore-pi" class="button secondary small"><span>Pi Camera</span><b>Retour a la pose enregistree</b></button>
+            <button id="pose-restore-usb" class="button secondary small"><span>Logitech USB</span><b>Retour a la pose enregistree</b></button>
+          </div>
+          <div id="lidar-pose-distance" class="calibration-result empty" style="margin-top:0.5rem"></div>
+          <hr>
           <h2>Alignement laser</h2>
           <p class="muted">Allume un laser à la fois, capture l'image Pi Camera et calcule la correction d'angle.</p>
           <div class="calibration-choice">

@@ -394,6 +394,12 @@ const HoralScannerUI = (() => {
     });
     byId("align-laser-left").addEventListener("click", () => alignLaser("left"));
     byId("align-laser-right").addEventListener("click", () => alignLaser("right"));
+    byId("pose-pi").addEventListener("click", () => moveToPose("pi"));
+    byId("pose-usb").addEventListener("click", () => moveToPose("usb"));
+    byId("pose-save-pi").addEventListener("click", () => savePose("pi"));
+    byId("pose-save-usb").addEventListener("click", () => savePose("usb"));
+    byId("pose-restore-pi").addEventListener("click", () => restorePose("pi"));
+    byId("pose-restore-usb").addEventListener("click", () => restorePose("usb"));
   }
 
   async function refreshCamera(camera, notify = false) {
@@ -502,6 +508,69 @@ const HoralScannerUI = (() => {
           `Angle mesuré: ${formatSigned(response.angle_deg)}° · Correction: ${formatSigned(response.correction_deg)}°`;
         resultEl.append(details);
       }
+    } catch (error) {
+      resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
+  async function moveToPose(camera) {
+    const label = camera === "pi" ? "Pi Camera (X/Y)" : "Logitech USB (X/Y/Z)";
+    const resultEl = byId("pose-result");
+    const lidarEl = byId("lidar-pose-distance");
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Mise en pose ${label} en cours…`;
+    lidarEl.className = "calibration-result empty";
+    lidarEl.textContent = "";
+    try {
+      const response = await api(`/api/calibration/pose/${camera}`, { method: "POST" });
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = `Pose ${label}`;
+      const verdict = document.createElement("p");
+      const axes = Object.keys(response.pose).join(", ").toUpperCase();
+      verdict.textContent = `Pose atteinte — axes deplacés : ${axes}`;
+      resultEl.append(title, verdict);
+      toast(`Pose ${label} atteinte`);
+      if (response.lidar_distance_mm !== null && response.lidar_distance_mm !== undefined) {
+        lidarEl.className = response.lidar_ok === false
+          ? "calibration-result warning"
+          : "calibration-result";
+        lidarEl.textContent = `Distance TF-Luna mesurée : ${Number(response.lidar_distance_mm).toFixed(1)} mm` +
+          (response.lidar_ok === false ? " — hors tolérance" : " ✓");
+      }
+    } catch (error) {
+      resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
+  async function savePose(camera) {
+    const label = camera === "pi" ? "Pi Camera" : "Logitech USB";
+    try {
+      const response = await api(`/api/calibration/pose/${camera}/save`, { method: "POST" });
+      const pose = response.saved_pose;
+      const poseStr = Object.entries(pose).map(([k, v]) => `${k.toUpperCase()}=${Number(v).toFixed(1)}`).join(", ");
+      toast(`Pose ${label} enregistrée : ${poseStr}`);
+    } catch (error) { toast(error.message, true); }
+  }
+
+  async function restorePose(camera) {
+    const label = camera === "pi" ? "Pi Camera" : "Logitech USB";
+    const resultEl = byId("pose-result");
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Retour à la pose enregistrée ${label} en cours…`;
+    try {
+      const response = await api(`/api/calibration/pose/${camera}/restore`, { method: "POST" });
+      const pose = response.restored_pose;
+      const poseStr = Object.entries(pose).map(([k, v]) => `${k.toUpperCase()}=${Number(v).toFixed(1)}`).join(", ");
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = `Retour pose ${label}`;
+      const p = document.createElement("p");
+      p.textContent = `Position restaurée : ${poseStr}`;
+      resultEl.append(title, p);
+      toast(`Pose ${label} restaurée`);
     } catch (error) {
       resultEl.textContent = error.message;
       toast(error.message, true);

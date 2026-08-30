@@ -15,6 +15,12 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory
 from software.api import config_manager
+from software.api.camera_calibration import (
+    get_calibration_pose,
+    get_saved_scan_pose,
+    move_to_pose,
+    save_scan_pose,
+)
 from software.api.camera_driver import LogitechCamera, PiCamera, analyze_camera_frame, analyze_laser_line
 from software.api.lidar_driver import LidarDriver
 from software.api.scanner_engine import ReconstructionEngine, ScanSession
@@ -621,6 +627,118 @@ def api_status():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
+
+
+# ---------------------------------------------------------------------------
+# Camera calibration pose routes
+# ---------------------------------------------------------------------------
+
+@app.route("/api/calibration/pose/<camera_name>", methods=["POST"])
+def calibration_pose_move(camera_name: str):
+    """Move motors to the calibration pose for the given camera.
+
+    Pi Camera  (``pi``)  : moves X + Y only (Z untouched).
+    Logitech   (``usb``) : moves X + Y + Z.
+
+    Optionally reads TF-Luna distance after positioning to validate the pose.
+    Returns the final pose, moves executed and (if available) LiDAR distance.
+    """
+    camera_name = camera_name.lower()
+    if camera_name not in ("pi", "usb"):
+        return _json_error("Caméra inconnue. Valeurs acceptées : pi, usb", 400)
+
+    if stm32_driver is None:
+        return _json_error("Pilote STM32 indisponible", 503)
+
+    lidar = lidar_driver if _ensure_lidar_connected() else None
+
+    try:
+        result = move_to_pose(stm32_driver, camera_name, lidar_driver=lidar)
+    except ValueError:
+        return _json_error("Caméra inconnue ou paramètre invalide", 400)
+    except RuntimeError as exc:
+        logger.error("Calibration pose move failed: %s", exc)
+        return _json_error("Déplacement moteur échoué", 503)
+    except Exception:
+        logger.exception("Calibration pose move unexpected error")
+        return _json_error("Erreur interne", 500)
+
+    return jsonify({"success": True, **result})
+
+
+@app.route("/api/calibration/pose/<camera_name>/save", methods=["POST"])
+def calibration_pose_save(camera_name: str):
+    """Save the current motor positions as the scan reference pose for *camera_name*."""
+    camera_name = camera_name.lower()
+    if camera_name not in ("pi", "usb"):
+        return _json_error("Caméra inconnue. Valeurs acceptées : pi, usb", 400)
+
+    if stm32_driver is None:
+        return _json_error("Pilote STM32 indisponible", 503)
+
+    try:
+        positions = stm32_driver.get_motor_status().get("positions", {})
+        pose = save_scan_pose(camera_name, positions)
+    except Exception:
+        logger.exception("Calibration pose save failed")
+        return _json_error("Erreur interne", 500)
+
+    return jsonify({"success": True, "camera": camera_name, "saved_pose": pose})
+
+
+@app.route("/api/calibration/pose/<camera_name>/restore", methods=["POST"])
+def calibration_pose_restore(camera_name: str):
+    """Move motors back to the saved scan reference pose for *camera_name*."""
+    camera_name = camera_name.lower()
+    if camera_name not in ("pi", "usb"):
+        return _json_error("Caméra inconnue. Valeurs acceptées : pi, usb", 400)
+
+    saved = get_saved_scan_pose(camera_name)
+    if saved is None:
+        return _json_error(
+            f"Aucune pose enregistrée pour la caméra '{camera_name}'", 404
+        )
+
+    if stm32_driver is None:
+        return _json_error("Pilote STM32 indisponible", 503)
+
+    current = stm32_driver.get_motor_status().get("positions", {})
+    moves_done: list = []
+    try:
+        for axis, target in saved.items():
+            delta = target - current.get(axis, 0.0)
+            if abs(delta) > 0.001:
+                ok = stm32_driver.move_motor(axis.upper(), delta)
+                if not ok:
+                    return _json_error(
+                        f"Déplacement moteur {axis.upper()} échoué", 503
+                    )
+                moves_done.append({axis: delta})
+    except Exception:
+        logger.exception("Calibration pose restore failed")
+        return _json_error("Erreur interne", 500)
+
+    return jsonify({
+        "success": True,
+        "camera": camera_name,
+        "restored_pose": saved,
+        "moves_done": moves_done,
+    })
+
+
+@app.route("/api/calibration/pose/<camera_name>", methods=["GET"])
+def calibration_pose_info(camera_name: str):
+    """Return the default calibration pose and saved scan pose for *camera_name*."""
+    camera_name = camera_name.lower()
+    if camera_name not in ("pi", "usb"):
+        return _json_error("Caméra inconnue. Valeurs acceptées : pi, usb", 400)
+
+    return jsonify({
+        "success": True,
+        "camera": camera_name,
+        "default_pose": get_calibration_pose(camera_name),
+        "saved_scan_pose": get_saved_scan_pose(camera_name),
+    })
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

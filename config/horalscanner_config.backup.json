@@ -11,8 +11,7 @@
       "rotation_distance": 40,
       "endstop_pin": "PA5",
       "position_max": 210,
-      "microsteps": 16,
-      "homing_speed": 40
+      "microsteps": 16
     },
     "y": {
       "step_pin": "PB8",
@@ -21,8 +20,7 @@
       "rotation_distance": 620,
       "endstop_pin": "PA6",
       "position_max": 628.32,
-      "microsteps": 16,
-      "homing_speed": 12
+      "microsteps": 16
     },
     "z": {
       "step_pin": "PB6",
@@ -31,8 +29,7 @@
       "rotation_distance": 8,
       "endstop_pin": "PA7",
       "position_max": 270,
-      "microsteps": 16,
-      "homing_speed": 5
+      "microsteps": 16
     }
   },
   "lasers": {
@@ -102,6 +99,6 @@
   "cameras": {
     "pi_name": "Pi Camera V3 NoIR",
     "usb_name": "Logitech C270",
-    "usb_device_id": 2
+    "usb_device_id": 0
   }
 }

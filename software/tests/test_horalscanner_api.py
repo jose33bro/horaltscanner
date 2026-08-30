@@ -340,58 +340,5 @@ class HoralScannerAPITests(unittest.TestCase):
         response = self.client.post("/api/laser/align/left")
         self.assertEqual(response.status_code, 503)
 
-    def test_calibration_pose_pi_homes_and_returns_target(self):
-        response = self.client.post("/api/calibration/pose/pi")
-
-        self.assertEqual(response.status_code, 200)
-        data = response.get_json()
-        self.assertTrue(data["success"])
-        self.assertEqual(data["camera"], "pi")
-        self.assertIn("label", data)
-        self.assertEqual(data["target"]["x_mm"], 0.0)
-        self.assertEqual(data["target"]["y_mm"], 0.0)
-        self.assertIsNone(data["target"]["z_mm"])
-        self.assertIn(("home_motor", "all"), self.fake_stm32.calls)
-        # X and Y moves must always be issued (even at 0.0) so any
-        # non-zero offset in a future pose is applied correctly
-        self.assertIn(("move_motor", "x", 0.0), self.fake_stm32.calls)
-        self.assertIn(("move_motor", "y", 0.0), self.fake_stm32.calls)
-
-    def test_calibration_pose_nonzero_values_trigger_moves(self):
-        original_poses = self.api_module.CALIBRATION_POSES
-        self.api_module.CALIBRATION_POSES = {
-            "test_cam": {
-                "label": "Test Camera",
-                "description": "Test pose.",
-                "x_mm": 15.0,
-                "y_mm": 90.0,
-                "z_mm": None,
-            }
-        }
-        self.addCleanup(setattr, self.api_module, "CALIBRATION_POSES", original_poses)
-
-        response = self.client.post("/api/calibration/pose/test_cam")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(("move_motor", "x", 15.0), self.fake_stm32.calls)
-        self.assertIn(("move_motor", "y", 90.0), self.fake_stm32.calls)
-
-    def test_calibration_pose_unknown_camera_returns_400(self):
-        response = self.client.post("/api/calibration/pose/unknown")
-        self.assertEqual(response.status_code, 400)
-
-    def test_calibration_pose_no_stm32_returns_503(self):
-        original_stm32 = self.api_module.stm32_driver
-        self.api_module.stm32_driver = None
-        self.addCleanup(setattr, self.api_module, "stm32_driver", original_stm32)
-        response = self.client.post("/api/calibration/pose/pi")
-        self.assertEqual(response.status_code, 503)
-
-    def test_calibration_pose_homing_failure_returns_502(self):
-        self.fake_stm32.home_motor = lambda _: False
-        response = self.client.post("/api/calibration/pose/pi")
-        self.assertEqual(response.status_code, 502)
-
-
 if __name__ == "__main__":
     unittest.main()

@@ -27,4 +27,5 @@ jobs:
           pip install pytest pytest-cov flask flask-cors pydantic requests numpy scipy pyyaml python-dateutil pyserial pillow
 
       - name: Run tests
-        run: python -m pytest -q software/tests
+        working-directory: software
+        run: pytest -q tests

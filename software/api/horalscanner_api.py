@@ -17,9 +17,10 @@ from flask import Flask, Response, jsonify, request, send_file, send_from_direct
 from software.api import config_manager
 from software.api.camera_calibration import (
     get_calibration_pose,
-    get_saved_scan_pose,
-    move_to_pose as calibration_move_to_pose,
-    save_scan_pose,
+    get_saved_pose,
+    move_to_calibration_pose as calibration_move_to_pose,
+    restore_scan_pose,
+    save_current_pose,
 )
 from software.api.calibration_pose import (
     PoseMemory,

@@ -5,7 +5,7 @@
 cat > QUICK_START.md <<'EOF'
 # 🚀 HoralScanner — Quick Start Guide
 
-**Goal:** Set up HoralScanner 3D Scanner on your Raspberry Pi 4 with custom STM32 USB firmware.
+**Goal:** Set up HoralScanner 3D Scanner on Raspberry Pi 4 with custom STM32 USB firmware.
 
 ---
 
@@ -56,7 +56,7 @@ sudo reboot
 
 ---
 
-### **Path B: Update Existing HoralScanner**
+### **Path B: Manual Setup** Update Existing HoralScanner**
 **For:** Already running HoralScanner, want latest code
 
 ```bash
@@ -75,7 +75,7 @@ bash /home/pi/horaltscanner/software/scripts/update.sh
 sudo apt-get update
 sudo apt-get upgrade -y
 sudo apt-get install -y \
-    python3 python3-pip python3-venv python3-picamera2 \
+    python3 python3-pip python3-venv \
     build-essential python3-dev \
     libopencv-dev python3-opencv \
     git curl
@@ -88,21 +88,8 @@ cd ~/horaltscanner
 ```
 
 ### Step 3: Python Environment
-```
-
-### Stable Creality and TF-Luna ports
-
-Connect both USB serial devices, then let the TF-Luna frame identify each
-physical USB socket:
-
 ```bash
-cd ~/horaltscanner
-sudo bash software/scripts/configure_serial_devices.sh
-```
-
-This creates `/dev/horalscanner_mcu` and `/dev/horalscanner_lidar`, even though
-both adapters expose the same generic CH340 serial identifier.bash
-python3 -m venv --system-site-packages ~/horaltscanner_env
+python3 -m venv ~/horaltscanner_env
 source ~/horaltscanner_env/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
@@ -137,7 +124,7 @@ http://<your-pi-ip>:5000
 - GPIO27: Laser Left
 - GPIO22: Laser Right
 - GPIO18/13/19: LED (R/G/B)
-- GPIO23: Pi Fan automatique (marche à 55 °C, arrêt à 45 °C)
+- GPIO23: Pi Fan PWM
 
 **Creality V4.2.2 (STM32F103):**
 - PC2/PB9/PC3: Stepper X (step/dir/enable)

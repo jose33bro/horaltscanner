@@ -122,9 +122,9 @@ def move_to_calibration_pose(
                 continue  # skip Z for Pi Camera
             stm32_driver.move_motor(axis, target)
             axes_moved.append(axis.upper())
-    except Exception as exc:
+    except Exception:
         logger.exception("Motor move failed during calibration pose for %s", camera)
-        return {"ok": False, "error": f"Mouvement moteur échoué : {exc}"}
+        return {"ok": False, "error": "Mouvement moteur échoué"}
 
     # Read TF-Luna distance if available
     lidar_distance_mm: float | None = None
@@ -179,9 +179,9 @@ def save_current_pose(camera: str, stm32_driver: Any) -> dict[str, Any]:
 
     try:
         status = stm32_driver.get_motor_status()
-    except Exception as exc:
+    except Exception:
         logger.exception("Failed to read motor status")
-        return {"ok": False, "error": f"Lecture de position échouée : {exc}"}
+        return {"ok": False, "error": "Lecture de position échouée"}
 
     positions: dict[str, float] = status.get("positions", {})
     _scan_poses[camera] = {k: float(v) for k, v in positions.items()}
@@ -213,8 +213,8 @@ def restore_scan_pose(camera: str, stm32_driver: Any) -> dict[str, Any]:
         for axis, target in pose.items():
             stm32_driver.move_motor(axis, float(target))
             axes_moved.append(axis.upper())
-    except Exception as exc:
+    except Exception:
         logger.exception("Motor move failed during scan pose restore for %s", camera)
-        return {"ok": False, "error": f"Mouvement moteur échoué : {exc}"}
+        return {"ok": False, "error": "Mouvement moteur échoué"}
 
     return {"ok": True, "camera": camera, "pose": pose, "axes_moved": axes_moved}

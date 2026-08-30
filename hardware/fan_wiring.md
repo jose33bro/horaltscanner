@@ -1,5 +1,36 @@
 # Câblage ventilateur 24V - Horaltscanner
 
+## Ventilateur du Raspberry Pi (GPIO23)
+
+Le ventilateur de refroidissement du Raspberry Pi est distinct du ventilateur
+24V de la carte Creality. Le service HoralScanner le commande en tout-ou-rien
+sur **GPIO23** (broche physique 16): `1` l'active et `0` le désactive.
+
+Le service lit `/sys/class/thermal/thermal_zone0/temp` toutes les 5 secondes:
+
+- démarrage du ventilateur à 55°C;
+- arrêt à 45°C;
+- maintien de l'état entre 45°C et 55°C pour éviter les commutations rapides;
+- activation de sécurité si la température CPU ne peut pas être lue.
+
+```text
+GPIO23 ──[1 kΩ]── Gate MOSFET logique
+GND Pi ────────── Source MOSFET
+Drain MOSFET ──── Ventilateur -
+5V Pi ─────────── Ventilateur +
+```
+
+Ne jamais alimenter le ventilateur directement depuis GPIO23. Utiliser un
+MOSFET logique et une diode de roue libre, avec une masse commune.
+
+Test via l'API:
+
+```bash
+curl -X POST http://localhost:5000/api/fan/pi \
+  -H 'Content-Type: application/json' \
+  -d '{"percent":100}'
+```
+
 ## Vue d'ensemble
 
 Le ventilateur de refroidissement de la carte Creality V4.2.2 est alimenté en **24V DC**

@@ -5,6 +5,7 @@ Uses Open3D when available; falls back to a stub otherwise.
 
 import io
 import logging
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -58,19 +59,22 @@ class ScanData:
 class ScanSession:
     """Manages a live scan session (background thread accumulates points)."""
 
-    def __init__(self):
+    def __init__(self, simulation: bool = False):
         self._data = ScanData()
         self._lock = threading.Lock()
         self._scanning = False
         self._thread: Optional[threading.Thread] = None
         self._start_time: float = 0.0
         self._quality: float = 0.0
+        self._simulation = simulation
 
     # ------------------------------------------------------------------
     # Control
     # ------------------------------------------------------------------
 
     def start(self) -> None:
+        if not self._simulation:
+            raise RuntimeError("Real scanner acquisition backend is not configured")
         with self._lock:
             if self._scanning:
                 return
@@ -127,6 +131,7 @@ class ScanSession:
                 "points": self._data.point_count(),
                 "elapsed_s": round(elapsed, 1),
                 "quality": round(self._quality, 1),
+                "simulation": self._simulation,
             }
 
     def get_pointcloud(self) -> dict:
@@ -156,14 +161,13 @@ class ReconstructionEngine:
                     "error": f"Not enough points ({len(points)} < 100)"}
 
         if not _O3D_AVAILABLE:
-            # Return stub files so the rest of the pipeline can be exercised
-            self._last_stl = b"solid stub\nendsolid stub\n"
+            self._last_stl = self._points_to_ascii_stl(points)
             self._last_amf = b'<?xml version="1.0"?><amf></amf>'
             return {
                 "ok": True,
                 "stl_size": len(self._last_stl),
                 "amf_size": len(self._last_amf),
-                "error": "Open3D not available – stub files returned",
+                "error": "Open3D unavailable - grid triangulation used",
             }
 
         try:
@@ -254,3 +258,41 @@ class ReconstructionEngine:
         lines.append(' </object>')
         lines.append('</amf>')
         return "\n".join(lines).encode("utf-8")
+
+    @staticmethod
+    def _points_to_ascii_stl(points, rows: int = 5) -> bytes:
+        """Triangulate sequential scan columns into an ASCII STL surface."""
+        columns = len(points) // rows
+        if columns < 2:
+            return b"solid horalscanner\nendsolid horalscanner\n"
+
+        def normal(a, b, c):
+            ab = [b[index] - a[index] for index in range(3)]
+            ac = [c[index] - a[index] for index in range(3)]
+            vector = [
+                ab[1] * ac[2] - ab[2] * ac[1],
+                ab[2] * ac[0] - ab[0] * ac[2],
+                ab[0] * ac[1] - ab[1] * ac[0],
+            ]
+            length = math.sqrt(sum(value * value for value in vector)) or 1.0
+            return [value / length for value in vector]
+
+        lines = ["solid horalscanner"]
+        for column in range(columns - 1):
+            current = column * rows
+            following = (column + 1) * rows
+            for row in range(rows - 1):
+                faces = (
+                    (points[current + row], points[following + row], points[current + row + 1]),
+                    (points[following + row], points[following + row + 1], points[current + row + 1]),
+                )
+                for face in faces:
+                    nx, ny, nz = normal(*face)
+                    lines.append(f" facet normal {nx:.6f} {ny:.6f} {nz:.6f}")
+                    lines.append("  outer loop")
+                    for x, y, z in face:
+                        lines.append(f"   vertex {x:.6f} {y:.6f} {z:.6f}")
+                    lines.append("  endloop")
+                    lines.append(" endfacet")
+        lines.append("endsolid horalscanner")
+        return "\n".join(lines).encode("ascii")

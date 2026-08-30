@@ -551,6 +551,10 @@ const HoralScannerUI = (() => {
     }
   }
 
+      toast(error.message, true);
+    }
+  }
+
   async function saveCameraScanPose(camera) {
     const resultEl = byId("scan-pose-result");
     const label = camera === "pi" ? "Pi Camera V3" : "Logitech C270";
@@ -573,6 +577,10 @@ const HoralScannerUI = (() => {
       toast(response.instruction);
     } catch (error) {
       resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
       toast(error.message, true);
     }
   }

@@ -15,6 +15,14 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory
 from software.api import config_manager
+from software.api.camera_calibration import (
+    get_all_saved_poses,
+    get_calibration_pose,
+    get_saved_pose,
+    move_to_calibration_pose,
+    restore_scan_pose,
+    save_current_pose,
+)
 from software.api.camera_driver import LogitechCamera, PiCamera, analyze_camera_frame, analyze_laser_line
 from software.api.calibration_pose import PoseMemory, get_default_pose, move_to_pose, read_lidar_distance
 from software.api.lidar_driver import LidarDriver
@@ -715,6 +723,81 @@ def laser_align(side: str):
         "correction_deg": result.get("correction_deg"),
         "instruction": f"Laser {side_label}: {result.get('instruction', '')}",
     })
+
+
+@app.route("/api/camera/calibrate/pose/<camera_name>", methods=["POST"])
+def camera_calibrate_pose(camera_name: str):
+    """Move motors to the calibration pose for the requested camera.
+
+    - Pi Camera (``pi``): moves X and Y only; Z is left unchanged.
+    - Logitech USB (``usb``): moves X, Y, and Z.
+
+    Optionally reads TF-Luna distance for precision validation.
+
+    Returns JSON with ``ok``, ``camera``, ``pose``, ``axes_moved``,
+    ``lidar_distance_mm``, and ``lidar_within_tolerance``.
+    """
+    if camera_name not in ("pi", "usb"):
+        return _json_error("Caméra invalide ; utilisez 'pi' ou 'usb'", 400)
+
+    if stm32_driver is None:
+        return _json_error("Pilote STM32 non disponible", 503)
+
+    lidar: Any = lidar_driver if (lidar_driver is not None and lidar_driver.connected) else None
+
+    result = move_to_calibration_pose(camera_name, stm32_driver, lidar_driver=lidar)
+    if not result.get("ok"):
+        return _json_error(result.get("error", "Erreur inconnue"), 500)
+
+    return jsonify({"success": True, **result})
+
+
+@app.route("/api/scan/pose", methods=["GET"])
+def scan_pose_get():
+    """Return all saved scan poses."""
+    return jsonify({"success": True, "poses": get_all_saved_poses()})
+
+
+@app.route("/api/scan/pose/save", methods=["POST"])
+def scan_pose_save():
+    """Save the current motor position as the scan reference pose for a camera.
+
+    Body JSON: ``{"camera": "pi"|"usb"}``
+    """
+    data = request.get_json(silent=True) or {}
+    camera_name = str(data.get("camera", "")).strip()
+    if camera_name not in ("pi", "usb"):
+        return _json_error("Caméra invalide ; utilisez 'pi' ou 'usb'", 400)
+
+    if stm32_driver is None:
+        return _json_error("Pilote STM32 non disponible", 503)
+
+    result = save_current_pose(camera_name, stm32_driver)
+    if not result.get("ok"):
+        return _json_error(result.get("error", "Erreur inconnue"), 500)
+
+    return jsonify({"success": True, **result})
+
+
+@app.route("/api/scan/pose/restore", methods=["POST"])
+def scan_pose_restore():
+    """Move motors back to the saved scan pose for a camera.
+
+    Body JSON: ``{"camera": "pi"|"usb"}``
+    """
+    data = request.get_json(silent=True) or {}
+    camera_name = str(data.get("camera", "")).strip()
+    if camera_name not in ("pi", "usb"):
+        return _json_error("Caméra invalide ; utilisez 'pi' ou 'usb'", 400)
+
+    if stm32_driver is None:
+        return _json_error("Pilote STM32 non disponible", 503)
+
+    result = restore_scan_pose(camera_name, stm32_driver)
+    if not result.get("ok"):
+        return _json_error(result.get("error", "Aucune pose mémorisée"), 404)
+
+    return jsonify({"success": True, **result})
 
 
 @app.route("/api/scan/start", methods=["POST"])

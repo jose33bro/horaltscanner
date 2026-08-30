@@ -392,8 +392,26 @@ const HoralScannerUI = (() => {
     document.querySelectorAll(".camera-calibrate").forEach(button => {
       button.addEventListener("click", () => calibrationTest(button.dataset.camera));
     });
+    byId("pose-camera-pi").addEventListener("click", () => poseCameraCalibration("pi"));
+    byId("pose-camera-usb").addEventListener("click", () => poseCameraCalibration("usb"));
+    byId("goto-scan-pose").addEventListener("click", gotoScanPose);
+    byId("save-scan-pose").addEventListener("click", async () => {
+      const resultEl = byId("scan-pose-result");
+      resultEl.className = "calibration-result";
+      resultEl.textContent = "Memorisation en cours…";
+      try {
+        const response = await api("/api/camera/scan-pose/save", { method: "POST" });
+        resultEl.textContent = response.message;
+        await refreshScanPoseStatus();
+        toast("Position memorisee");
+      } catch (error) {
+        resultEl.textContent = error.message;
+        toast(error.message, true);
+      }
+    });
     byId("align-laser-left").addEventListener("click", () => alignLaser("left"));
     byId("align-laser-right").addEventListener("click", () => alignLaser("right"));
+    refreshScanPoseStatus();
   }
 
   async function refreshCamera(camera, notify = false) {
@@ -506,6 +524,69 @@ const HoralScannerUI = (() => {
       resultEl.textContent = error.message;
       toast(error.message, true);
     }
+  }
+
+  async function poseCameraCalibration(camera) {
+    const resultEl = byId("pose-result");
+    const label = camera === "pi" ? "Pi Camera V3" : "Logitech C270";
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Deplacement vers la pose ${label} en cours…`;
+    try {
+      const response = await api(`/api/camera/${camera}/calibration-pose`, { method: "POST" });
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = label;
+      const verdict = document.createElement("p");
+      verdict.textContent = response.message;
+      const details = document.createElement("p");
+      details.className = "muted";
+      const axes = response.axes_moved.map(a => a.toUpperCase()).join("/");
+      details.textContent = `Axes deplaces : ${axes}`;
+      resultEl.append(title, verdict, details);
+      if (response.lidar_distance_mm !== null && response.lidar_distance_mm !== undefined) {
+        byId("pose-lidar-distance").textContent = Number(response.lidar_distance_mm).toFixed(1);
+        byId("pose-lidar-row").style.display = "";
+      }
+      if (response.motor_status) updateMotorPositions(response.motor_status);
+      toast(`Pose ${label} atteinte et memorisee`);
+    } catch (error) {
+      resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
+  async function gotoScanPose() {
+    const resultEl = byId("scan-pose-result");
+    resultEl.className = "calibration-result";
+    resultEl.textContent = "Retour a la pose de scan en cours…";
+    try {
+      const response = await api("/api/camera/scan-pose/goto", { method: "POST" });
+      resultEl.replaceChildren();
+      const verdict = document.createElement("p");
+      verdict.textContent = response.message;
+      resultEl.append(verdict);
+      if (response.motor_status) updateMotorPositions(response.motor_status);
+      toast(response.message);
+    } catch (error) {
+      resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
+  async function refreshScanPoseStatus() {
+    const resultEl = byId("scan-pose-result");
+    try {
+      const response = await api("/api/camera/scan-pose");
+      if (response.scan_pose) {
+        const pose = response.scan_pose;
+        const camera = pose.camera === "pi" ? "Pi Camera V3" : "Logitech C270";
+        const parts = ["x", "y", "z"]
+          .filter(a => pose[a] !== null && pose[a] !== undefined)
+          .map(a => `${a.toUpperCase()}=${Number(pose[a]).toFixed(1)} mm`);
+        resultEl.className = "calibration-result";
+        resultEl.textContent = `${camera} — ${parts.join("  ")}`;
+      }
+    } catch (_) {}
   }
 
   async function postSimple(path, successMessage) {

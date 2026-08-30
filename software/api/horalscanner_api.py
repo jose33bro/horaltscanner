@@ -140,12 +140,12 @@ def _json_error(message: str, status_code: int = 400):
 def _lidar_validation(camera_name: str, lidar_distance_mm: float | None) -> dict[str, Any]:
     expected = _CALIBRATION_LIDAR_TARGET_MM.get(camera_name, 300.0)
     validation: dict[str, Any] = {
+        "lidar_connected": lidar_distance_mm is not None,
         "lidar_expected_mm": expected,
         "lidar_tolerance_mm": _CALIBRATION_LIDAR_TOLERANCE_MM,
         "lidar_out_of_tolerance": False,
     }
     if lidar_distance_mm is None:
-        validation["lidar_out_of_tolerance"] = None
         return validation
     validation["lidar_out_of_tolerance"] = (
         abs(float(lidar_distance_mm) - expected) > _CALIBRATION_LIDAR_TOLERANCE_MM

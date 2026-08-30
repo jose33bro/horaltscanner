@@ -613,6 +613,7 @@ const HoralScannerUI = (() => {
       resultEl.className = "calibration-result warning";
       return `TF-Luna ${distance} mm (cible ${expected} ±${tolerance.toFixed(1)} mm)`;
     }
+    resultEl.className = "calibration-result";
     return `TF-Luna ${distance} mm`;
   }
 

@@ -392,6 +392,18 @@ const HoralScannerUI = (() => {
     document.querySelectorAll(".camera-calibrate").forEach(button => {
       button.addEventListener("click", () => calibrationTest(button.dataset.camera));
     });
+    document.querySelectorAll(".camera-goto-pose").forEach(button => {
+      button.addEventListener("click", () => gotoCameraCalibrationPose(button.dataset.camera));
+    });
+    document.querySelectorAll(".camera-save-pose").forEach(button => {
+      button.addEventListener("click", () => saveCameraScanPose(button.dataset.camera));
+    });
+    document.querySelectorAll(".camera-goto-scan-pose").forEach(button => {
+      button.addEventListener("click", () => gotoCameraScanPose(button.dataset.camera));
+    });
+    byId("align-laser-left").addEventListener("click", () => alignLaser("left"));
+    byId("align-laser-right").addEventListener("click", () => alignLaser("right"));
+    byId("goto-pose-pi").addEventListener("click", () => gotoCalibrationPose("pi"));
   }
 
   async function refreshCamera(camera, notify = false) {
@@ -480,11 +492,162 @@ const HoralScannerUI = (() => {
     }
   }
 
+  async function gotoCalibrationPose(camera) {
+    const resultEl = byId("calibration-pose-result");
+    const label = camera === "pi" ? "Pi Camera V3" : camera;
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Deplacement vers la pose ${label} en cours…`;
+    try {
+      const response = await api(`/api/calibration/pose/${camera}`, { method: "POST" });
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = response.label;
+      const desc = document.createElement("p");
+      desc.textContent = response.description;
+      const details = document.createElement("p");
+      details.className = "muted";
+      const z = response.target.z_mm !== null ? ` · Z ${response.target.z_mm} mm` : "";
+      details.textContent = `X ${response.target.x_mm} mm · Y ${response.target.y_mm} mm${z}`;
+      resultEl.append(title, desc, details);
+      toast(`Pose ${response.label} atteinte`);
+    } catch (error) {
+      resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
+  async function alignLaser(side) {
+    const resultEl = byId("laser-align-result");
+    const label = side === "left" ? "gauche" : "droit";
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Analyse du laser ${label} en cours…`;
+    try {
+      const response = await api(`/api/laser/align/${side}`, { method: "POST" });
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = `Laser ${label}`;
+      const verdict = document.createElement("p");
+      verdict.textContent = response.instruction;
+      resultEl.append(title, verdict);
+      if (response.line_detected) {
+        const details = document.createElement("p");
+        details.className = "muted";
+        details.textContent =
+          `Angle mesuré: ${formatSigned(response.angle_deg)}° · Correction: ${formatSigned(response.correction_deg)}°`;
+        resultEl.append(details);
+      }
+    } catch (error) {
+      resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
   async function postSimple(path, successMessage) {
     try {
       await api(path, { method: "POST" });
       toast(successMessage);
     } catch (error) { toast(error.message, true); }
+  }
+
+  async function gotoCameraCalibrationPose(camera) {
+    const resultEl = byId("pose-result");
+    const label = camera === "pi" ? "Pi Camera V3" : "Logitech C270";
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Déplacement vers la pose de calibration ${label}…`;
+    try {
+      const response = await api(`/api/camera/${camera}/goto_calibration_pose`, { method: "POST" });
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = label;
+      const verdict = document.createElement("p");
+      verdict.textContent = response.instruction;
+      const details = document.createElement("p");
+      details.className = "muted";
+      const axes = Object.entries(response.pose)
+        .map(([ax, val]) => `${ax.toUpperCase()} = ${Number(val).toFixed(1)} mm`)
+        .join(" · ");
+      const lidar = renderLidarValidation(response, resultEl);
+      details.textContent = lidar ? `${axes} · ${lidar}` : axes;
+      resultEl.append(title, verdict, details);
+      toast(response.instruction);
+    } catch (error) {
+      resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
+      toast(error.message, true);
+    }
+  }
+
+  async function saveCameraScanPose(camera) {
+    const resultEl = byId("scan-pose-result");
+    const label = camera === "pi" ? "Pi Camera V3" : "Logitech C270";
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Mémorisation de la pose ${label}…`;
+    try {
+      const response = await api(`/api/camera/${camera}/save_scan_pose`, { method: "POST" });
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = label;
+      const verdict = document.createElement("p");
+      verdict.textContent = response.instruction;
+      const details = document.createElement("p");
+      details.className = "muted";
+      const axes = Object.entries(response.saved_pose)
+        .map(([ax, val]) => `${ax.toUpperCase()} = ${Number(val).toFixed(1)} mm`)
+        .join(" · ");
+      details.textContent = axes;
+      resultEl.append(title, verdict, details);
+      toast(response.instruction);
+    } catch (error) {
+      resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
+      toast(error.message, true);
+    }
+  }
+
+  async function gotoCameraScanPose(camera) {
+    const resultEl = byId("scan-pose-result");
+    const label = camera === "pi" ? "Pi Camera V3" : "Logitech C270";
+    resultEl.className = "calibration-result";
+    resultEl.textContent = `Retour à la pose de scan ${label}…`;
+    try {
+      const response = await api(`/api/camera/${camera}/goto_scan_pose`, { method: "POST" });
+      resultEl.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = label;
+      const verdict = document.createElement("p");
+      verdict.textContent = response.instruction;
+      const details = document.createElement("p");
+      details.className = "muted";
+      const axes = Object.entries(response.pose)
+        .map(([ax, val]) => `${ax.toUpperCase()} = ${Number(val).toFixed(1)} mm`)
+        .join(" · ");
+      const lidar = renderLidarValidation(response, resultEl);
+      details.textContent = lidar ? `${axes} · ${lidar}` : axes;
+      resultEl.append(title, verdict, details);
+      toast(response.instruction);
+    } catch (error) {
+      resultEl.textContent = error.message;
+      toast(error.message, true);
+    }
+  }
+
+  function renderLidarValidation(response, resultEl) {
+    if (response.lidar_distance_mm == null) return null;
+    const tolerance = Number(response.lidar_tolerance_mm ?? 0);
+    const distance = Number(response.lidar_distance_mm).toFixed(1);
+    const expected = Number(response.lidar_expected_mm ?? 0).toFixed(1);
+    if (response.lidar_out_of_tolerance) {
+      resultEl.className = "calibration-result warning";
+      return `TF-Luna ${distance} mm (cible ${expected} ±${tolerance.toFixed(1)} mm)`;
+    }
+    resultEl.className = "calibration-result";
+    return `TF-Luna ${distance} mm`;
   }
 
   function initialize() {

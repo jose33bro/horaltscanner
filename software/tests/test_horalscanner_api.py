@@ -293,6 +293,52 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.get_json()["status"]["stm32_driver"])
 
+    def test_laser_align_turns_on_laser_and_returns_analysis(self):
+        class FakeCamera:
+            is_open = True
+
+            def open(self):
+                return True
+
+            def capture_jpeg(self):
+                return b"jpeg"
+
+        original_camera = self.api_module.pi_camera
+        original_analyzer = self.api_module.analyze_laser_line
+        self.addCleanup(setattr, self.api_module, "pi_camera", original_camera)
+        self.addCleanup(setattr, self.api_module, "analyze_laser_line", original_analyzer)
+        self.api_module.pi_camera = FakeCamera()
+        self.api_module.analyze_laser_line = lambda _: {
+            "analysis_available": True,
+            "line_detected": True,
+            "angle_deg": 1.2,
+            "correction_deg": -1.2,
+            "instruction": "Tourner à gauche de -1.2°",
+        }
+
+        response = self.client.post("/api/laser/align/left")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["side"], "left")
+        self.assertTrue(data["line_detected"])
+        self.assertEqual(data["angle_deg"], 1.2)
+        self.assertIn("gauche", data["side_label"])
+        # Laser should have been turned on then off
+        self.assertIn(("laser_on", "left"), self.fake_gpio.calls)
+        self.assertIn(("laser_off", "left"), self.fake_gpio.calls)
+
+    def test_laser_align_invalid_side_returns_400(self):
+        response = self.client.post("/api/laser/align/invalid")
+        self.assertEqual(response.status_code, 400)
+
+    def test_laser_align_no_gpio_returns_503(self):
+        original_gpio = self.api_module.gpio_driver
+        self.api_module.gpio_driver = None
+        self.addCleanup(setattr, self.api_module, "gpio_driver", original_gpio)
+        response = self.client.post("/api/laser/align/left")
+        self.assertEqual(response.status_code, 503)
 
 if __name__ == "__main__":
     unittest.main()

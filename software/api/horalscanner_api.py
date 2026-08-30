@@ -16,12 +16,16 @@ sys.path.insert(0, str(_REPO_ROOT))
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory
 from software.api import config_manager
 from software.api.camera_calibration import (
-    get_all_saved_poses,
     get_calibration_pose,
-    get_saved_pose,
-    move_to_calibration_pose,
-    restore_scan_pose,
-    save_current_pose,
+    get_saved_scan_pose,
+    move_to_pose as calibration_move_to_pose,
+    save_scan_pose,
+)
+from software.api.calibration_pose import (
+    PoseMemory,
+    get_default_pose,
+    move_to_pose as default_move_to_pose,
+    read_lidar_distance,
 )
 from software.api.camera_driver import LogitechCamera, PiCamera, analyze_camera_frame, analyze_laser_line
 from software.api.calibration_pose import PoseMemory, get_default_pose, move_to_pose, read_lidar_distance

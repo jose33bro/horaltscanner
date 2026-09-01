@@ -2,6 +2,7 @@
 
 import sys
 import os
+import importlib
 import unittest
 
 # Ensure 'software/' is on the path (same as how -m api.app resolves imports)
@@ -29,6 +30,30 @@ class TestCreateApp(unittest.TestCase):
         self.assertIn("/scan/status", rules)
         self.assertIn("/scan/start", rules)
         self.assertIn("/scan/stop", rules)
+
+    def test_runtime_api_routes_registered(self):
+        from api import create_app
+        app = create_app()
+        rules = [r.rule for r in app.url_map.iter_rules()]
+        self.assertIn("/api/status", rules)
+        self.assertIn("/health", rules)
+        self.assertIn("/api/health", rules)
+
+    def test_api_app_import_path_initializes_app(self):
+        for module_name in (
+            "api.app",
+            "api.horalscanner_api",
+            "api",
+            "software.api.horalscanner_api",
+        ):
+            sys.modules.pop(module_name, None)
+
+        module = importlib.import_module("api.app")
+
+        self.assertIsInstance(module.app, Flask)
+        rules = [r.rule for r in module.app.url_map.iter_rules()]
+        self.assertIn("/api/status", rules)
+        self.assertIn("/health", rules)
 
 
 @unittest.skipIf(Flask is None, "Flask is required")

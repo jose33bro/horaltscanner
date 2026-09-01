@@ -33,6 +33,8 @@ class GPIODriverTests(unittest.TestCase):
     def test_connect_returns_true(self):
         driver = GPIODriver(simulation=True)
         self.assertTrue(driver.connect())
+        self.assertTrue(driver.simulation)
+        self.assertTrue(driver.hardware_available)
 
     def test_connect_initializes_pi_fan_from_hardware_config(self):
         fan_device = Mock()
@@ -63,6 +65,14 @@ class GPIODriverTests(unittest.TestCase):
         self.assertTrue(driver.set_fan_speed(0.0))
         fan_device.off.assert_called_once_with()
         self.assertEqual(driver.get_fan_status()["speed"], 0.0)
+
+    def test_read_cpu_temperature_uses_injected_reader(self):
+        driver = GPIODriver(
+            simulation=True,
+            cpu_temperature_reader=lambda: 48.75,
+        )
+
+        self.assertEqual(driver.read_cpu_temperature(), 48.75)
 
     def test_real_gpio_outputs_use_active_high_devices(self):
         output_devices = [Mock(), Mock(), Mock()]

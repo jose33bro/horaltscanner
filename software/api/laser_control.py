@@ -37,7 +37,7 @@ def laser_left_on():
     if err:
         return err
     driver.laser_left_on()
-    return jsonify({"ok": True, "laser": "left", "state": True})
+    return jsonify({"ok": True, "laser": "left", "state": True, **driver.laser_status()})
 
 
 @laser_bp.route("/api/laser/left/off", methods=["POST"])
@@ -46,7 +46,7 @@ def laser_left_off():
     if err:
         return err
     driver.laser_left_off()
-    return jsonify({"ok": True, "laser": "left", "state": False})
+    return jsonify({"ok": True, "laser": "left", "state": False, **driver.laser_status()})
 
 
 @laser_bp.route("/api/laser/right/on", methods=["POST"])
@@ -55,7 +55,7 @@ def laser_right_on():
     if err:
         return err
     driver.laser_right_on()
-    return jsonify({"ok": True, "laser": "right", "state": True})
+    return jsonify({"ok": True, "laser": "right", "state": True, **driver.laser_status()})
 
 
 @laser_bp.route("/api/laser/right/off", methods=["POST"])
@@ -64,7 +64,7 @@ def laser_right_off():
     if err:
         return err
     driver.laser_right_off()
-    return jsonify({"ok": True, "laser": "right", "state": False})
+    return jsonify({"ok": True, "laser": "right", "state": False, **driver.laser_status()})
 
 
 @laser_bp.route("/api/laser/status", methods=["GET"])

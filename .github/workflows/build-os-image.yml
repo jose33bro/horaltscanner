@@ -1,0 +1,227 @@
+name: Build HoralScanner OS Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to create or update
+        required: true
+      release_name:
+        description: Optional release display name
+        required: false
+      base_image_url:
+        description: Optional Raspberry Pi OS Bookworm 64-bit Lite image URL override
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-os-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      BUILD_DIR: ${{ github.workspace }}/dist/os-image
+      IMAGE_NAME: horalscanner-bookworm-arm64-lite
+      ROOT_MOUNT: /mnt/horalscanner-root
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve release metadata
+        env:
+          INPUT_RELEASE_NAME: ${{ inputs.release_name }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_RELEASE_NAME" ]; then
+            {
+              echo "RELEASE_NAME<<EOF"
+              printf '%s\n' "$INPUT_RELEASE_NAME"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+          else
+            {
+              echo "RELEASE_NAME<<EOF"
+              printf '%s\n' "$INPUT_RELEASE_TAG"
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Install image build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static rsync xz-utils dosfstools e2fsprogs parted kpartx
+
+      - name: Resolve Raspberry Pi OS image URL
+        env:
+          INPUT_BASE_IMAGE_URL: ${{ inputs.base_image_url }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_BASE_IMAGE_URL" ]; then
+            RESOLVED_RPI_OS_URL="$INPUT_BASE_IMAGE_URL"
+          else
+            OS_LIST_URL="https://downloads.raspberrypi.com/os_list_imagingutility_v3.json"
+            RESOLVED_RPI_OS_URL=$(curl -fsSL "$OS_LIST_URL" \
+              | python3 -c '
+import json, sys
+
+def find_url(items):
+    for item in items:
+        name = item.get("name", "")
+        url = item.get("url", "")
+        if "Lite" in name and "64-bit" in name and url.endswith(".img.xz"):
+            return url
+        result = find_url(item.get("subitems", []))
+        if result:
+            return result
+    return None
+
+data = json.load(sys.stdin)
+url = find_url(data.get("os_list", []))
+if not url:
+    sys.exit(1)
+print(url)
+')
+            test -n "$RESOLVED_RPI_OS_URL"
+          fi
+
+          {
+            echo "RPI_OS_URL<<EOF"
+            printf '%s\n' "$RESOLVED_RPI_OS_URL"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Download Raspberry Pi OS Bookworm 64-bit Lite
+        run: |
+          set -euo pipefail
+          mkdir -p "$BUILD_DIR"
+          curl -L --fail "$RPI_OS_URL" -o "$BUILD_DIR/${IMAGE_NAME}.img.xz"
+
+      - name: Extract base image
+        run: |
+          set -euo pipefail
+          xz -d "$BUILD_DIR/${IMAGE_NAME}.img.xz"
+
+      - name: Mount and customize image
+        run: |
+          set -euo pipefail
+
+          IMAGE_PATH="$BUILD_DIR/${IMAGE_NAME}.img"
+          LOOP_DEV=""
+          RESOLV_BACKUP="$RUNNER_TEMP/horalscanner-resolv.conf"
+
+          cleanup() {
+            set +e
+            sync
+            if [ -f "$RESOLV_BACKUP" ] && sudo mountpoint -q "$ROOT_MOUNT"; then
+              sudo cp -a "$RESOLV_BACKUP" "$ROOT_MOUNT/etc/resolv.conf" 2>/dev/null || true
+            fi
+            sudo umount "$ROOT_MOUNT/run" 2>/dev/null || true
+            sudo umount "$ROOT_MOUNT/dev/pts" 2>/dev/null || true
+            sudo umount "$ROOT_MOUNT/dev" 2>/dev/null || true
+            sudo umount "$ROOT_MOUNT/proc" 2>/dev/null || true
+            sudo umount "$ROOT_MOUNT/sys" 2>/dev/null || true
+            sudo umount "$ROOT_MOUNT/boot/firmware" 2>/dev/null || true
+            sudo umount "$ROOT_MOUNT" 2>/dev/null || true
+            if [ -n "$LOOP_DEV" ]; then
+              sudo losetup -d "$LOOP_DEV" 2>/dev/null || true
+            fi
+          }
+
+          trap cleanup EXIT
+
+          sudo mkdir -p "$ROOT_MOUNT"
+          LOOP_DEV=$(sudo losetup --find --show --partscan "$IMAGE_PATH")
+          sudo mount "${LOOP_DEV}p2" "$ROOT_MOUNT"
+          sudo mount "${LOOP_DEV}p1" "$ROOT_MOUNT/boot/firmware"
+          sudo touch "$ROOT_MOUNT/boot/firmware/ssh"
+          sudo mkdir -p "$ROOT_MOUNT/tmp/horalscanner-source"
+          git archive --format=tar HEAD | sudo tar -xf - -C "$ROOT_MOUNT/tmp/horalscanner-source"
+          sudo cp /usr/bin/qemu-aarch64-static "$ROOT_MOUNT/usr/bin/"
+          sudo cp -a "$ROOT_MOUNT/etc/resolv.conf" "$RESOLV_BACKUP"
+          sudo cp /etc/resolv.conf "$ROOT_MOUNT/etc/resolv.conf"
+          sudo mount --bind /dev "$ROOT_MOUNT/dev"
+          sudo mount --bind /dev/pts "$ROOT_MOUNT/dev/pts"
+          sudo mount -t proc proc "$ROOT_MOUNT/proc"
+          sudo mount -t sysfs sys "$ROOT_MOUNT/sys"
+          sudo mount --bind /run "$ROOT_MOUNT/run"
+
+          CHROOT_STATUS=0
+          sudo chroot "$ROOT_MOUNT" /usr/bin/qemu-aarch64-static /bin/bash -lc '
+            set -euo pipefail
+            export HORALSCANNER_IMAGE_BUILD=1
+            export HORALSCANNER_SOURCE_DIR=/tmp/horalscanner-source
+            bash /tmp/horalscanner-source/setup_pi.sh --install
+          ' || CHROOT_STATUS=$?
+          sudo rm -f "$ROOT_MOUNT/usr/bin/qemu-aarch64-static"
+          sudo rm -rf "$ROOT_MOUNT/tmp/horalscanner-source" "$ROOT_MOUNT/var/lib/apt/lists/"*
+          if [ "$CHROOT_STATUS" -ne 0 ]; then
+            exit "$CHROOT_STATUS"
+          fi
+
+      - name: Compress image
+        run: |
+          set -euo pipefail
+          xz -T0 -9 -f "$BUILD_DIR/${IMAGE_NAME}.img"
+
+      - name: Generate SHA256 checksum
+        run: |
+          set -euo pipefail
+          cd "$BUILD_DIR"
+          sha256sum "${IMAGE_NAME}.img.xz" > "${IMAGE_NAME}.img.xz.sha256"
+
+      - name: Generate release notes
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          build_dir = Path(os.environ["BUILD_DIR"])
+          image_name = os.environ["IMAGE_NAME"]
+          source_url = os.environ["RPI_OS_URL"]
+
+          (build_dir / "release-notes.md").write_text(
+              "\n".join(
+                  [
+                      "## HoralScanner Raspberry Pi OS image",
+                      "",
+                      "- Base image: Raspberry Pi OS Bookworm 64-bit Lite",
+                      f"- Source image URL: {source_url}",
+                      f"- Artifact: {image_name}.img.xz",
+                      f"- Checksum: {image_name}.img.xz.sha256",
+                      "",
+                      "### First boot",
+                      "",
+                      "- SSH is enabled.",
+                      "- If the base image did not already contain a `pi` user, the build creates one.",
+                      "- The generated `pi` account uses the standard `raspberry` password and is marked for mandatory password change on first login.",
+                      "- You can override the Raspberry Pi OS source image when manually starting the workflow with the `base_image_url` input.",
+                      "",
+                  ]
+              ),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload image artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.IMAGE_NAME }}-${{ inputs.release_tag }}
+          path: |
+            ${{ env.BUILD_DIR }}/${{ env.IMAGE_NAME }}.img.xz
+            ${{ env.BUILD_DIR }}/${{ env.IMAGE_NAME }}.img.xz.sha256
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: ${{ env.RELEASE_NAME }}
+          body_path: ${{ env.BUILD_DIR }}/release-notes.md
+          files: |
+            ${{ env.BUILD_DIR }}/${{ env.IMAGE_NAME }}.img.xz
+            ${{ env.BUILD_DIR }}/${{ env.IMAGE_NAME }}.img.xz.sha256

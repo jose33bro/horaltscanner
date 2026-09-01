@@ -86,13 +86,40 @@ class LogitechCamera:
         if not _CV2_AVAILABLE:
             return False
         with self._lock:
-            self._cap = cv2.VideoCapture(self.device_id)
-            if not self._cap.isOpened():
-                self._cap = None
-                return False
-            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-            return True
+            # Try configured index first, then fall back to common USB indices.
+            candidates = [self.device_id, 0, 1, 2, 3]
+            seen = set()
+
+            for idx in candidates:
+                if idx in seen:
+                    continue
+                seen.add(idx)
+
+                cap = cv2.VideoCapture(idx)
+                if not cap or not cap.isOpened():
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                    logger.warning("USB camera open failed on index %s", idx)
+                    continue
+
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    cap.release()
+                    logger.warning("USB camera read failed on index %s", idx)
+                    continue
+
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+                self._cap = cap
+                self.device_id = idx
+                logger.info("USB camera opened on /dev/video%s", idx)
+                return True
+
+            self._cap = None
+            logger.error("USB camera unavailable on indices %s", list(seen))
+            return False
 
     def close(self) -> None:
         with self._lock:

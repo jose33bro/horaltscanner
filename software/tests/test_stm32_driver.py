@@ -36,6 +36,16 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
     def test_connect_returns_true(self):
         driver = STM32Driver()
         self.assertTrue(driver.connect())
+        self.assertTrue(driver.connected)
+
+    def test_failed_serial_connection_reports_disconnected(self):
+        driver = STM32Driver(
+            simulation=False,
+            serial_factory=Mock(side_effect=OSError("USB disconnected")),
+        )
+
+        self.assertFalse(driver.connect())
+        self.assertFalse(driver.connected)
 
     def test_connect_opens_configured_serial_port(self):
         serial_port = Mock()
@@ -53,6 +63,7 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
         )
 
         self.assertTrue(driver.connect())
+        self.assertTrue(driver.connected)
         serial_factory.assert_called_once_with(
             "/dev/ttyUSB1",
             115200,

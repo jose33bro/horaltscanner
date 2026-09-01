@@ -282,11 +282,58 @@
           </ol>
         </article>
         <article class="panel">
+          <h2>Pose automatique de calibration</h2>
+          <p class="muted">Deplace les moteurs vers la bonne pose selon la camera choisie, puis memorise la position pour le lancement du scan.</p>
+          <div class="calibration-choice">
+            <button id="pose-camera-pi" class="button"><span>Pi Camera V3</span><b>Aller en pose (X/Y)</b></button>
+            <button id="pose-camera-usb" class="button"><span>Logitech C270</span><b>Aller en pose (X/Y/Z)</b></button>
+          </div>
+          <div id="pose-result" class="calibration-result empty">Aucun deplacement lance.</div>
+          <div id="pose-lidar-row" style="display:none" class="muted">Distance TF-Luna : <b id="pose-lidar-distance">--</b> mm</div>
+          <hr>
+          <h2>Memorisation du scan</h2>
+          <p class="muted">Retourne a la pose memorisee lors de la derniere calibration.</p>
+          <div class="calibration-choice">
+            <button id="goto-scan-pose" class="button secondary"><span>Pose scan</span><b>Retourner</b></button>
+            <button id="save-scan-pose" class="button secondary"><span>Position actuelle</span><b>Memoriser</b></button>
+          </div>
+          <div id="scan-pose-result" class="calibration-result empty">Aucune pose memorisee.</div>
+          <hr>
+          <h2>Test de calibration image</h2>
+          <p class="muted">Analysez la mire damier une fois en pose.</p>
           <div class="calibration-choice">
             <button class="camera-calibrate" data-camera="pi"><span>Pi Camera V3</span><b>Lancer le test</b></button>
             <button class="camera-calibrate" data-camera="usb"><span>Logitech C270</span><b>Lancer le test</b></button>
           </div>
           <div id="calibration-result" class="calibration-result empty">Aucun test lance.</div>
+          <hr>
+          <h2>Positionnement automatique</h2>
+          <p class="muted">Deplace les moteurs vers la pose de calibration recommandee pour la camera selectionnee (Pi Camera : X/Y uniquement ; Logitech : X/Y/Z). La distance TF-Luna est lue si disponible.</p>
+          <div class="calibration-choice">
+            <button class="camera-goto-pose" data-camera="pi"><span>Pi Camera V3</span><b>Aller à la pose</b></button>
+            <button class="camera-goto-pose" data-camera="usb"><span>Logitech C270</span><b>Aller à la pose</b></button>
+          </div>
+          <div id="pose-result" class="calibration-result empty">Aucun positionnement lance.</div>
+          <hr>
+          <h2>Mémorisation de la pose de scan</h2>
+          <p class="muted">Sauvegardez la position actuelle comme pose de depart du scan, ou retournez a la pose memorisee.</p>
+          <div class="calibration-choice">
+            <button class="camera-save-pose" data-camera="pi"><span>Pi Camera V3</span><b>Mémoriser la pose</b></button>
+            <button class="camera-save-pose" data-camera="usb"><span>Logitech C270</span><b>Mémoriser la pose</b></button>
+          </div>
+          <div class="calibration-choice" style="margin-top:0.5rem">
+            <button class="camera-goto-scan-pose" data-camera="pi"><span>Pi Camera V3</span><b>Retour à la pose</b></button>
+            <button class="camera-goto-scan-pose" data-camera="usb"><span>Logitech C270</span><b>Retour à la pose</b></button>
+          </div>
+          <div id="scan-pose-result" class="calibration-result empty">Aucune pose memorisee.</div>
+          <hr>
+          <h2>Alignement laser</h2>
+          <p class="muted">Allume un laser à la fois, capture l'image Pi Camera et calcule la correction d'angle.</p>
+          <div class="calibration-choice">
+            <button id="align-laser-left" class="button secondary"><span>Laser gauche</span><b>Aligner</b></button>
+            <button id="align-laser-right" class="button secondary"><span>Laser droit</span><b>Aligner</b></button>
+          </div>
+          <div id="laser-align-result" class="calibration-result empty">Aucune analyse lancee.</div>
         </article>
       </div>
     </section>

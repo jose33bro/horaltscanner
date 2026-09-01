@@ -15,17 +15,13 @@ DEFAULT_CONFIG = {
         "laser_power": 100,
         "lidar_offset_mm": 0,
         "capture_fps": 30,
-        "simulation": False,
+        "simulation": True,
     },
     "slicer": {
         "layer_height": 0.2,
         "infill": 20,
         "support": False,
         "nozzle_temp": 200,
-    },
-    "moonraker": {
-        "url": "http://192.168.1.40:7125",
-        "api_key": "",
     },
     "system": {
         "log_level": "INFO",

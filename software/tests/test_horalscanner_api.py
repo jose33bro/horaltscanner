@@ -1,5 +1,8 @@
 import importlib
+import runpy
 import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 try:
     from flask import Flask  # noqa: F401
@@ -10,7 +13,10 @@ except Exception:  # pragma: no cover
 @unittest.skipIf(Flask is None, "Flask is required for API tests")
 class HoralScannerAPITests(unittest.TestCase):
     def setUp(self):
-        self.api_module = importlib.import_module("software.api.horalscanner_api")
+        from api import create_app
+
+        self.api_module = importlib.import_module("api.horalscanner_api")
+        self.app = create_app()
 
         class FakeGPIO:
             def __init__(self):
@@ -48,9 +54,13 @@ class HoralScannerAPITests(unittest.TestCase):
             def get_fan_status(self):
                 return dict(self.fan_status)
 
+            def status(self):
+                return {"simulation": True, "hardware_available": True}
+
         class FakeSTM32:
             def __init__(self):
                 self.calls = []
+                self.connected = True
                 self.status = {
                     "positions": {"x": 0.0, "y": 0.0, "z": 0.0},
                     "moving": {"x": False, "y": False, "z": False},
@@ -92,7 +102,7 @@ class HoralScannerAPITests(unittest.TestCase):
         self.api_module.gpio_driver = self.fake_gpio
         self.api_module.stm32_driver = self.fake_stm32
 
-        self.client = self.api_module.app.test_client()
+        self.client = self.app.test_client()
 
     def test_laser_route_uses_gpio_driver(self):
         response = self.client.post("/api/laser/left", json={"state": True})
@@ -196,6 +206,38 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertTrue(data["status"]["stm32_driver"])
         self.assertIn("version", data["status"])
 
+    def test_status_includes_runtime_capabilities(self):
+        response = self.client.get("/api/status")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertIn("capabilities", data)
+        self.assertIn("simulation_mode", data["status"])
+        self.assertIn("acquisition_backend_ready", data["capabilities"])
+
+    def test_scan_start_falls_back_to_simulation(self):
+        self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
+        response = self.client.post("/api/scan/start")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertTrue(data["status"]["simulation"])
+        self.assertEqual(data["mode"], "simulation")
+
+    def test_reconstruct_without_points_returns_structured_error(self):
+        response = self.client.post("/api/model/reconstruct")
+        self.assertEqual(response.status_code, 409)
+        data = response.get_json()
+        self.assertFalse(data["success"])
+        self.assertIn("hint", data)
+
+    def test_health_endpoints_return_ok(self):
+        for route in ("/health", "/api/health"):
+            with self.subTest(route=route):
+                response = self.client.get(route)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json(), {"status": "ok"})
+
     def test_laser_status_route(self):
         self.fake_gpio.laser_status = {"left": True, "right": False}
         response = self.client.get("/api/laser/status")
@@ -266,6 +308,78 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["result"]["checkerboard_found"])
 
+    def test_camera_usb_status_reports_available_when_open_succeeds(self):
+        class FakeUsbCamera:
+            def __init__(self):
+                self.is_open = False
+
+            def open(self):
+                self.is_open = True
+                return True
+
+        original_camera = self.api_module.usb_camera
+        self.addCleanup(setattr, self.api_module, "usb_camera", original_camera)
+        self.api_module.usb_camera = FakeUsbCamera()
+
+        response = self.client.get("/api/camera/usb/status")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertTrue(body["success"])
+        self.assertTrue(body["available"])
+
+    def test_camera_usb_status_reports_unavailable_when_open_fails(self):
+        class FakeUsbCamera:
+            is_open = False
+
+            def open(self):
+                return False
+
+        original_camera = self.api_module.usb_camera
+        self.addCleanup(setattr, self.api_module, "usb_camera", original_camera)
+        self.api_module.usb_camera = FakeUsbCamera()
+
+        response = self.client.get("/api/camera/usb/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()["available"])
+
+    def test_camera_usb_frame_returns_200_when_fallback_opened_stream_works(self):
+        class FakeUsbCamera:
+            def __init__(self):
+                self.is_open = False
+
+            def open(self):
+                self.is_open = True
+                return True
+
+            def capture_jpeg(self):
+                return b"jpeg-bytes"
+
+        original_camera = self.api_module.usb_camera
+        self.addCleanup(setattr, self.api_module, "usb_camera", original_camera)
+        self.api_module.usb_camera = FakeUsbCamera()
+
+        response = self.client.get("/api/camera/usb/frame")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b"jpeg-bytes")
+
+    def test_camera_usb_frame_returns_503_when_camera_unavailable(self):
+        class FakeUsbCamera:
+            is_open = False
+
+            def open(self):
+                return False
+
+        original_camera = self.api_module.usb_camera
+        self.addCleanup(setattr, self.api_module, "usb_camera", original_camera)
+        self.api_module.usb_camera = FakeUsbCamera()
+
+        response = self.client.get("/api/camera/usb/frame")
+
+        self.assertEqual(response.status_code, 503)
+
     def test_scan_control_routes_share_session_status(self):
         original = self.api_module.scan_session
         self.api_module.scan_session = self.api_module.ScanSession(simulation=True)
@@ -287,12 +401,147 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.get_json()["status"]["gpio_driver"])
 
+    def test_api_status_uses_gpio_status_when_partial_attrs_are_exposed(self):
+        class PartialGPIO:
+            simulation = False
+
+            def status(self):
+                return {"simulation": False, "hardware_available": True}
+
+        self.api_module.gpio_driver = PartialGPIO()
+        response = self.client.get("/api/status")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["status"]["gpio_driver"])
+
+    def test_api_status_reports_unknown_gpio_driver_as_unready(self):
+        self.api_module.gpio_driver = object()
+        response = self.client.get("/api/status")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()["status"]["gpio_driver"])
+
     def test_api_status_no_stm32_driver(self):
         self.api_module.stm32_driver = None
         response = self.client.get("/api/status")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.get_json()["status"]["stm32_driver"])
 
+    def test_api_status_reports_disconnected_stm32_driver(self):
+        self.fake_stm32.connected = False
+        response = self.client.get("/api/status")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertFalse(data["status"]["stm32_driver"])
+        self.assertFalse(data["status"]["stm32_connected"])
+        self.assertFalse(data["capabilities"]["stm32_connected"])
+
+    def test_create_gpio_driver_injects_gpiozero_factories_when_enabled(self):
+        fake_output_factory = object()
+        fake_pwm_factory = object()
+        fake_driver_class = Mock(return_value="gpio-driver")
+        original_driver_class = self.api_module.GPIODriver
+        self.addCleanup(setattr, self.api_module, "GPIODriver", original_driver_class)
+        self.api_module.GPIODriver = fake_driver_class
+
+        with patch.object(
+            self.api_module,
+            "_load_gpiozero_factories",
+            return_value=(fake_output_factory, fake_pwm_factory),
+        ):
+            driver = self.api_module._create_gpio_driver(True, {"hardware": {"pi_gpio": True}})
+
+        self.assertEqual(driver, "gpio-driver")
+        fake_driver_class.assert_called_once_with(
+            simulation=False,
+            hardware_config={"hardware": {"pi_gpio": True}},
+            output_device_factory=fake_output_factory,
+            pwm_device_factory=fake_pwm_factory,
+        )
+
+    def test_initialize_driver_logs_last_error_on_connection_failure(self):
+        class FakeDriver:
+            last_error = RuntimeError("GPIO busy")
+
+            def connect(self):
+                return False
+
+        with self.assertLogs(self.api_module.logger, level="WARNING") as cm:
+            self.api_module._initialize_driver(FakeDriver(), "GPIODriver")
+
+        self.assertTrue(
+            any("GPIO busy" in message for message in cm.output),
+            cm.output,
+        )
+
+    def test_initialize_driver_logs_generic_message_without_last_error(self):
+        class FakeDriver:
+            def connect(self):
+                return False
+
+        with self.assertLogs(self.api_module.logger, level="WARNING") as cm:
+            self.api_module._initialize_driver(FakeDriver(), "GPIODriver")
+
+        self.assertTrue(
+            any("GPIODriver connection failed" in message for message in cm.output),
+            cm.output,
+        )
+
+    def test_horalscanner_api_supports_direct_script_import(self):
+        api_path = (
+            Path(__file__).resolve().parents[1]
+            / "api"
+            / "horalscanner_api.py"
+        )
+        namespace = runpy.run_path(str(api_path), run_name="horalscanner_api_direct_test")
+        self.assertIn("api_bp", namespace)
+        app = namespace["_create_standalone_app"]()
+        self.assertIn("scan", app.blueprints)
+
+    def test_laser_align_turns_on_laser_and_returns_analysis(self):
+        class FakeCamera:
+            is_open = True
+
+            def open(self):
+                return True
+
+            def capture_jpeg(self):
+                return b"jpeg"
+
+        original_camera = self.api_module.pi_camera
+        original_analyzer = self.api_module.analyze_laser_line
+        self.addCleanup(setattr, self.api_module, "pi_camera", original_camera)
+        self.addCleanup(setattr, self.api_module, "analyze_laser_line", original_analyzer)
+        self.api_module.pi_camera = FakeCamera()
+        self.api_module.analyze_laser_line = lambda _: {
+            "analysis_available": True,
+            "line_detected": True,
+            "angle_deg": 1.2,
+            "correction_deg": -1.2,
+            "instruction": "Tourner à gauche de -1.2°",
+        }
+
+        response = self.client.post("/api/laser/align/left")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["side"], "left")
+        self.assertTrue(data["line_detected"])
+        self.assertEqual(data["angle_deg"], 1.2)
+        self.assertIn("gauche", data["side_label"])
+        # Laser should have been turned on then off
+        self.assertIn(("laser_on", "left"), self.fake_gpio.calls)
+        self.assertIn(("laser_off", "left"), self.fake_gpio.calls)
+
+    def test_laser_align_invalid_side_returns_400(self):
+        response = self.client.post("/api/laser/align/invalid")
+        self.assertEqual(response.status_code, 400)
+
+    def test_laser_align_no_gpio_returns_503(self):
+        original_gpio = self.api_module.gpio_driver
+        self.api_module.gpio_driver = None
+        self.addCleanup(setattr, self.api_module, "gpio_driver", original_gpio)
+        response = self.client.post("/api/laser/align/left")
+        self.assertEqual(response.status_code, 503)
 
 if __name__ == "__main__":
     unittest.main()

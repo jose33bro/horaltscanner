@@ -10,3 +10,8 @@ __pycache__/
 # PlatformIO firmware build outputs
 .pio/
 firmware/creality_v422/build/
+
+# Runtime-generated scan pose memory (user-specific, not for version control)
+config/scan_poses.json
+venv/
+venv/

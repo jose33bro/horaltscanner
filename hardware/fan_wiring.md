@@ -107,32 +107,25 @@ Le connecteur est marqué **"FAN"** sur la carte.
 
 ## Configuration logicielle
 
-La configuration du ventilateur est dans `klipper_config/temperature_fan.cfg`.
+La configuration du ventilateur est gérée par l'API HoralScanner via `software/api/horalscanner_api.py`.
 
-Pour modifier la température de déclenchement:
-
-```ini
-[temperature_fan board_fan]
-target_temp: 50.0    # Température en °C pour démarrer le ventilateur
-min_speed: 0.3       # Vitesse minimale (30%)
-max_speed: 1.0       # Vitesse maximale (100%)
-```
+Pour modifier la température de déclenchement, éditer `config/horalscanner_config.json`.
 
 ---
 
 ## Test du ventilateur
 
-Dans la console Klipper (Mainsail/Fluidd):
+Via l'API REST:
 
-```gcode
-; Activer le ventilateur à pleine vitesse
-FAN_ON
+```bash
+# Activer le ventilateur Pi à 50%
+curl -X POST http://localhost:5000/api/fan/pi -H "Content-Type: application/json" -d '{"percent": 50}'
 
-; Vérifier les températures
-CHECK_TEMP
+# Vérifier les températures
+curl http://localhost:5000/api/temperature/all
 
-; Désactiver le ventilateur
-FAN_OFF
+# Désactiver le ventilateur
+curl -X POST http://localhost:5000/api/fan/pi -H "Content-Type: application/json" -d '{"percent": 0}'
 ```
 
 ---

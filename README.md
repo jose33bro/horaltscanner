@@ -1,7 +1,7 @@
 # HoralScanner
 
 **Modular 3D Scanner & Reconstruction System**  
-Raspberry Pi 4 + Creality V4.2.2 with custom USB firmware (no Marlin/Klipper)
+Raspberry Pi 4 + Creality V4.2.2 with custom USB firmware
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -12,7 +12,7 @@ Raspberry Pi 4 + Creality V4.2.2 with custom USB firmware (no Marlin/Klipper)
 
 ## 🎯 What is HoralScanner?
 
-HoralScanner is a complete **3D scanning and reconstruction system** built from the ground up for **Raspberry Pi 4**. Instead of relying on Marlin/Klipper/Moonraker, it uses:
+HoralScanner is a complete **3D scanning and reconstruction system** built from the ground up for **Raspberry Pi 4**. It uses:
 
 ✅ **Custom STM32 USB firmware** — Direct motor/stepper control via USB CDC protocol  
 ✅ **Flask REST API** — Lightweight web service on port 5000  
@@ -86,7 +86,7 @@ GPIO22  → Laser Right (digital)
 GPIO18  → LED Red (PWM)
 GPIO13  → LED Green (PWM)
 GPIO19  → LED Blue (PWM)
-GPIO23  → Pi Fan automatique (marche à 55 °C, arrêt à 45 °C)
+GPIO23  → Pi Fan (PWM)
 ```
 
 **STM32F103 Mapping (Creality V4.2.2):**
@@ -135,12 +135,6 @@ POST /api/fan/pi           {"percent": 50}      # Set Pi fan to 50%
 POST /api/fan/creality     {"speed": 0.75}      # Set Creality fan
 POST /api/fan/temperature  {"pwm": 0.5}         # Set temp fan
 GET  /api/fan/status                            # Get all speeds
-```
-
-Sur Raspberry Pi OS ARM64, activez la reconstruction Open3D avec:
-
-```bash
-bash software/scripts/install_open3d_pi.sh
 ```
 
 ### Temperature
@@ -207,7 +201,7 @@ horaltscanner/
 │   └── usb_protocol.md         # USB CDC protocol spec
 │
 ├── setup_pi.sh                 # Complete Pi setup script
-├── QUICK_START.md              # Installation guide
+├── QUICK_START.md              # Installation guide (3 paths)
 ├── DEPLOYMENT.md               # Production deployment guide
 ├── USAGE.md                    # API reference & examples
 ├── CHANGELOG.md                # Version history

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 import logging
+import re
+import serial
 import struct
 from typing import Protocol
+
 
 CMD_MOVE_X = 0x01
 CMD_MOVE_Y = 0x02
@@ -143,26 +147,33 @@ class USBScannerDriver:
 
 
 class USBDriver(USBScannerDriver):
-    def __init__(self):
-        self.connected = True
+    """Compatibility wrapper around USBScannerDriver exposing a simpler API."""
 
-    def connect(self):
-        self.connected = True
+    def __init__(self, transport: "USBTransport | None" = None):
+        if transport is None:
+            self._transport = None  # type: ignore[assignment]
+        else:
+            super().__init__(transport)
+
+    def connect(self) -> bool:
         return True
 
-    def disconnect(self):
-        self.connected = False
+    def disconnect(self) -> bool:
         return True
 
-    def home(self, axis):
+    def home(self, axis: str) -> "ScannerStatus | bool":
+        if self._transport is None:
+            return True
         return self.home_axis(axis)
 
-    def move(self, axis, steps, speed=0):
-        axis = axis.upper()
-        if axis == "X":
+    def move(self, axis: str, steps: int, speed: int = 0) -> "ScannerStatus | bool":
+        if self._transport is None:
+            return True
+        axis_upper = axis.upper()
+        if axis_upper == "X":
             return self.move_x(steps, speed=speed)
-        if axis == "Y":
+        if axis_upper == "Y":
             return self.move_y(steps, speed=speed)
-        if axis == "Z":
+        if axis_upper == "Z":
             return self.move_z(steps, speed=speed)
         raise ValueError(f"Unsupported axis: {axis}")

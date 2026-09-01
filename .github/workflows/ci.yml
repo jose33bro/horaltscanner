@@ -10,7 +10,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     env:
-      PYTHONPATH: ${{ github.workspace }}
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/software
 
     steps:
       - name: Checkout
@@ -24,7 +24,8 @@ jobs:
       - name: Install CI dependencies (non-Raspberry)
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-cov flask flask-cors requests numpy scipy pyyaml python-dateutil pyserial pillow
+          pip install pytest pytest-cov flask flask-cors pydantic requests numpy scipy pyyaml python-dateutil pyserial pillow
 
       - name: Run tests
-        run: python -m pytest -q software/tests
+        working-directory: software
+        run: pytest -q tests

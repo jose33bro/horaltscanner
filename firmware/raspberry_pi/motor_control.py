@@ -32,10 +32,10 @@ class MotorController:
         axis = axis.upper()
         if axis not in self.state:
             return False
-        if hasattr(self._driver, "home_axis"):
-            result = self._driver.home_axis(axis)
-        elif hasattr(self._driver, "home"):
+        if hasattr(self._driver, "home"):
             result = self._driver.home(axis)
+        elif hasattr(self._driver, "home_axis"):
+            result = self._driver.home_axis(axis)
         else:
             result = getattr(self._driver, f"home_{axis.lower()}")()
         if result is False:

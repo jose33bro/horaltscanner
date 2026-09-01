@@ -1,467 +1,346 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HoralScanner Dashboard</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    :root {
-      --bg: #0f1117; --surface: #1a1d27; --border: #2d3148;
-      --accent: #4f8ef7; --success: #34d399; --warning: #fbbf24;
-      --danger: #f87171; --text: #e2e8f0; --muted: #64748b;
-    }
-    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
-    header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
-    header h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: .5px; }
-    .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: background .4s; }
-    .status-dot.ok { background: var(--success); box-shadow: 0 0 6px var(--success); }
-    .status-dot.err { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
-    #conn-label { font-size: .8rem; color: var(--muted); }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; padding: 20px; max-width: 1400px; margin: 0 auto; }
-    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
-    .card h2 { font-size: .9rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
-    .row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-    label { font-size: .85rem; min-width: 80px; color: var(--text); }
-    /* Toggle */
-    .toggle { position: relative; width: 44px; height: 24px; cursor: pointer; }
-    .toggle input { opacity: 0; width: 0; height: 0; }
-    .slider { position: absolute; inset: 0; background: var(--border); border-radius: 12px; transition: background .3s; }
-    .slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: white; border-radius: 50%; transition: transform .3s; }
-    .toggle input:checked + .slider { background: var(--accent); }
-    .toggle input:checked + .slider::before { transform: translateX(20px); }
-    /* Range */
-    input[type=range] { flex: 1; accent-color: var(--accent); cursor: pointer; height: 6px; border-radius: 4px; }
-    .val { font-size: .8rem; color: var(--accent); min-width: 38px; text-align: right; }
-    /* Color picker */
-    .color-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-    .color-swatch { width: 32px; height: 32px; border-radius: 8px; border: 2px solid var(--border); flex-shrink: 0; }
-    /* Temp display */
-    .temp-big { font-size: 2.2rem; font-weight: 700; color: var(--warning); text-align: center; padding: 10px 0 4px; }
-    .temp-label { font-size: .75rem; color: var(--muted); text-align: center; }
-    /* Positions */
-    .pos-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 4px; }
-    .pos-box { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; text-align: center; }
-    .pos-box span { display: block; font-size: .7rem; color: var(--muted); }
-    .pos-box strong { font-size: 1rem; color: var(--accent); }
-    /* Buttons */
-    .btn { padding: 7px 18px; border-radius: 8px; border: none; cursor: pointer; font-size: .85rem; font-weight: 600; transition: opacity .2s; }
-    .btn:hover { opacity: .8; }
-    .btn-primary { background: var(--accent); color: white; }
-    .btn-danger { background: var(--danger); color: white; }
-    .btn-muted { background: var(--border); color: var(--text); }
-    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-    /* Toast */
-    #toast { position: fixed; bottom: 20px; right: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; font-size: .85rem; max-width: 300px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 100; }
-    #toast.show { opacity: 1; }
-    #toast.ok { border-left: 4px solid var(--success); }
-    #toast.err { border-left: 4px solid var(--danger); }
-    /* Laser indicators */
-    .laser-ind { width: 14px; height: 14px; border-radius: 50%; background: var(--border); transition: background .3s; }
-    .laser-ind.on { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
-    @media (max-width: 480px) {
-      .grid { padding: 10px; gap: 10px; }
-      .card { padding: 12px; }
-    }
-  </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HoralScanner Studio</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<header>
-  <div class="status-dot" id="dot"></div>
-  <h1>🔬 HoralScanner</h1>
-  <span id="conn-label">Connecting…</span>
-  <span style="flex:1"></span>
-  <button class="btn btn-muted" onclick="refreshAll()">↻ Refresh</button>
-</header>
-
-<div class="grid">
-
-  <!-- Lasers -->
-  <div class="card" id="card-laser">
-    <h2>🔴 Lasers</h2>
-    <div class="row">
-      <label>Left</label>
-      <div class="laser-ind" id="ind-left"></div>
-      <label class="toggle" title="Toggle left laser">
-        <input type="checkbox" id="laser-left" onchange="setLaser('left', this.checked)" />
-        <span class="slider"></span>
-      </label>
-    </div>
-    <div class="row">
-      <label>Right</label>
-      <div class="laser-ind" id="ind-right"></div>
-      <label class="toggle" title="Toggle right laser">
-        <input type="checkbox" id="laser-right" onchange="setLaser('right', this.checked)" />
-        <span class="slider"></span>
-      </label>
-    </div>
-  </div>
-
-  <!-- LED -->
-  <div class="card" id="card-led">
-    <h2>🟡 LED RGB</h2>
-    <div class="color-row">
-      <div class="color-swatch" id="led-swatch"></div>
-      <div style="flex:1">
-        <div class="row"><label>R</label><input type="range" id="led-r" min="0" max="255" value="0" oninput="updateSwatch();debounceLed()"><span class="val" id="v-r">0</span></div>
-        <div class="row"><label>G</label><input type="range" id="led-g" min="0" max="255" value="0" oninput="updateSwatch();debounceLed()"><span class="val" id="v-g">0</span></div>
-        <div class="row"><label>B</label><input type="range" id="led-b" min="0" max="255" value="0" oninput="updateSwatch();debounceLed()"><span class="val" id="v-b">0</span></div>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">H</div>
+      <div>
+        <strong>HoralScanner</strong>
+        <span>3D Capture Studio</span>
       </div>
     </div>
-    <div class="btn-row">
-      <button class="btn btn-muted" onclick="setLed(255,0,0)">Red</button>
-      <button class="btn btn-muted" onclick="setLed(0,255,0)">Green</button>
-      <button class="btn btn-muted" onclick="setLed(0,0,255)">Blue</button>
-      <button class="btn btn-muted" onclick="setLed(255,255,255)">White</button>
-      <button class="btn btn-muted" onclick="setLed(0,0,0)">Off</button>
+    <div class="system-state">
+      <span id="status-dot" class="status-dot"></span>
+      <span id="status-text">Connexion...</span>
+      <button class="icon-button" id="refresh-button" title="Actualiser">↻</button>
     </div>
-  </div>
+  </header>
 
-  <!-- Motors -->
-  <div class="card" id="card-motor">
-    <h2>⚙️ Motors</h2>
-    <div class="row">
-      <label>X (mm)</label>
-      <input type="range" id="move-x" min="-100" max="100" value="0" step="0.5">
-      <span class="val" id="v-mx">0</span>
-    </div>
-    <div class="row">
-      <label>Y (mm)</label>
-      <input type="range" id="move-y" min="-100" max="100" value="0" step="0.5">
-      <span class="val" id="v-my">0</span>
-    </div>
-    <div class="row">
-      <label>Z (mm)</label>
-      <input type="range" id="move-z" min="-100" max="100" value="0" step="0.5">
-      <span class="val" id="v-mz">0</span>
-    </div>
-    <div class="btn-row">
-      <button class="btn btn-primary" onclick="moveMotors()">Move</button>
-      <button class="btn btn-muted" onclick="homeMotors('all')">Home All</button>
-      <button class="btn btn-danger" onclick="stopMotors()">⏹ Stop</button>
-    </div>
-    <div class="pos-grid" id="positions">
-      <div class="pos-box"><span>X</span><strong id="pos-x">—</strong></div>
-      <div class="pos-box"><span>Y</span><strong id="pos-y">—</strong></div>
-      <div class="pos-box"><span>Z</span><strong id="pos-z">—</strong></div>
-    </div>
-  </div>
+  <nav class="nav-tabs" aria-label="Navigation principale">
+    <button class="nav-tab active" data-tab="scan">Scanner</button>
+    <button class="nav-tab" data-tab="model">Modele 3D</button>
+    <button class="nav-tab" data-tab="workshop">Atelier de test</button>
+    <button class="nav-tab" data-tab="camera-pi">Camera Pi</button>
+    <button class="nav-tab" data-tab="camera-usb">Camera USB</button>
+    <button class="nav-tab" data-tab="calibration">Calibration</button>
+  </nav>
 
-  <!-- Fans -->
-  <div class="card" id="card-fan">
-    <h2>💨 Fans</h2>
-    <div class="row">
-      <label>Pi Fan</label>
-      <input type="range" id="fan-pi" min="0" max="100" value="0" oninput="sliderVal('fan-pi','v-fpi')">
-      <span class="val" id="v-fpi">0%</span>
-    </div>
-    <div class="row">
-      <label>Creality</label>
-      <input type="range" id="fan-creality" min="0" max="100" value="0" oninput="sliderVal('fan-creality','v-fcr')">
-      <span class="val" id="v-fcr">0%</span>
-    </div>
-    <div class="row">
-      <label>Temp Fan</label>
-      <input type="range" id="fan-temperature" min="0" max="100" value="0" oninput="sliderVal('fan-temperature','v-ftp')">
-      <span class="val" id="v-ftp">0%</span>
-    </div>
-    <div class="btn-row">
-      <button class="btn btn-primary" onclick="setFans()">Apply Fans</button>
-      <button class="btn btn-muted" onclick="setAllFans(0)">All Off</button>
-      <button class="btn btn-muted" onclick="setAllFans(100)">All Max</button>
-    </div>
-  </div>
+  <main>
+    <section id="tab-scan" class="tab-page active">
+      <div class="page-heading">
+        <div>
+          <span class="eyebrow">Workflow de numerisation</span>
+          <h1>Creer un modele 3D</h1>
+          <p>Preparez la piece, controlez l'aperçu, lancez le scan puis exportez le modele.</p>
+        </div>
+        <button id="scan-primary" class="button primary large">Demarrer un nouveau scan</button>
+      </div>
 
-  <!-- Temperature -->
-  <div class="card" id="card-temp">
-    <h2>🌡️ Temperature</h2>
-    <div class="temp-big" id="temp-board">—</div>
-    <div class="temp-label">Board (PC5 · EPCOS 100K)</div>
-  </div>
+      <ol class="workflow">
+        <li class="active"><span>1</span><div><strong>Preparation</strong><small>Materiel et objet</small></div></li>
+        <li><span>2</span><div><strong>Aperçu</strong><small>Camera et cadrage</small></div></li>
+        <li><span>3</span><div><strong>Acquisition</strong><small>Rotation 360°</small></div></li>
+        <li><span>4</span><div><strong>Reconstruction</strong><small>Nuage vers maillage</small></div></li>
+        <li><span>5</span><div><strong>Export</strong><small>STL ou AMF</small></div></li>
+      </ol>
 
-  <!-- Status / Health -->
-  <div class="card" id="card-status">
-    <h2>📡 Status</h2>
-    <div id="status-body" style="font-size:.82rem;line-height:1.8;color:var(--muted);">Loading…</div>
-  </div>
+      <div class="scan-layout">
+        <article class="panel preview-panel">
+          <div class="panel-header">
+            <div>
+              <span class="panel-kicker">Aperçu 3D</span>
+              <h2>Nuage de points</h2>
+            </div>
+            <span id="scan-state-badge" class="badge idle">Pret</span>
+          </div>
+          <canvas id="pointcloud-canvas" width="960" height="560"></canvas>
+          <div class="preview-overlay">
+            <span><b id="stat-points">0</b> points</span>
+            <span><b id="stat-time">0:00</b> duree</span>
+            <span><b id="stat-quality">0%</b> qualite</span>
+          </div>
+        </article>
 
-</div>
+        <aside class="scan-sidebar">
+          <article class="panel">
+            <div class="panel-header"><h2>Controle du scan</h2></div>
+            <label class="field">
+              <span>Nom du projet</span>
+              <input id="project-name" value="Nouveau scan" maxlength="60">
+            </label>
+            <label class="field">
+              <span>Qualite cible</span>
+              <select id="scan-quality">
+                <option value="draft">Rapide</option>
+                <option value="standard" selected>Standard</option>
+                <option value="high">Haute definition</option>
+              </select>
+            </label>
+            <div class="check-list">
+              <div><span id="check-api" class="check">•</span> API HoralScanner</div>
+              <div><span id="check-gpio" class="check">•</span> GPIO Raspberry Pi</div>
+              <div><span id="check-stm32" class="check">•</span> Carte Creality</div>
+            </div>
+            <div class="button-stack">
+              <button id="scan-start" class="button primary">Lancer l'acquisition</button>
+              <button id="scan-stop" class="button danger" disabled>Arreter le scan</button>
+              <button id="scan-reconstruct" class="button secondary">Reconstruire le modele</button>
+            </div>
+          </article>
 
-<div id="toast"></div>
+          <article class="panel">
+            <div class="panel-header"><h2>Exporter</h2></div>
+            <div class="export-grid">
+              <button class="button ghost export-button" data-format="stl">STL</button>
+              <button class="button ghost export-button" data-format="amf">AMF</button>
+            </div>
+          </article>
+        </aside>
+      </div>
+    </section>
 
-<script>
-  const API = '';  // same origin
+    <section id="tab-model" class="tab-page">
+      <div class="page-heading compact">
+        <div>
+          <span class="eyebrow">Atelier CAO</span>
+          <h1>Modele reconstruit</h1>
+          <p>Inspectez le maillage, controlez la geometrie et exportez le resultat.</p>
+        </div>
+        <div class="button-row">
+          <button id="model-reload" class="button secondary">Charger le dernier modele</button>
+          <button class="button primary export-button" data-format="stl">Exporter STL</button>
+        </div>
+      </div>
 
-  // ---------- helpers ----------
-  function toast(msg, ok = true) {
-    const el = document.getElementById('toast');
-    el.textContent = msg;
-    el.className = 'show ' + (ok ? 'ok' : 'err');
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => el.className = '', 3000);
-  }
+      <div class="model-layout">
+        <aside class="panel model-tree">
+          <div class="panel-header"><h2>Structure</h2></div>
+          <div class="tree-item active"><span class="tree-arrow">⌄</span><span class="tree-icon">◆</span><div><b>HoralScanner Model</b><small>Maillage reconstruit</small></div></div>
+          <div class="tree-child"><span>△</span><div><b>Surface</b><small id="model-triangle-count">0 triangles</small></div></div>
+          <div class="tree-child"><span>•</span><div><b>Sommets</b><small id="model-vertex-count">0 sommets</small></div></div>
+          <div class="model-properties">
+            <h3>Proprietes</h3>
+            <div><span>Format</span><b id="model-format">STL</b></div>
+            <div><span>Etat</span><b id="model-status">Aucun modele</b></div>
+          </div>
+        </aside>
 
-  async function apiFetch(path, opts = {}) {
-    try {
-      const res = await fetch(API + path, {
-        headers: { 'Content-Type': 'application/json' },
-        ...opts
-      });
-      const json = await res.json();
-      if (!json.success) throw new Error(json.error || 'API error');
-      return json;
-    } catch (e) {
-      toast('❌ ' + e.message, false);
-      throw e;
-    }
-  }
+        <article class="panel cad-panel">
+          <div class="cad-toolbar">
+            <div class="tool-group">
+              <button class="cad-tool active" data-render-mode="solid">Solide</button>
+              <button class="cad-tool" data-render-mode="wireframe">Filaire</button>
+              <button class="cad-tool" data-render-mode="points">Points</button>
+            </div>
+            <div class="tool-group">
+              <button class="cad-tool" data-view="iso">Isometrique</button>
+              <button class="cad-tool" data-view="front">Face</button>
+              <button class="cad-tool" data-view="top">Dessus</button>
+              <button class="cad-tool" data-view="right">Droite</button>
+              <button id="model-fit" class="cad-tool">Ajuster</button>
+            </div>
+          </div>
+          <div class="cad-viewport">
+            <canvas id="model-canvas"></canvas>
+            <div class="view-cube" aria-hidden="true"><span>TOP</span><b>FRONT</b><i>RIGHT</i></div>
+            <div class="viewport-help">Glisser: rotation · Maj + glisser: deplacement · Molette: zoom</div>
+            <div id="model-empty" class="model-empty">
+              <strong>Aucun modele reconstruit</strong>
+              <span>Lancez un scan puis utilisez « Reconstruire le modele ».</span>
+            </div>
+          </div>
+          <div class="cad-statusbar">
+            <span id="model-view-label">Vue isometrique</span>
+            <span id="model-mesh-stats">0 triangle</span>
+          </div>
+        </article>
+      </div>
+    </section>
 
-  // ---------- connection / health ----------
-  async function checkHealth() {
-    try {
-      const j = await apiFetch('/api/status');
-      setConn(true);
-      return j;
-    } catch {
-      setConn(false);
-    }
-  }
+    <section id="tab-workshop" class="tab-page">
+      <div class="page-heading compact">
+        <div>
+          <span class="eyebrow">Maintenance et diagnostic</span>
+          <h1>Atelier de test</h1>
+          <p>Testez chaque sous-systeme independamment avant une acquisition.</p>
+        </div>
+        <button id="emergency-stop" class="button danger large">Arret materiel</button>
+      </div>
 
-  function setConn(ok) {
-    const dot = document.getElementById('dot');
-    const lbl = document.getElementById('conn-label');
-    dot.className = 'status-dot ' + (ok ? 'ok' : 'err');
-    lbl.textContent = ok ? 'Connected' : 'Disconnected';
-  }
+      <div class="workshop-grid">
+        <article class="panel">
+          <div class="panel-header"><h2>Moteurs</h2><span class="badge">X / Y / Z</span></div>
+          <div class="axis-control"><b>X</b><input id="move-x" type="number" value="10" step="0.5"><span>mm</span><button class="button secondary move-axis" data-axis="x">Deplacer</button></div>
+          <div class="axis-control"><b>Y</b><input id="move-y" type="number" value="10" step="0.5"><span>mm</span><button class="button secondary move-axis" data-axis="y">Tourner</button></div>
+          <div class="axis-control"><b>Z</b><input id="move-z" type="number" value="10" step="0.5"><span>mm</span><button class="button secondary move-axis" data-axis="z">Deplacer</button></div>
+          <div class="position-strip">
+            <span>X <b id="pos-x">0.00</b></span>
+            <span>Y <b id="pos-y">0.00</b></span>
+            <span>Z <b id="pos-z">0.00</b></span>
+          </div>
+          <button id="home-all" class="button ghost full">Faire l'origine des axes</button>
+        </article>
 
-  // ---------- lasers ----------
-  async function setLaser(side, state) {
-    try {
-      const j = await apiFetch('/api/laser/' + side, {
-        method: 'POST',
-        body: JSON.stringify({ state })
-      });
-      updateLaserUI(j.status);
-      toast('Laser ' + side + (state ? ' ON' : ' OFF'));
-    } catch {}
-  }
+        <article class="panel">
+          <div class="panel-header"><h2>Lasers</h2><span class="warning-text">Zone securisee uniquement</span></div>
+          <div class="device-toggle"><div><strong>Laser gauche</strong><small>GPIO27</small></div><label class="switch"><input id="laser-left" type="checkbox" data-laser="left"><span></span></label></div>
+          <div class="device-toggle"><div><strong>Laser droit</strong><small>GPIO22</small></div><label class="switch"><input id="laser-right" type="checkbox" data-laser="right"><span></span></label></div>
+          <div class="laser-line"></div>
+        </article>
 
-  function updateLaserUI(status) {
-    if (!status) return;
-    ['left', 'right'].forEach(s => {
-      const cb = document.getElementById('laser-' + s);
-      const ind = document.getElementById('ind-' + s);
-      if (cb) cb.checked = !!status[s];
-      if (ind) ind.className = 'laser-ind' + (status[s] ? ' on' : '');
-    });
-  }
+        <article class="panel">
+          <div class="panel-header"><h2>Eclairage RGB</h2><span id="rgb-preview" class="color-preview"></span></div>
+          <label class="range-field red"><span>Rouge</span><input id="led-r" type="range" min="0" max="255" value="0"><output id="led-r-value">0</output></label>
+          <label class="range-field green"><span>Vert</span><input id="led-g" type="range" min="0" max="255" value="0"><output id="led-g-value">0</output></label>
+          <label class="range-field blue"><span>Bleu</span><input id="led-b" type="range" min="0" max="255" value="0"><output id="led-b-value">0</output></label>
+          <button id="led-off" class="button ghost full">Eteindre</button>
+        </article>
 
-  // ---------- LED ----------
-  let ledTimer = null;
-  function debounceLed() {
-    clearTimeout(ledTimer);
-    ledTimer = setTimeout(() => {
-      const r = +document.getElementById('led-r').value;
-      const g = +document.getElementById('led-g').value;
-      const b = +document.getElementById('led-b').value;
-      setLed(r, g, b);
-    }, 300);
-  }
+        <article class="panel lidar-panel">
+          <div class="panel-header"><h2>TF-Luna LiDAR</h2><span id="lidar-badge" class="badge idle">En attente</span></div>
+          <div class="sensor-reading"><strong id="lidar-distance">---</strong><span>mm</span></div>
+          <div class="field-row">
+            <label class="field"><span>Distance etalon</span><input id="lidar-known-distance" type="number" value="300" min="1"><small>mm</small></label>
+          </div>
+          <div class="button-row">
+            <button id="lidar-read" class="button primary">Mesurer</button>
+            <button id="lidar-calibrate" class="button secondary">Calibrer</button>
+          </div>
+        </article>
 
-  async function setLed(r, g, b) {
-    document.getElementById('led-r').value = r;
-    document.getElementById('led-g').value = g;
-    document.getElementById('led-b').value = b;
-    updateSwatch();
-    try {
-      await apiFetch('/api/led/color', {
-        method: 'POST',
-        body: JSON.stringify({ r, g, b })
-      });
-      toast(`LED → rgb(${r},${g},${b})`);
-    } catch {}
-  }
+        <article class="panel">
+          <div class="panel-header"><h2>Refroidissement</h2></div>
+          <div class="metric-row"><span>Ventilateur Pi auto</span><b id="fan-pi-state">--</b></div>
+          <div class="metric-row"><span>Temperature CPU Raspberry Pi</span><b id="temp-pi">--</b></div>
+          <label class="range-field"><span>Ventilateur PA0</span><input id="fan-creality" type="range" min="0" max="100" value="0"><output id="fan-creality-value">0%</output></label>
+          <label class="range-field"><span>Ventilateur PA8</span><input id="fan-temperature" type="range" min="0" max="100" value="0"><output id="fan-temperature-value">0%</output></label>
+          <button id="apply-fans" class="button secondary full">Appliquer</button>
+        </article>
 
-  function updateSwatch() {
-    const r = document.getElementById('led-r').value;
-    const g = document.getElementById('led-g').value;
-    const b = document.getElementById('led-b').value;
-    document.getElementById('v-r').textContent = r;
-    document.getElementById('v-g').textContent = g;
-    document.getElementById('v-b').textContent = b;
-    document.getElementById('led-swatch').style.background = `rgb(${r},${g},${b})`;
-  }
+        <article class="panel">
+          <div class="panel-header"><h2>Carte moteur Creality 4.2.2</h2></div>
+          <div class="temperature-gauge">
+            <strong id="temp-board">--</strong><span>°C</span>
+          </div>
+          <p class="muted center">Thermistance EPCOS 100K sur PC5</p>
+        </article>
+      </div>
+    </section>
 
-  // ---------- motors ----------
-  function sliderVal(id, vid) {
-    const el = document.getElementById(id);
-    const ve = document.getElementById(vid);
-    if (!el || !ve) return;
-    const unit = id.startsWith('fan') ? '%' : '';
-    ve.textContent = el.value + unit;
-  }
+    <section id="tab-camera-pi" class="tab-page camera-page" data-camera-page="pi">
+      <div class="page-heading compact">
+        <div><span class="eyebrow">Camera CSI</span><h1>Pi Camera V3 NoIR</h1><p>Controle du cadrage, de la nettete et de la mire de calibration.</p></div>
+        <span id="camera-pi-status" class="badge idle">Non testee</span>
+      </div>
+      <div class="camera-layout">
+        <article class="panel camera-monitor"><img id="camera-pi-frame" alt="Aperçu Pi Camera"></article>
+        <aside class="panel camera-tools">
+          <h2>Test camera</h2>
+          <button class="button primary camera-refresh" data-camera="pi">Actualiser l'image</button>
+          <button class="button secondary camera-test" data-camera="pi">Analyser l'image</button>
+          <div id="camera-pi-metrics" class="metrics-list"></div>
+        </aside>
+      </div>
+    </section>
 
-  document.getElementById('move-x').addEventListener('input', () => sliderVal('move-x', 'v-mx'));
-  document.getElementById('move-y').addEventListener('input', () => sliderVal('move-y', 'v-my'));
-  document.getElementById('move-z').addEventListener('input', () => sliderVal('move-z', 'v-mz'));
+    <section id="tab-camera-usb" class="tab-page camera-page" data-camera-page="usb">
+      <div class="page-heading compact">
+        <div><span class="eyebrow">Camera USB</span><h1>Logitech C270</h1><p>Controle du flux USB, de la luminosite et de la nettete.</p></div>
+        <span id="camera-usb-status" class="badge idle">Non testee</span>
+      </div>
+      <div class="camera-layout">
+        <article class="panel camera-monitor"><img id="camera-usb-frame" alt="Aperçu Logitech C270"></article>
+        <aside class="panel camera-tools">
+          <h2>Test camera</h2>
+          <button class="button primary camera-refresh" data-camera="usb">Actualiser l'image</button>
+          <button class="button secondary camera-test" data-camera="usb">Analyser l'image</button>
+          <div id="camera-usb-metrics" class="metrics-list"></div>
+        </aside>
+      </div>
+    </section>
 
-  async function moveMotors() {
-    const axes = ['x', 'y', 'z'];
-    for (const ax of axes) {
-      const mm = parseFloat(document.getElementById('move-' + ax).value);
-      if (mm !== 0) {
-        try {
-          const j = await apiFetch('/api/move/' + ax, {
-            method: 'POST',
-            body: JSON.stringify({ mm })
-          });
-          updateMotorUI(j.status);
-        } catch {}
-      }
-    }
-    toast('Move command sent');
-  }
+    <section id="tab-calibration" class="tab-page">
+      <div class="page-heading compact">
+        <div><span class="eyebrow">Controle optique</span><h1>Test de calibration camera</h1><p>Placez une mire damier dans le champ puis analysez son alignement avec le centre de chaque camera.</p></div>
+      </div>
+      <div class="calibration-layout">
+        <article class="panel calibration-guide">
+          <div class="checkerboard" aria-label="Mire damier 9 par 6"></div>
+          <h2>Procedure</h2>
+          <ol>
+            <li>Imprimez ou affichez une mire 12 × 7, 11 × 6 ou 9 × 6.</li>
+            <li>Remplissez au moins la moitie de l'image.</li>
+            <li>Evitez les reflets et le flou de mouvement.</li>
+            <li>Alignez les decalages horizontal et vertical aussi pres que possible de 0 px.</li>
+            <li>Testez les deux cameras separement.</li>
+          </ol>
+        </article>
+        <article class="panel">
+          <h2>Pose automatique de calibration</h2>
+          <p class="muted">Deplace les moteurs vers la bonne pose selon la camera choisie, puis memorise la position pour le lancement du scan.</p>
+          <div class="calibration-choice">
+            <button id="pose-camera-pi" class="button"><span>Pi Camera V3</span><b>Aller en pose (X/Y)</b></button>
+            <button id="pose-camera-usb" class="button"><span>Logitech C270</span><b>Aller en pose (X/Y/Z)</b></button>
+          </div>
+          <div id="pose-result" class="calibration-result empty">Aucun deplacement lance.</div>
+          <div id="pose-lidar-row" style="display:none" class="muted">Distance TF-Luna : <b id="pose-lidar-distance">--</b> mm</div>
+          <hr>
+          <h2>Memorisation du scan</h2>
+          <p class="muted">Retourne a la pose memorisee lors de la derniere calibration.</p>
+          <div class="calibration-choice">
+            <button id="goto-scan-pose" class="button secondary"><span>Pose scan</span><b>Retourner</b></button>
+            <button id="save-scan-pose" class="button secondary"><span>Position actuelle</span><b>Memoriser</b></button>
+          </div>
+          <div id="scan-pose-result" class="calibration-result empty">Aucune pose memorisee.</div>
+          <hr>
+          <h2>Test de calibration image</h2>
+          <p class="muted">Analysez la mire damier une fois en pose.</p>
+          <div class="calibration-choice">
+            <button class="camera-calibrate" data-camera="pi"><span>Pi Camera V3</span><b>Lancer le test</b></button>
+            <button class="camera-calibrate" data-camera="usb"><span>Logitech C270</span><b>Lancer le test</b></button>
+          </div>
+          <div id="calibration-result" class="calibration-result empty">Aucun test lance.</div>
+          <hr>
+          <h2>Positionnement automatique</h2>
+          <p class="muted">Deplace les moteurs vers la pose de calibration recommandee pour la camera selectionnee (Pi Camera : X/Y uniquement ; Logitech : X/Y/Z). La distance TF-Luna est lue si disponible.</p>
+          <div class="calibration-choice">
+            <button class="camera-goto-pose" data-camera="pi"><span>Pi Camera V3</span><b>Aller à la pose</b></button>
+            <button class="camera-goto-pose" data-camera="usb"><span>Logitech C270</span><b>Aller à la pose</b></button>
+          </div>
+          <div id="pose-result" class="calibration-result empty">Aucun positionnement lance.</div>
+          <hr>
+          <h2>Mémorisation de la pose de scan</h2>
+          <p class="muted">Sauvegardez la position actuelle comme pose de depart du scan, ou retournez a la pose memorisee.</p>
+          <div class="calibration-choice">
+            <button class="camera-save-pose" data-camera="pi"><span>Pi Camera V3</span><b>Mémoriser la pose</b></button>
+            <button class="camera-save-pose" data-camera="usb"><span>Logitech C270</span><b>Mémoriser la pose</b></button>
+          </div>
+          <div class="calibration-choice" style="margin-top:0.5rem">
+            <button class="camera-goto-scan-pose" data-camera="pi"><span>Pi Camera V3</span><b>Retour à la pose</b></button>
+            <button class="camera-goto-scan-pose" data-camera="usb"><span>Logitech C270</span><b>Retour à la pose</b></button>
+          </div>
+          <div id="scan-pose-result" class="calibration-result empty">Aucune pose memorisee.</div>
+          <hr>
+          <h2>Alignement laser</h2>
+          <p class="muted">Allume un laser à la fois, capture l'image Pi Camera et calcule la correction d'angle.</p>
+          <div class="calibration-choice">
+            <button id="align-laser-left" class="button secondary"><span>Laser gauche</span><b>Aligner</b></button>
+            <button id="align-laser-right" class="button secondary"><span>Laser droit</span><b>Aligner</b></button>
+          </div>
+          <div id="laser-align-result" class="calibration-result empty">Aucune analyse lancee.</div>
+        </article>
+      </div>
+    </section>
+  </main>
 
-  async function homeMotors(target) {
-    try {
-      const j = await apiFetch('/api/home/' + target, { method: 'POST' });
-      updateMotorUI(j.status);
-      toast('Homing ' + target);
-    } catch {}
-  }
-
-  async function stopMotors() {
-    try {
-      const j = await apiFetch('/api/motor/stop', { method: 'POST', body: JSON.stringify({ axis: 'all' }) });
-      updateMotorUI(j.status);
-      toast('Motors stopped');
-    } catch {}
-  }
-
-  function updateMotorUI(status) {
-    if (!status) return;
-    const pos = status.positions || {};
-    ['x', 'y', 'z'].forEach(ax => {
-      const el = document.getElementById('pos-' + ax);
-      if (el) el.textContent = pos[ax] !== undefined ? pos[ax].toFixed(2) + ' mm' : '—';
-    });
-  }
-
-  // ---------- fans ----------
-  async function setFans() {
-    const fans = [
-      { key: 'pi', endpoint: '/api/fan/pi' },
-      { key: 'creality', endpoint: '/api/fan/creality' },
-      { key: 'temperature', endpoint: '/api/fan/temperature' }
-    ];
-    for (const { key, endpoint } of fans) {
-      const pct = parseInt(document.getElementById('fan-' + key).value, 10);
-      try {
-        await apiFetch(endpoint, { method: 'POST', body: JSON.stringify({ percent: pct }) });
-      } catch {}
-    }
-    toast('Fan speeds applied');
-  }
-
-  function setAllFans(pct) {
-    ['fan-pi', 'fan-creality', 'fan-temperature'].forEach((id, i) => {
-      const vids = ['v-fpi', 'v-fcr', 'v-ftp'];
-      const el = document.getElementById(id);
-      if (el) el.value = pct;
-      const ve = document.getElementById(vids[i]);
-      if (ve) ve.textContent = pct + '%';
-    });
-    setFans();
-  }
-
-  function updateFanUI(status) {
-    if (!status) return;
-    const piSpeed = status.pi?.speed !== undefined ? Math.round(status.pi.speed * 100) : 0;
-    const crSpeed = status.creality !== undefined ? Math.round(status.creality * 100) : 0;
-    const tpSpeed = status.temperature !== undefined ? Math.round(status.temperature * 100) : 0;
-    document.getElementById('fan-pi').value = piSpeed;
-    document.getElementById('v-fpi').textContent = piSpeed + '%';
-    document.getElementById('fan-creality').value = crSpeed;
-    document.getElementById('v-fcr').textContent = crSpeed + '%';
-    document.getElementById('fan-temperature').value = tpSpeed;
-    document.getElementById('v-ftp').textContent = tpSpeed + '%';
-  }
-
-  // ---------- temperature ----------
-  async function refreshTemp() {
-    try {
-      const j = await apiFetch('/api/temperature/board');
-      const t = j.status?.board_c;
-      document.getElementById('temp-board').textContent = t !== undefined ? t.toFixed(1) + ' °C' : '—';
-    } catch {
-      document.getElementById('temp-board').textContent = '—';
-    }
-  }
-
-  // ---------- status ----------
-  async function refreshStatus() {
-    try {
-      const j = await apiFetch('/api/status');
-      const d = j.status || {};
-      const apiText = document.createTextNode(d.api || 'ok');
-      const body = document.getElementById('status-body');
-      body.innerHTML = '';
-      const lines = [
-        ['API', d.api || 'ok'],
-        ['GPIO', d.gpio_driver ? '✅' : '❌'],
-        ['STM32', d.stm32_driver ? '✅' : '❌'],
-        ['Updated', new Date().toLocaleTimeString()],
-      ];
-      lines.forEach(([k, v]) => {
-        const b = document.createElement('b');
-        b.textContent = k + ': ';
-        body.appendChild(b);
-        body.appendChild(document.createTextNode(v));
-        body.appendChild(document.createElement('br'));
-      });
-      setConn(true);
-    } catch {
-      document.getElementById('status-body').textContent = 'Unreachable';
-      setConn(false);
-    }
-  }
-
-  // ---------- refresh all ----------
-  async function refreshAll() {
-    const [motorJ, fanJ] = await Promise.allSettled([
-      apiFetch('/api/motor/status'),
-      apiFetch('/api/fan/status'),
-      refreshTemp(),
-      refreshStatus()
-    ]);
-    if (motorJ.status === 'fulfilled') updateMotorUI(motorJ.value.status);
-    if (fanJ.status === 'fulfilled') updateFanUI(fanJ.value.status);
-
-    // Refresh laser status read-only
-    try {
-      const lj = await apiFetch('/api/laser/status');
-      updateLaserUI(lj.status);
-    } catch {}
-  }
-
-  // ---------- polling ----------
-  async function poll() {
-    try {
-      const [mj, fj] = await Promise.all([
-        apiFetch('/api/motor/status'),
-        apiFetch('/api/fan/status')
-      ]);
-      updateMotorUI(mj.status);
-      updateFanUI(fj.status);
-    } catch {}
-    await refreshTemp();
-    await refreshStatus();
-  }
-
-  // ---------- init ----------
-  updateSwatch();
-  refreshAll();
-  setInterval(poll, 5000);
-</script>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/viewer3d.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>

@@ -146,6 +146,7 @@ class USBScannerDriver:
         return self._exchange(CMD_STOP)
 
 
+<<<<<<< HEAD
 # ---------------------------------------------------------------------------
 # USBDriver - text-protocol (serial) driver used by MotorController
 # ---------------------------------------------------------------------------
@@ -271,3 +272,36 @@ class USBDriver:
     def fan_control(self, state: str) -> bool:
         """Control the Creality fan: state = 'ON' or 'OFF'."""
         return self._send(f"FAN_{state.upper()}")
+=======
+class USBDriver(USBScannerDriver):
+    """Compatibility wrapper around USBScannerDriver exposing a simpler API."""
+
+    def __init__(self, transport: "USBTransport | None" = None):
+        if transport is None:
+            self._transport = None  # type: ignore[assignment]
+        else:
+            super().__init__(transport)
+
+    def connect(self) -> bool:
+        return True
+
+    def disconnect(self) -> bool:
+        return True
+
+    def home(self, axis: str) -> "ScannerStatus | bool":
+        if self._transport is None:
+            return True
+        return self.home_axis(axis)
+
+    def move(self, axis: str, steps: int, speed: int = 0) -> "ScannerStatus | bool":
+        if self._transport is None:
+            return True
+        axis_upper = axis.upper()
+        if axis_upper == "X":
+            return self.move_x(steps, speed=speed)
+        if axis_upper == "Y":
+            return self.move_y(steps, speed=speed)
+        if axis_upper == "Z":
+            return self.move_z(steps, speed=speed)
+        raise ValueError(f"Unsupported axis: {axis}")
+>>>>>>> origin/main

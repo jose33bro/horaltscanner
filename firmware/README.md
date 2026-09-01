@@ -1,6 +1,6 @@
 # Firmware USB personnalisé (Creality V4.2.2)
 
-Ce dossier contient une base de firmware USB custom pour STM32F103 (carte Creality V4.2.2), indépendante de Marlin/Klipper.
+Ce dossier contient une base de firmware USB custom pour STM32F103 (carte Creality V4.2.2).
 
 ## Responsabilités
 - Communication USB bidirectionnelle avec le Raspberry Pi

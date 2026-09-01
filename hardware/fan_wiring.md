@@ -1,5 +1,36 @@
 # Câblage ventilateur 24V - Horaltscanner
 
+## Ventilateur du Raspberry Pi (GPIO23)
+
+Le ventilateur de refroidissement du Raspberry Pi est distinct du ventilateur
+24V de la carte Creality. Le service HoralScanner le commande en tout-ou-rien
+sur **GPIO23** (broche physique 16): `1` l'active et `0` le désactive.
+
+Le service lit `/sys/class/thermal/thermal_zone0/temp` toutes les 5 secondes:
+
+- démarrage du ventilateur à 55°C;
+- arrêt à 45°C;
+- maintien de l'état entre 45°C et 55°C pour éviter les commutations rapides;
+- activation de sécurité si la température CPU ne peut pas être lue.
+
+```text
+GPIO23 ──[1 kΩ]── Gate MOSFET logique
+GND Pi ────────── Source MOSFET
+Drain MOSFET ──── Ventilateur -
+5V Pi ─────────── Ventilateur +
+```
+
+Ne jamais alimenter le ventilateur directement depuis GPIO23. Utiliser un
+MOSFET logique et une diode de roue libre, avec une masse commune.
+
+Test via l'API:
+
+```bash
+curl -X POST http://localhost:5000/api/fan/pi \
+  -H 'Content-Type: application/json' \
+  -d '{"percent":100}'
+```
+
 ## Vue d'ensemble
 
 Le ventilateur de refroidissement de la carte Creality V4.2.2 est alimenté en **24V DC**
@@ -76,32 +107,25 @@ Le connecteur est marqué **"FAN"** sur la carte.
 
 ## Configuration logicielle
 
-La configuration du ventilateur est dans `klipper_config/temperature_fan.cfg`.
+La configuration du ventilateur est gérée par l'API HoralScanner via `software/api/horalscanner_api.py`.
 
-Pour modifier la température de déclenchement:
-
-```ini
-[temperature_fan board_fan]
-target_temp: 50.0    # Température en °C pour démarrer le ventilateur
-min_speed: 0.3       # Vitesse minimale (30%)
-max_speed: 1.0       # Vitesse maximale (100%)
-```
+Pour modifier la température de déclenchement, éditer `config/horalscanner_config.json`.
 
 ---
 
 ## Test du ventilateur
 
-Dans la console Klipper (Mainsail/Fluidd):
+Via l'API REST:
 
-```gcode
-; Activer le ventilateur à pleine vitesse
-FAN_ON
+```bash
+# Activer le ventilateur Pi à 50%
+curl -X POST http://localhost:5000/api/fan/pi -H "Content-Type: application/json" -d '{"percent": 50}'
 
-; Vérifier les températures
-CHECK_TEMP
+# Vérifier les températures
+curl http://localhost:5000/api/temperature/all
 
-; Désactiver le ventilateur
-FAN_OFF
+# Désactiver le ventilateur
+curl -X POST http://localhost:5000/api/fan/pi -H "Content-Type: application/json" -d '{"percent": 0}'
 ```
 
 ---

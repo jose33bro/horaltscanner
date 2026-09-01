@@ -77,6 +77,10 @@ def _make_placeholder() -> bytes:
 class LogitechCamera:
     """Captures frames from a V4L2 USB camera (Logitech C270 etc.)."""
 
+    #: Indices tried, in order, when the configured ``device_id`` fails to
+    #: open or fails to deliver a frame.
+    FALLBACK_DEVICE_IDS = (0, 1, 2, 3)
+
     def __init__(self, device_id: int = 0):
         self.device_id = device_id
         self._cap = None
@@ -86,39 +90,47 @@ class LogitechCamera:
         if not _CV2_AVAILABLE:
             return False
         with self._lock:
-            # Try configured index first, then fall back to common USB indices.
-            candidates = [self.device_id, 0, 1, 2, 3]
-            seen = set()
-
+            candidates = [self.device_id, *self.FALLBACK_DEVICE_IDS]
+            seen: set = set()
+            tried: list = []
             for idx in candidates:
                 if idx in seen:
                     continue
                 seen.add(idx)
+                tried.append(idx)
 
                 cap = cv2.VideoCapture(idx)
-                if not cap or not cap.isOpened():
-                    try:
-                        cap.release()
-                    except Exception:
-                        pass
-                    logger.warning("USB camera open failed on index %s", idx)
-                    continue
+                opened = cap.isOpened()
+                ok = False
+                if opened:
+                    ok, _frame = cap.read()
 
-                ret, frame = cap.read()
-                if not ret or frame is None:
-                    cap.release()
-                    logger.warning("USB camera read failed on index %s", idx)
-                    continue
+                if opened and ok:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+                    self._cap = cap
+                    if idx != self.device_id:
+                        logger.info(
+                            "USB camera: configured device_id=%s failed, "
+                            "falling back to working index %s",
+                            self.device_id, idx,
+                        )
+                    else:
+                        logger.info("USB camera: opened on device_id=%s", idx)
+                    self.device_id = idx
+                    return True
 
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-                self._cap = cap
-                self.device_id = idx
-                logger.info("USB camera opened on /dev/video%s", idx)
-                return True
+                logger.warning(
+                    "USB camera: failed to open index %s (opened=%s, read=%s)",
+                    idx, opened, ok,
+                )
+                cap.release()
 
             self._cap = None
-            logger.error("USB camera unavailable on indices %s", list(seen))
+            logger.error(
+                "USB camera: no working device found among candidates %s",
+                tried,
+            )
             return False
 
     def close(self) -> None:

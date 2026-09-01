@@ -1,5 +1,8 @@
 import importlib
+import runpy
 import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 try:
     from flask import Flask  # noqa: F401
@@ -54,6 +57,7 @@ class HoralScannerAPITests(unittest.TestCase):
         class FakeSTM32:
             def __init__(self):
                 self.calls = []
+                self.connected = True
                 self.status = {
                     "positions": {"x": 0.0, "y": 0.0, "z": 0.0},
                     "moving": {"x": False, "y": False, "z": False},
@@ -399,6 +403,47 @@ class HoralScannerAPITests(unittest.TestCase):
         response = self.client.get("/api/status")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.get_json()["status"]["stm32_driver"])
+
+    def test_api_status_reports_disconnected_stm32_driver(self):
+        self.fake_stm32.connected = False
+        response = self.client.get("/api/status")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertFalse(data["status"]["stm32_driver"])
+        self.assertFalse(data["status"]["stm32_connected"])
+        self.assertFalse(data["capabilities"]["stm32_connected"])
+
+    def test_create_gpio_driver_injects_gpiozero_factories_when_enabled(self):
+        fake_output_factory = object()
+        fake_pwm_factory = object()
+        fake_driver_class = Mock(return_value="gpio-driver")
+        original_driver_class = self.api_module.GPIODriver
+        self.addCleanup(setattr, self.api_module, "GPIODriver", original_driver_class)
+        self.api_module.GPIODriver = fake_driver_class
+
+        with patch.object(
+            self.api_module,
+            "_load_gpiozero_factories",
+            return_value=(fake_output_factory, fake_pwm_factory),
+        ):
+            driver = self.api_module._create_gpio_driver(True, {"hardware": {"pi_gpio": True}})
+
+        self.assertEqual(driver, "gpio-driver")
+        fake_driver_class.assert_called_once_with(
+            simulation=False,
+            hardware_config={"hardware": {"pi_gpio": True}},
+            output_device_factory=fake_output_factory,
+            pwm_device_factory=fake_pwm_factory,
+        )
+
+    def test_horalscanner_api_supports_direct_script_import(self):
+        api_path = (
+            Path(__file__).resolve().parents[1]
+            / "api"
+            / "horalscanner_api.py"
+        )
+        namespace = runpy.run_path(str(api_path), run_name="horalscanner_api_direct_test")
+        self.assertIn("api_bp", namespace)
 
     def test_laser_align_turns_on_laser_and_returns_analysis(self):
         class FakeCamera:

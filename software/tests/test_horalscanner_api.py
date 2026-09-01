@@ -199,6 +199,31 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertTrue(data["status"]["stm32_driver"])
         self.assertIn("version", data["status"])
 
+    def test_status_includes_runtime_capabilities(self):
+        response = self.client.get("/api/status")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertIn("capabilities", data)
+        self.assertIn("simulation_mode", data["status"])
+        self.assertIn("acquisition_backend_ready", data["capabilities"])
+
+    def test_scan_start_falls_back_to_simulation(self):
+        self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
+        response = self.client.post("/api/scan/start")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertTrue(data["status"]["simulation"])
+        self.assertEqual(data["mode"], "simulation")
+
+    def test_reconstruct_without_points_returns_structured_error(self):
+        response = self.client.post("/api/model/reconstruct")
+        self.assertEqual(response.status_code, 409)
+        data = response.get_json()
+        self.assertFalse(data["success"])
+        self.assertIn("hint", data)
+
     def test_health_endpoints_return_ok(self):
         for route in ("/health", "/api/health"):
             with self.subTest(route=route):

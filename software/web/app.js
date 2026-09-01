@@ -14,7 +14,14 @@ const HoralScannerUI = (() => {
     element.textContent = message;
     element.className = `show${error ? " error" : ""}`;
     clearTimeout(toast.timer);
-    toast.timer = setTimeout(() => { element.className = ""; }, 3500);
+    toast.timer = setTimeout(() => { element.className = ""; }, 5000);
+  }
+
+  function formatUserError(error) {
+    if (!error) return "Erreur inconnue";
+    if (error.hint) return `${error.message} · ${error.hint}`;
+    if (error.detail) return `${error.message} · ${error.detail}`;
+    return error.message;
   }
 
   async function api(path, options = {}) {
@@ -25,7 +32,11 @@ const HoralScannerUI = (() => {
     const type = response.headers.get("content-type") || "";
     const payload = type.includes("application/json") ? await response.json() : null;
     if (!response.ok || payload?.success === false) {
-      throw new Error(payload?.error || `Erreur HTTP ${response.status}`);
+      const error = new Error(payload?.error || `Erreur HTTP ${response.status}`);
+      error.detail = payload?.detail || null;
+      error.hint = payload?.hint || null;
+      error.status = response.status;
+      throw error;
     }
     return payload;
   }
@@ -52,7 +63,8 @@ const HoralScannerUI = (() => {
       const result = await api("/api/status");
       const status = result.status || {};
       byId("status-dot").className = "status-dot online";
-      byId("status-text").textContent = `Connecte · v${status.version || "?"}`;
+      const simulationSuffix = status.simulation_mode ? " · Simulation" : "";
+      byId("status-text").textContent = `Connecte · v${status.version || "?"}${simulationSuffix}`;
       updateCheck("check-api", status.api === "ok");
       updateCheck("check-gpio", status.gpio_driver);
       updateCheck("check-stm32", status.stm32_driver);
@@ -77,8 +89,21 @@ const HoralScannerUI = (() => {
     byId("scan-stop").addEventListener("click", stopScan);
     byId("scan-reconstruct").addEventListener("click", reconstruct);
     document.querySelectorAll(".export-button").forEach(button => {
-      button.addEventListener("click", () => {
-        window.location.href = `/api/model/current?format=${button.dataset.format}`;
+      button.addEventListener("click", async () => {
+        const format = button.dataset.format;
+        try {
+          const response = await fetch(`/api/model/current?format=${format}`);
+          if (!response.ok) {
+            const payload = response.headers.get("content-type")?.includes("application/json") ? await response.json() : null;
+            throw Object.assign(new Error(payload?.error || "Aucun modele disponible"), {
+              detail: payload?.detail || null,
+              hint: payload?.hint || "Lancez un scan puis reconstruisez un modele avant export.",
+            });
+          }
+          window.location.href = `/api/model/current?format=${format}`;
+        } catch (error) {
+          toast(formatUserError(error), true);
+        }
       });
     });
     drawEmptyPointCloud();
@@ -86,16 +111,16 @@ const HoralScannerUI = (() => {
 
   async function startScan() {
     try {
-      await api("/api/scan/start", { method: "POST" });
+      const result = await api("/api/scan/start", { method: "POST" });
       byId("scan-start").disabled = true;
       byId("scan-stop").disabled = false;
       byId("scan-state-badge").className = "badge running";
-      byId("scan-state-badge").textContent = "Acquisition";
+      byId("scan-state-badge").textContent = result?.status?.simulation ? "Simulation" : "Acquisition";
       state.scanTimer = setInterval(refreshScanStatus, 800);
       state.pointTimer = setInterval(refreshPointCloud, 1200);
-      toast("Acquisition 3D demarree");
+      toast(result?.hint || "Acquisition 3D demarree");
     } catch (error) {
-      toast(error.message, true);
+      toast(formatUserError(error), true);
     }
   }
 
@@ -111,7 +136,7 @@ const HoralScannerUI = (() => {
       await refreshPointCloud();
       toast("Acquisition arretee");
     } catch (error) {
-      toast(error.message, true);
+      toast(formatUserError(error), true);
     }
   }
 
@@ -194,7 +219,7 @@ const HoralScannerUI = (() => {
       await loadModel(false);
       toast("Reconstruction terminee");
     } catch (error) {
-      toast(error.message, true);
+      toast(formatUserError(error), true);
     } finally {
       byId("scan-reconstruct").disabled = false;
     }

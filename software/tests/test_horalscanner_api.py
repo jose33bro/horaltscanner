@@ -456,6 +456,8 @@ class HoralScannerAPITests(unittest.TestCase):
         )
         namespace = runpy.run_path(str(api_path), run_name="horalscanner_api_direct_test")
         self.assertIn("api_bp", namespace)
+        app = namespace["_create_standalone_app"]()
+        self.assertIn("scan", app.blueprints)
 
     def test_laser_align_turns_on_laser_and_returns_analysis(self):
         class FakeCamera:

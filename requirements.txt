@@ -19,7 +19,7 @@ scipy>=1.7.0
 Pillow>=8.3.0
 
 # Caméra Raspberry Pi
-picamera2>=0.1.0  # optionnel
+picamera2>=0.3.37  # optionnel
 
 # 3D et géométrie
 # PyPI does not publish Linux ARM64 wheels. Raspberry Pi uses the official

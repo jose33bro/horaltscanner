@@ -6,6 +6,7 @@ nouvelles classes (LaserController, USBScannerDriver) tout en conservant
 l'API historique utilisée par les tests plus anciens et par ScannerApp.
 """
 
+import struct
 import unittest
 from unittest.mock import MagicMock
 
@@ -22,8 +23,6 @@ class FakeTransport:
 
     def exchange(self, payload: bytes) -> bytes:
         self.calls.append(payload)
-        import struct
-
         head = struct.pack("<BBiiiB", 0, 0, 0, 0, 0, 0)
         checksum = 0
         for byte in head:

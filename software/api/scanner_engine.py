@@ -73,17 +73,20 @@ class ScanSession:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        if not self._simulation:
-            raise RuntimeError("Real scanner acquisition backend is not configured")
         with self._lock:
             if self._scanning:
                 return
+            if not self._simulation:
+                logger.warning(
+                    "Real scanner acquisition backend is not configured; falling back to simulation mode"
+                )
+                self._simulation = True
             self._data.clear()
             self._scanning = True
             self._start_time = time.time()
             self._thread = threading.Thread(target=self._capture_loop, daemon=True)
             self._thread.start()
-        logger.info("Scan started")
+        logger.info("Scan started in simulation=%s", self._simulation)
 
     def stop(self) -> None:
         with self._lock:

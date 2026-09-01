@@ -49,7 +49,7 @@ from software.api.calibration_pose import (
     read_lidar_distance,
 )
 from software.api.lidar_driver import LidarDriver
-from software.api.scanner_engine import ReconstructionEngine, ScanSession
+from software.api.scanner_engine import ReconstructionEngine, ScanSession, _O3D_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
@@ -173,8 +173,37 @@ def _ensure_lidar_connected() -> bool:
     return lidar_driver.connected or lidar_driver.connect()
 
 
-def _json_error(message: str, status_code: int = 400):
-    return jsonify({"success": False, "error": message}), status_code
+def _json_error(
+    message: str,
+    status_code: int = 400,
+    *,
+    detail: str | None = None,
+    hint: str | None = None,
+):
+    payload = {"success": False, "error": message}
+    if detail is not None:
+        payload["detail"] = detail
+    if hint is not None:
+        payload["hint"] = hint
+    return jsonify(payload), status_code
+
+
+def _runtime_capabilities() -> dict[str, Any]:
+    camera_status = {
+        "pi": bool(pi_camera and (pi_camera.is_open or pi_camera.open())),
+        "usb": bool(usb_camera and (usb_camera.is_open or usb_camera.open())),
+    }
+    simulation_mode = bool(getattr(scan_session, "_simulation", False))
+    acquisition_backend_ready = bool(
+        simulation_mode or stm32_driver is not None or gpio_driver is not None
+    )
+    return {
+        "camera_available": camera_status,
+        "gpio_available": gpio_driver is not None,
+        "open3d_available": bool(_O3D_AVAILABLE),
+        "acquisition_backend_ready": acquisition_backend_ready,
+        "simulation_mode": simulation_mode,
+    }
 
 
 def _lidar_validation(camera_name: str, lidar_distance_mm: float | None) -> dict[str, Any]:
@@ -837,8 +866,18 @@ def scan_start():
     try:
         scan_session.start()
     except RuntimeError as exc:
-        return _json_error(str(exc), 503)
-    return jsonify({"success": True, "status": scan_session.status()})
+        return _json_error(
+            str(exc),
+            503,
+            detail="Real scanner acquisition backend is not configured.",
+            hint="The scanner is running in simulation mode until hardware backend support is available.",
+        )
+    status = scan_session.status()
+    payload = {"success": True, "status": status}
+    if status.get("simulation"):
+        payload["mode"] = "simulation"
+        payload["hint"] = "Real acquisition backend unavailable; running in simulation mode."
+    return jsonify(payload)
 
 
 @api_bp.route("/api/scan/stop", methods=["POST"])
@@ -860,8 +899,17 @@ def scan_pointcloud():
 @api_bp.route("/api/model/reconstruct", methods=["POST"])
 def model_reconstruct():
     result = reconstruction_engine.reconstruct()
-    status_code = 200 if result["ok"] else 409
-    return jsonify({"success": result["ok"], **result}), status_code
+    if not result["ok"]:
+        detail = "The current scan does not contain enough points for mesh reconstruction."
+        if result.get("stl_size", 0) > 0:
+            detail = f"Only {result.get('stl_size', 0)} bytes of model data were produced."
+        return _json_error(
+            result.get("error", "Reconstruction failed"),
+            409,
+            detail=detail,
+            hint="Start a scan and collect enough points before reconstructing a model.",
+        )
+    return jsonify({"success": True, **result})
 
 
 @api_bp.route("/api/model/current", methods=["GET"])
@@ -871,7 +919,12 @@ def model_current():
         return _json_error("Format must be stl or amf", 400)
     model = reconstruction_engine.get_model(model_format)
     if model is None:
-        return _json_error("No reconstructed model available", 404)
+        return _json_error(
+            "No reconstructed model available",
+            404,
+            detail=f"No {model_format.upper()} model exists for the current session.",
+            hint="Run a scan and reconstruct the model before exporting it.",
+        )
     return send_file(
         BytesIO(model),
         mimetype="application/octet-stream",
@@ -1029,15 +1082,25 @@ def api_status():
         stm32_driver is not None
         and getattr(stm32_driver, "connected", True)
     )
+    capabilities = _runtime_capabilities()
+    status_payload = {
+        "api": "ok",
+        "gpio_driver": gpio_ready,
+        "stm32_driver": stm32_ready,
+        "version": _VERSION,
+        "simulation_mode": capabilities["simulation_mode"],
+    }
     return jsonify({
         "success": True,
-        "status": {
-            "api": "ok",
-            "gpio_driver": gpio_ready,
-            "stm32_driver": stm32_ready,
-            "version": _VERSION,
-        },
+        "status": status_payload,
+        "capabilities": capabilities,
     })
+
+
+@api_bp.route("/api/capabilities", methods=["GET"])
+def api_capabilities():
+    return jsonify({"success": True, "capabilities": _runtime_capabilities()})
+
 
 @api_bp.route("/api/health", methods=["GET"])
 @api_bp.route("/health", methods=["GET"])

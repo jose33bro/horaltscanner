@@ -77,6 +77,7 @@ class GPIODriver:
         self._pi_fan_fan_on: bool = False
 
         self._hardware_available = False
+        self._last_error: Exception | None = None
         self._laser_left_device = None
         self._laser_right_device = None
         self._led_r_device = None
@@ -100,7 +101,13 @@ class GPIODriver:
     def hardware_available(self) -> bool:
         return self._hardware_available
 
+    @property
+    def last_error(self) -> Exception | None:
+        """Last exception raised while attempting to connect, if any."""
+        return self._last_error
+
     def connect(self) -> bool:
+        self._last_error = None
         if self._simulation:
             self._hardware_available = True
             return True
@@ -115,7 +122,8 @@ class GPIODriver:
         if out_factory is None or (needs_pwm and pwm_factory is None):
             try:
                 from gpiozero import OutputDevice, PWMOutputDevice
-            except Exception:
+            except Exception as exc:
+                self._last_error = exc
                 self._hardware_available = False
                 return False
             out_factory = out_factory or OutputDevice
@@ -146,7 +154,8 @@ class GPIODriver:
                 self._led_b_device = pwm_factory(b_cfg.get("gpio", 24), True, False)
             self._hardware_available = True
             return True
-        except Exception:
+        except Exception as exc:
+            self._last_error = exc
             self._hardware_available = False
             return False
 

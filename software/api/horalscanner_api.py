@@ -219,7 +219,7 @@ def _gpio_driver_ready() -> bool:
         return False
     simulation = getattr(gpio_driver, "simulation", None)
     hardware_available = getattr(gpio_driver, "hardware_available", None)
-    if simulation is not None or hardware_available is not None:
+    if simulation is not None and hardware_available is not None:
         return bool(simulation or hardware_available)
     status_fn = getattr(gpio_driver, "status", None)
     if callable(status_fn):

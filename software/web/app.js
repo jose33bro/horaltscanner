@@ -601,9 +601,6 @@ const HoralScannerUI = (() => {
     }
   }
 
-      toast(error.message, true);
-    }
-  }
 
   async function saveCameraScanPose(camera) {
     const resultEl = byId("scan-pose-result");
@@ -631,9 +628,6 @@ const HoralScannerUI = (() => {
     }
   }
 
-      toast(error.message, true);
-    }
-  }
 
   async function gotoCameraScanPose(camera) {
     const resultEl = byId("scan-pose-result");

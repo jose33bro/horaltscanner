@@ -80,6 +80,7 @@ class GPIODriver:
         self._pi_fan_fan_on: bool = False
 
         self._hardware_available = False
+        self._last_error: Exception | None = None
         self._laser_left_device = None
         self._laser_right_device = None
         self._led_r_device = None
@@ -95,7 +96,21 @@ class GPIODriver:
     # Connection / lifecycle
     # ------------------------------------------------------------------
 
+    @property
+    def simulation(self) -> bool:
+        return self._simulation
+
+    @property
+    def hardware_available(self) -> bool:
+        return self._hardware_available
+
+    @property
+    def last_error(self) -> Exception | None:
+        """Last exception raised while attempting to connect, if any."""
+        return self._last_error
+
     def connect(self) -> bool:
+        self._last_error = None
         if self._simulation:
             self._hardware_available = True
             return True
@@ -106,6 +121,17 @@ class GPIODriver:
         pi_fan_cfg = fans_cfg.get("pi_fan", _DEFAULT_HARDWARE_CONFIG["fans"]["pi_fan"])
         out_factory = self._output_device_factory
         pwm_factory = self._pwm_device_factory
+        needs_pwm = "led_rgb" in cfg_in
+        if out_factory is None or (needs_pwm and pwm_factory is None):
+            try:
+                from gpiozero import OutputDevice, PWMOutputDevice
+            except Exception as exc:
+                self._last_error = exc
+                self._hardware_available = False
+                return False
+            out_factory = out_factory or OutputDevice
+            if needs_pwm:
+                pwm_factory = pwm_factory or PWMOutputDevice
         try:
             # Lasers first (output_factory calls 0, 1)
             if "lasers" in cfg_in and out_factory:
@@ -131,7 +157,8 @@ class GPIODriver:
                 self._led_b_device = pwm_factory(b_cfg.get("gpio", 24), True, False)
             self._hardware_available = True
             return True
-        except Exception:
+        except Exception as exc:
+            self._last_error = exc
             self._hardware_available = False
             return False
 
@@ -144,7 +171,11 @@ class GPIODriver:
         return self._hardware_available
 
     def close(self) -> None:
+<<<<<<< HEAD
         for attribute in (
+=======
+        for device_name in (
+>>>>>>> origin/main
             "_laser_left_device",
             "_laser_right_device",
             "_led_r_device",
@@ -152,14 +183,22 @@ class GPIODriver:
             "_led_b_device",
             "_fan_device",
         ):
+<<<<<<< HEAD
             device = getattr(self, attribute)
+=======
+            device = getattr(self, device_name)
+>>>>>>> origin/main
             if device is None:
                 continue
             try:
                 device.close()
             except Exception:
                 pass
+<<<<<<< HEAD
             setattr(self, attribute, None)
+=======
+            setattr(self, device_name, None)
+>>>>>>> origin/main
         self._hardware_available = False
         self._pi_fan_speed = 0.0
 
@@ -170,11 +209,17 @@ class GPIODriver:
     def laser_on(self, side: str) -> bool:
         if side not in ("left", "right"):
             return False
+        if not self._hardware_available and not self._simulation:
+            return False
         if side == "left":
+            if self._laser_left_device is None and not self._simulation:
+                return False
             if self._laser_left_device is not None:
                 self._laser_left_device.on()
             self._laser_status["left"] = True
         else:
+            if self._laser_right_device is None and not self._simulation:
+                return False
             if self._laser_right_device is not None:
                 self._laser_right_device.on()
             self._laser_status["right"] = True
@@ -183,11 +228,17 @@ class GPIODriver:
     def laser_off(self, side: str) -> bool:
         if side not in ("left", "right"):
             return False
+        if not self._hardware_available and not self._simulation:
+            return False
         if side == "left":
+            if self._laser_left_device is None and not self._simulation:
+                return False
             if self._laser_left_device is not None:
                 self._laser_left_device.off()
             self._laser_status["left"] = False
         else:
+            if self._laser_right_device is None and not self._simulation:
+                return False
             if self._laser_right_device is not None:
                 self._laser_right_device.off()
             self._laser_status["right"] = False
@@ -201,6 +252,17 @@ class GPIODriver:
     # ------------------------------------------------------------------
 
     def led_set(self, r: int, g: int, b: int) -> bool:
+        if not self._hardware_available and not self._simulation:
+            return False
+        if (
+            not self._simulation
+            and (
+                self._led_r_device is None
+                or self._led_g_device is None
+                or self._led_b_device is None
+            )
+        ):
+            return False
         self._led_status = {"r": r, "g": g, "b": b}
         if self._led_r_device is not None:
             self._led_r_device.value = r / 255.0

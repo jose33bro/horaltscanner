@@ -64,6 +64,7 @@ CAM_SUPPORT_DEPTH = 7.00
 CAM_SUPPORT_THICKNESS = 1.00
 CAM_SUPPORT_M3_DIAMETER = 3.20  # M3 clearance hole
 CAM_SUPPORT_M3_OFFSET_X = 8.00  # symmetric M3 holes at ±X from centre
+CAM_SUPPORT_M5_PASSAGE_DIAMETER = 5.30  # through-passage for the M5 shaft
 
 # Petal-style ball retention ring on the support plate.
 PETAL_INNER_RADIUS = 3.25   # ≈ ball radius → snug fit once seated
@@ -72,6 +73,9 @@ PETAL_HEIGHT = 4.00          # petals extend 4 mm above plate surface
 PETAL_SLIT_WIDTH = 0.80      # gap between petals (allows flex in PLA)
 # Entry chamfer: bore widens outward at the top so the ball can be pressed in.
 PETAL_ENTRY_CHAMFER = 0.50   # how much the bore radius increases at the rim
+# How deep the hemispherical socket pocket cuts into the top of the plate;
+# the remaining membrane below is removed separately by the M5 passage bore.
+BALL_SOCKET_CAP_DEPTH = 0.75
 
 
 
@@ -309,9 +313,15 @@ def make_ball_screw() -> TopoDS_Shape:
     )
     thread_solid = thread_profile.sweep(helix, multisection=False, isFrenet=True)
 
-    # Fuse core + thread ridge, then add ball at tip
+    # Fuse core + thread ridge, then add ball at tip.
+    # The ball is recessed by (BALL_DIAMETER - BALL_SCREW_SHAFT_DIAMETER) / 2 so
+    # that its outer surface aligns with the Ø5 mm shaft instead of bulging
+    # past it — this keeps the ball within the M5 envelope so it can still
+    # slide through a Ø5.3 mm clearance passage.
     shaft = core.union(thread_solid)
-    ball = cq.Workplane("XY").workplane(offset=BALL_SCREW_LENGTH).sphere(BALL_DIAMETER / 2)
+    ball_recess = (BALL_DIAMETER - BALL_SCREW_SHAFT_DIAMETER) / 2
+    ball_center_z = BALL_SCREW_LENGTH - ball_recess
+    ball = cq.Workplane("XY").workplane(offset=ball_center_z).sphere(BALL_DIAMETER / 2)
     result = shaft.union(ball)
     # CadQuery's union may return a Compound; collect all solid handles and
     # return the last one, which is the fully-fused result that passes
@@ -333,24 +343,46 @@ def make_camera_support_plate() -> TopoDS_Shape:
 
     Contains:
     - a centred Ø6.9 mm ball socket pocket (shallow hemisphere) in the plate.
+    - a central Ø5.3 mm through-passage so the M5 shaft can slide freely
+      through the plate while the ball stays clipped above it.
     - a 4-petal snap-fit retention ring (4 mm tall, 1 mm wall, 0.8 mm slits)
       so the Ø6.5 mm ball can be pressed in and locked.  The entry bore is
       chamfered so the ball spreads the PLA petals on insertion.
     - two M3 clearance holes (Ø3.2 mm) symmetrically at ±8 mm along X.
     """
-    # Base plate
-    plate = cq.Workplane("XY").box(CAM_SUPPORT_WIDTH, CAM_SUPPORT_DEPTH, CAM_SUPPORT_THICKNESS)
+    # Base plate: bottom face at z=0, top face at z=CAM_SUPPORT_THICKNESS, so
+    # every offset below refers unambiguously to "distance above the plate".
+    plate = (
+        cq.Workplane("XY")
+        .box(CAM_SUPPORT_WIDTH, CAM_SUPPORT_DEPTH, CAM_SUPPORT_THICKNESS, centered=(True, True, False))
+    )
 
-    # Ball-socket pocket: hemisphere centred on the top face of the plate.
-    # The socket centre sits at z = CAM_SUPPORT_THICKNESS + BALL_DIAMETER/2 so
-    # that only the lower cap (≈ 0.75 mm) is subtracted from the 1 mm plate.
-    socket_center_z = CAM_SUPPORT_THICKNESS + BALL_DIAMETER / 2
+    # Ball-socket pocket: hemisphere whose centre sits above the top face so
+    # only its lower cap intersects the plate. The cap depth is chosen so a
+    # thin membrane remains at the bottom of the plate (punched through
+    # separately by the M5 passage bore below), letting the ball nest into a
+    # snug Ø6.9 mm pocket without falling all the way through.
+    socket_radius = BALL_SOCKET_DIAMETER / 2
+    socket_center_z = CAM_SUPPORT_THICKNESS + (socket_radius - BALL_SOCKET_CAP_DEPTH)
     socket = (
         cq.Workplane("XY")
         .workplane(offset=socket_center_z)
-        .sphere(BALL_SOCKET_DIAMETER / 2)
+        .sphere(socket_radius)
     )
     plate = plate.cut(socket)
+
+    # Central through-passage for the M5 shaft: the hemispherical socket above
+    # only removes material down to the top of the plate, leaving a membrane
+    # over the plate thickness.  A separate Ø5.3 mm bore punches all the way
+    # through so the M5 shaft (Ø5 mm) can slide freely while the ball is
+    # retained by the socket + petal ring above it.
+    m5_passage = (
+        cq.Workplane("XY")
+        .circle(CAM_SUPPORT_M5_PASSAGE_DIAMETER / 2)
+        .extrude(CAM_SUPPORT_THICKNESS + 2.0)
+        .translate((0, 0, -(CAM_SUPPORT_THICKNESS + 1.0)))
+    )
+    plate = plate.cut(m5_passage)
 
     # Petal ring: hollow cylinder with 4 axial slits for snap-fit retention.
     petal_outer_r = PETAL_INNER_RADIUS + PETAL_WALL

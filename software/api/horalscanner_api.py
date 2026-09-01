@@ -124,9 +124,15 @@ def _initialize_driver(driver: Any, name: str) -> None:
 
     try:
         if not driver.connect():
-            logger.warning("%s connection failed", name)
+            last_error = getattr(driver, "last_error", None)
+            if last_error is not None:
+                logger.warning(
+                    "%s connection failed: %s", name, last_error, exc_info=last_error
+                )
+            else:
+                logger.warning("%s connection failed", name)
     except Exception as exc:  # pragma: no cover - hardware dependent
-        logger.warning("%s connection error: %s", name, exc)
+        logger.warning("%s connection error: %s", name, exc, exc_info=exc)
 
 
 def _load_gpiozero_factories() -> tuple[Callable | None, Callable | None]:

@@ -457,6 +457,34 @@ class HoralScannerAPITests(unittest.TestCase):
             pwm_device_factory=fake_pwm_factory,
         )
 
+    def test_initialize_driver_logs_last_error_on_connection_failure(self):
+        class FakeDriver:
+            last_error = RuntimeError("GPIO busy")
+
+            def connect(self):
+                return False
+
+        with self.assertLogs(self.api_module.logger, level="WARNING") as cm:
+            self.api_module._initialize_driver(FakeDriver(), "GPIODriver")
+
+        self.assertTrue(
+            any("GPIO busy" in message for message in cm.output),
+            cm.output,
+        )
+
+    def test_initialize_driver_logs_generic_message_without_last_error(self):
+        class FakeDriver:
+            def connect(self):
+                return False
+
+        with self.assertLogs(self.api_module.logger, level="WARNING") as cm:
+            self.api_module._initialize_driver(FakeDriver(), "GPIODriver")
+
+        self.assertTrue(
+            any("GPIODriver connection failed" in message for message in cm.output),
+            cm.output,
+        )
+
     def test_horalscanner_api_supports_direct_script_import(self):
         api_path = (
             Path(__file__).resolve().parents[1]

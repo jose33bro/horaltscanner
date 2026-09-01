@@ -54,6 +54,9 @@ class HoralScannerAPITests(unittest.TestCase):
             def get_fan_status(self):
                 return dict(self.fan_status)
 
+            def status(self):
+                return {"simulation": True, "hardware_available": True}
+
         class FakeSTM32:
             def __init__(self):
                 self.calls = []
@@ -409,6 +412,12 @@ class HoralScannerAPITests(unittest.TestCase):
         response = self.client.get("/api/status")
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["status"]["gpio_driver"])
+
+    def test_api_status_reports_unknown_gpio_driver_as_unready(self):
+        self.api_module.gpio_driver = object()
+        response = self.client.get("/api/status")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()["status"]["gpio_driver"])
 
     def test_api_status_no_stm32_driver(self):
         self.api_module.stm32_driver = None

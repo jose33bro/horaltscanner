@@ -40,7 +40,7 @@ pip install flask gpiozero pyserial
 
 ```bash
 cd software
-python -m api.app
+python -m api.horalscanner_api
 ```
 
 Open `http://<raspberry-pi-ip>:5000` in a browser — you should see the dashboard.
@@ -60,7 +60,7 @@ After=network.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/horaltscanner/software
-ExecStart=/home/pi/horaltscanner_env/bin/python -m api.app
+ExecStart=/home/pi/horaltscanner_env/bin/python -m api.horalscanner_api
 Restart=always
 RestartSec=10
 StandardOutput=journal

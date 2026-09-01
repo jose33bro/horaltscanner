@@ -118,6 +118,18 @@ class GPIODriverTests(unittest.TestCase):
 
         self.assertFalse(driver.connect())
         self.assertFalse(driver.set_fan_speed(1.0))
+        self.assertIsInstance(driver.last_error, RuntimeError)
+        self.assertEqual(str(driver.last_error), "GPIO busy")
+
+    def test_last_error_is_none_after_successful_connect(self):
+        driver = GPIODriver(
+            simulation=False,
+            hardware_config={"fans": {"pi_fan": {"gpio": 23}}},
+            output_device_factory=Mock(return_value=Mock()),
+        )
+
+        self.assertTrue(driver.connect())
+        self.assertIsNone(driver.last_error)
 
     def test_real_laser_and_led_reject_commands_when_gpio_is_unavailable(self):
         driver = GPIODriver(

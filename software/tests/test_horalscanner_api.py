@@ -57,13 +57,8 @@ class HoralScannerAPITests(unittest.TestCase):
             def get_fan_status(self):
                 return dict(self.fan_status)
 
-<<<<<<< HEAD
             def read_cpu_temperature(self):
                 return 47.25
-=======
-            def status(self):
-                return {"simulation": True, "hardware_available": True}
->>>>>>> origin/main
 
         class FakeSTM32:
             def __init__(self):

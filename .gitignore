@@ -16,3 +16,6 @@ config/scan_poses.json
 
 venv/
 .venv/
+
+venv/
+.venv/

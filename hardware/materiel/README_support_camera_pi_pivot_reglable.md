@@ -62,6 +62,9 @@ Ce document décrit les pièces STL, les cotes fonctionnelles, l’assemblage et
 - Trop serré : compensation XY à **-0.06 mm**
 - Trop lâche : remonter à **-0.02 mm** ou **0.00 mm**
 
+Profil complet (start/end G-code Klipper, réglages support détaillés) :
+[`PRINT_PROFILE_klipper_creality_hyper_pla.txt`](./PRINT_PROFILE_klipper_creality_hyper_pla.txt).
+
 ## Orientation / supports
 
 ### `pi_camera_tilt_base.stl`

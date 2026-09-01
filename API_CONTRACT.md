@@ -50,7 +50,7 @@ accepted and return `400 Invalid fan speed value` (missing/out-of-range key).
 
 Each channel is an integer `0..255`.
 
-`GET /api/led/status` returns the current `{"r", "g", "b"}` values.
+`GET /api/led/status` returns the current `{"r": 0, "g": 0, "b": 0}` values.
 
 ## USB Camera
 

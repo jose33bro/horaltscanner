@@ -24,7 +24,9 @@ l'avant. Deux oreilles arrondies en haut reçoivent l'axe M3 de la caméra.
 - vis de réglage inférieure: M5 à bout sphérique, longueur utile 40 mm,
   boule Ø 6,5 mm au bout (filetage M5 hélicoïdal réel imprimable, pas 0,8 mm);
 - logement de la boule côté support caméra: Ø 6,9 mm (hémisphère centré sur la plaque)
-  avec anneau de rétention à 4 pétales (hauteur 4 mm, paroi 1 mm, fente 0,8 mm);
+  avec anneau de rétention à 4 pétales (hauteur 4 mm, paroi 1 mm, fente 0,8 mm) et un
+  passage central Ø 5,30 mm débouchant pour laisser coulisser la tige M5 sans la
+  bloquer;
 - deux trous M3 symétriques (Ø 3,2 mm) à ±8 mm du centre sur la plaque support;
 - fenêtre CSI centrée dans la tablette horizontale: 18,00 × 9,56 mm.
 
@@ -38,7 +40,10 @@ Le trou de réglage a été remonté de 5 mm par rapport au placement précéden
 La nappe CSI traverse la fenêtre centrée dans la tablette horizontale.
 La boule de bout est reçue dans le logement Ø 6,9 mm centré sur la plaque support
 (28,05 × 7 × 1 mm); un **anneau de rétention à 4 pétales** (hauteur 4 mm, paroi 1 mm,
-fentes de 0,8 mm, chanfrein d'entrée 0,5 mm) enclenche la boule par snap-fit.
+fentes de 0,8 mm, chanfrein d'entrée 0,5 mm) enclenche la boule par snap-fit sans que
+celle-ci ne dépasse le diamètre M5 (la boule est légèrement en retrait du bout de la
+tige). Un passage central Ø 5,30 mm traverse toute l'épaisseur de la plaque pour que
+la tige M5 (Ø 5,00 mm) coulisse librement à travers l'anneau et le logement.
 Deux trous M3 (Ø 3,2 mm) à ±8 mm du centre permettent la fixation du support caméra.
 Toutes les pièces sont compatibles PLA Creality Hyper Series.
 
@@ -50,8 +55,8 @@ Toutes les pièces sont compatibles PLA Creality Hyper Series.
 - `stl/ball_screw_M5x40_ball6.5.stl`: vis M5 × 40 mm à bout sphérique Ø 6,5 mm
   avec filetage M5 hélicoïdal imprimable (pas 0,8 mm);
 - `stl/camera_support_plate_28.05x7x1.stl`: plaque support caméra 28,05 × 7 × 1 mm
-  avec logement boule Ø 6,9 mm centré, anneau de rétention 4 pétales (H=4 mm) et
-  deux trous M3 à ±8 mm du centre;
+  avec logement boule Ø 6,9 mm centré, anneau de rétention 4 pétales (H=4 mm),
+  passage central Ø 5,30 mm pour la tige M5 et deux trous M3 à ±8 mm du centre;
 - `generate.py`: source paramétrique Python/OpenCascade.
 
 ## Visserie

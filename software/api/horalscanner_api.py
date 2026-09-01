@@ -6,16 +6,19 @@ import logging
 import sys
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 # Add repo root to path so 'software' module can be imported
 _API_DIR = Path(__file__).resolve().parent
+_SOFTWARE_DIR = _API_DIR.parent
 _REPO_ROOT = _API_DIR.parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_SOFTWARE_DIR))
 
 # Modern Flask imports
 from flask import (
     Blueprint,
+    Flask,
     Response,
     jsonify,
     request,
@@ -27,7 +30,10 @@ from flask import (
 api_bp = Blueprint("api", __name__)
 
 # Modern API imports
-from . import config_manager
+try:
+    from . import config_manager
+except ImportError:  # pragma: no cover - used when launched as a script
+    from software.api import config_manager
 from software.api.camera_calibration import (
     get_all_saved_poses,
     get_calibration_pose,
@@ -123,6 +129,45 @@ def _initialize_driver(driver: Any, name: str) -> None:
         logger.warning("%s connection error: %s", name, exc)
 
 
+def _load_gpiozero_factories() -> tuple[Callable | None, Callable | None]:
+    try:
+        from gpiozero import OutputDevice, PWMOutputDevice
+    except Exception as exc:  # pragma: no cover - environment dependent
+        logger.warning("gpiozero import failed: %s", exc)
+        return None, None
+
+    def output_device_factory(pin, active_high=True, initial_value=False):
+        return OutputDevice(
+            pin,
+            active_high=active_high,
+            initial_value=bool(initial_value),
+        )
+
+    def pwm_device_factory(pin, active_high=True, initial_value=False):
+        return PWMOutputDevice(
+            pin,
+            active_high=active_high,
+            initial_value=1.0 if initial_value else 0.0,
+        )
+
+    return output_device_factory, pwm_device_factory
+
+
+def _create_gpio_driver(enabled: bool, config: dict) -> Any:
+    if GPIODriver is None:
+        return None
+    output_factory = None
+    pwm_factory = None
+    if enabled:
+        output_factory, pwm_factory = _load_gpiozero_factories()
+    return GPIODriver(
+        simulation=not enabled,
+        hardware_config=config,
+        output_device_factory=output_factory,
+        pwm_device_factory=pwm_factory,
+    )
+
+
 hardware_config = config_manager.load_hardware_config()
 application_config = config_manager.load()
 pi_gpio_enabled = bool(hardware_config.get("hardware", {}).get("pi_gpio", False))
@@ -137,9 +182,7 @@ stm32_driver = (
     else None
 )
 gpio_driver = (
-    GPIODriver(simulation=not pi_gpio_enabled, hardware_config=hardware_config)
-    if GPIODriver
-    else None
+    _create_gpio_driver(pi_gpio_enabled, hardware_config)
 )
 lidar_driver = LidarDriver(
     port=serial_config.get("lidar_port", "/dev/ttyUSB0"),
@@ -173,6 +216,29 @@ def _ensure_lidar_connected() -> bool:
     return lidar_driver.connected or lidar_driver.connect()
 
 
+def _gpio_driver_ready() -> bool:
+    if gpio_driver is None:
+        return False
+    simulation = getattr(gpio_driver, "simulation", None)
+    hardware_available = getattr(gpio_driver, "hardware_available", None)
+    if simulation is not None and hardware_available is not None:
+        return bool(simulation or hardware_available)
+    status_fn = getattr(gpio_driver, "status", None)
+    if callable(status_fn):
+        try:
+            status = status_fn()
+            return bool(status.get("simulation") or status.get("hardware_available"))
+        except Exception:
+            return False
+    return False
+
+
+def _stm32_driver_ready() -> bool:
+    if stm32_driver is None:
+        return False
+    return bool(getattr(stm32_driver, "connected", False))
+
+
 def _json_error(
     message: str,
     status_code: int = 400,
@@ -194,12 +260,13 @@ def _runtime_capabilities() -> dict[str, Any]:
         "usb": bool(usb_camera and (usb_camera.is_open or usb_camera.open())),
     }
     simulation_mode = bool(getattr(scan_session, "_simulation", False))
-    acquisition_backend_ready = bool(
-        simulation_mode or stm32_driver is not None or gpio_driver is not None
-    )
+    gpio_ready = _gpio_driver_ready()
+    stm32_ready = _stm32_driver_ready()
+    acquisition_backend_ready = bool(simulation_mode or stm32_ready or gpio_ready)
     return {
         "camera_available": camera_status,
-        "gpio_available": gpio_driver is not None,
+        "gpio_available": gpio_ready,
+        "stm32_connected": stm32_ready,
         "open3d_available": bool(_O3D_AVAILABLE),
         "acquisition_backend_ready": acquisition_backend_ready,
         "simulation_mode": simulation_mode,
@@ -1071,22 +1138,14 @@ def camera_scan_pose_goto():
 
 @api_bp.route("/api/status", methods=["GET"])
 def api_status():
-    gpio_ready = bool(
-        gpio_driver is not None
-        and (
-            getattr(gpio_driver, "simulation", True)
-            or getattr(gpio_driver, "hardware_available", False)
-        )
-    )
-    stm32_ready = bool(
-        stm32_driver is not None
-        and getattr(stm32_driver, "connected", True)
-    )
+    gpio_ready = _gpio_driver_ready()
+    stm32_ready = _stm32_driver_ready()
     capabilities = _runtime_capabilities()
     status_payload = {
         "api": "ok",
         "gpio_driver": gpio_ready,
         "stm32_driver": stm32_ready,
+        "stm32_connected": stm32_ready,
         "version": _VERSION,
         "simulation_mode": capabilities["simulation_mode"],
     }
@@ -1107,6 +1166,26 @@ def api_capabilities():
 def health():
     return jsonify({"status": "ok"}), 200
 
+
+def _create_standalone_app() -> Flask:
+    app = Flask(__name__)
+    try:
+        from software.api.middleware.errors import register_error_handlers
+
+        register_error_handlers(app)
+    except Exception as exc:  # pragma: no cover - startup best effort
+        logger.warning("Error middleware unavailable: %s", exc)
+    app.register_blueprint(api_bp)
+    try:
+        from software.api.blueprints.scan import scan_bp
+
+        app.register_blueprint(scan_bp)
+    except Exception as exc:  # pragma: no cover - startup best effort
+        logger.warning("Scan blueprint unavailable: %s", exc)
+    return app
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    app = _create_standalone_app()
     app.run(host="0.0.0.0", port=5000, debug=False)

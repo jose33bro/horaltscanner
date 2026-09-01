@@ -116,11 +116,13 @@ class STM32Driver:
             self._port.reset_input_buffer()
             self._connected = True
             return True
-        except Exception as exc:
-            self._last_error = exc
+        except Exception:
             self._port = None
-            self._connected = False
             return False
+
+    @property
+    def connected(self) -> bool:
+        return self._simulation or self._port is not None
 
     # ------------------------------------------------------------------
     # Internal helpers (can be monkey-patched in tests)

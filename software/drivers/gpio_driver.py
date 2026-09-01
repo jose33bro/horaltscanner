@@ -135,6 +135,14 @@ class GPIODriver:
             self._hardware_available = False
             return False
 
+    @property
+    def simulation(self) -> bool:
+        return self._simulation
+
+    @property
+    def hardware_available(self) -> bool:
+        return self._hardware_available
+
     def close(self) -> None:
         if self._fan_device is not None:
             try:

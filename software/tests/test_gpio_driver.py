@@ -33,6 +33,8 @@ class GPIODriverTests(unittest.TestCase):
     def test_connect_returns_true(self):
         driver = GPIODriver(simulation=True)
         self.assertTrue(driver.connect())
+        self.assertTrue(driver.simulation)
+        self.assertTrue(driver.hardware_available)
 
     def test_connect_initializes_pi_fan_from_hardware_config(self):
         fan_device = Mock()

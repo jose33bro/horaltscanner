@@ -191,6 +191,20 @@ def _json_error(
     return jsonify(payload), status_code
 
 
+def _gpio_ready() -> bool:
+    return bool(
+        gpio_driver is not None
+        and (
+            getattr(gpio_driver, "simulation", False)
+            or getattr(gpio_driver, "hardware_available", False)
+        )
+    )
+
+
+def _stm32_ready() -> bool:
+    return bool(stm32_driver is not None and getattr(stm32_driver, "connected", False))
+
+
 def _runtime_capabilities() -> dict[str, Any]:
     camera_status = {
         "pi": bool(pi_camera and (pi_camera.is_open or pi_camera.open())),
@@ -198,11 +212,11 @@ def _runtime_capabilities() -> dict[str, Any]:
     }
     simulation_mode = bool(getattr(scan_session, "_simulation", False))
     acquisition_backend_ready = bool(
-        simulation_mode or stm32_driver is not None or gpio_driver is not None
+        simulation_mode or _stm32_ready() or _gpio_ready()
     )
     return {
         "camera_available": camera_status,
-        "gpio_available": gpio_driver is not None,
+        "gpio_available": _gpio_ready(),
         "open3d_available": bool(_O3D_AVAILABLE),
         "acquisition_backend_ready": acquisition_backend_ready,
         "simulation_mode": simulation_mode,
@@ -1074,17 +1088,8 @@ def camera_scan_pose_goto():
 
 @api_bp.route("/api/status", methods=["GET"])
 def api_status():
-    gpio_ready = bool(
-        gpio_driver is not None
-        and (
-            getattr(gpio_driver, "simulation", True)
-            or getattr(gpio_driver, "hardware_available", False)
-        )
-    )
-    stm32_ready = bool(
-        stm32_driver is not None
-        and getattr(stm32_driver, "connected", False)
-    )
+    gpio_ready = _gpio_ready()
+    stm32_ready = _stm32_ready()
     capabilities = _runtime_capabilities()
     status_payload = {
         "api": "ok",

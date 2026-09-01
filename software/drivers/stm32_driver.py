@@ -101,6 +101,7 @@ class STM32Driver:
             self._port.reset_input_buffer()
             return True
         except Exception:
+            self._port = None
             return False
 
     @property

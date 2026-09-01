@@ -22,6 +22,9 @@ class HoralScannerAPITests(unittest.TestCase):
                 self.led_status = {"r": 0, "g": 0, "b": 0}
                 self.fan_status = {"speed": 0.0}
 
+            simulation = True
+            hardware_available = True
+
             def laser_on(self, side):
                 self.calls.append(("laser_on", side))
                 self.laser_status[side] = True

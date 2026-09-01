@@ -51,6 +51,9 @@ class HoralScannerAPITests(unittest.TestCase):
             def get_fan_status(self):
                 return dict(self.fan_status)
 
+            def read_cpu_temperature(self):
+                return 47.25
+
         class FakeSTM32:
             def __init__(self):
                 self.calls = []
@@ -166,6 +169,8 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertEqual(all_response.status_code, 200)
         self.assertEqual(board_response.get_json()["status"]["board_c"], 32.5)
         self.assertEqual(all_response.get_json()["status"]["sensor_pin"], "PC5")
+        self.assertEqual(all_response.get_json()["status"]["board_c"], 32.5)
+        self.assertEqual(all_response.get_json()["status"]["pi_cpu_c"], 47.25)
         self.assertIn(("read_board_temperature",), self.fake_stm32.calls)
 
     def test_invalid_fan_speed_returns_400(self):
@@ -184,10 +189,11 @@ class HoralScannerAPITests(unittest.TestCase):
         response = self.client.post("/api/fan/pi", json={"speed": 0.5})
         self.assertEqual(response.status_code, 502)
 
-    def test_temperature_all_returns_502_when_sensor_unavailable(self):
+    def test_temperature_all_reports_unavailable_board_sensor(self):
         self.fake_stm32.read_board_temperature = lambda: None
         response = self.client.get("/api/temperature/all")
-        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.get_json()["status"]["board_c"])
 
     def test_api_status_returns_health(self):
         response = self.client.get("/api/status")

@@ -56,6 +56,15 @@ class GPIODriverTests(unittest.TestCase):
         self.assertTrue(driver.status()["hardware_available"])
         self.assertEqual(driver.get_fan_status()["speed"], 0.0)
 
+    def test_read_cpu_temperature_uses_injected_reader(self):
+        driver = GPIODriver(
+            simulation=True,
+            cpu_temperature_reader=lambda: 48.75,
+        )
+
+        self.assertEqual(driver.read_cpu_temperature(), 48.75)
+        self.assertEqual(driver.get_fan_status()["cpu_temperature_c"], 48.75)
+
         self.assertTrue(driver.set_fan_speed(0.4))
         fan_device.on.assert_called_once_with()
         self.assertEqual(driver.get_fan_status()["speed"], 1.0)

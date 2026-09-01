@@ -459,18 +459,18 @@ def temperature_board():
 
 @api_bp.route("/api/temperature/all", methods=["GET"])
 def temperature_all():
-    if stm32_driver is None:
-        return _json_error("STM32 driver unavailable", 503)
+    if stm32_driver is None and gpio_driver is None:
+        return _json_error("Temperature drivers unavailable", 503)
 
     try:
-        board_temperature = stm32_driver.read_board_temperature()
-        if board_temperature is None:
-            return _json_error("Failed to read board temperature", 502)
-        status = {
-            "board_c": board_temperature,
+        status: dict[str, Any] = {
             "sensor_pin": "PC5",
             "sensor_type": "EPCOS 100K B57560G104F",
         }
+        if stm32_driver is not None:
+            status["board_c"] = stm32_driver.read_board_temperature()
+        if gpio_driver is not None:
+            status["pi_cpu_c"] = gpio_driver.read_cpu_temperature()
         return jsonify({"success": True, "status": status})
     except Exception:
         logger.exception("All temperature route failed")

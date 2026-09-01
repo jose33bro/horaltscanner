@@ -301,6 +301,78 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["result"]["checkerboard_found"])
 
+    def test_camera_usb_status_reports_available_when_open_succeeds(self):
+        class FakeUsbCamera:
+            def __init__(self):
+                self.is_open = False
+
+            def open(self):
+                self.is_open = True
+                return True
+
+        original_camera = self.api_module.usb_camera
+        self.addCleanup(setattr, self.api_module, "usb_camera", original_camera)
+        self.api_module.usb_camera = FakeUsbCamera()
+
+        response = self.client.get("/api/camera/usb/status")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertTrue(body["success"])
+        self.assertTrue(body["available"])
+
+    def test_camera_usb_status_reports_unavailable_when_open_fails(self):
+        class FakeUsbCamera:
+            is_open = False
+
+            def open(self):
+                return False
+
+        original_camera = self.api_module.usb_camera
+        self.addCleanup(setattr, self.api_module, "usb_camera", original_camera)
+        self.api_module.usb_camera = FakeUsbCamera()
+
+        response = self.client.get("/api/camera/usb/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()["available"])
+
+    def test_camera_usb_frame_returns_200_when_fallback_opened_stream_works(self):
+        class FakeUsbCamera:
+            def __init__(self):
+                self.is_open = False
+
+            def open(self):
+                self.is_open = True
+                return True
+
+            def capture_jpeg(self):
+                return b"jpeg-bytes"
+
+        original_camera = self.api_module.usb_camera
+        self.addCleanup(setattr, self.api_module, "usb_camera", original_camera)
+        self.api_module.usb_camera = FakeUsbCamera()
+
+        response = self.client.get("/api/camera/usb/frame")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b"jpeg-bytes")
+
+    def test_camera_usb_frame_returns_503_when_camera_unavailable(self):
+        class FakeUsbCamera:
+            is_open = False
+
+            def open(self):
+                return False
+
+        original_camera = self.api_module.usb_camera
+        self.addCleanup(setattr, self.api_module, "usb_camera", original_camera)
+        self.api_module.usb_camera = FakeUsbCamera()
+
+        response = self.client.get("/api/camera/usb/frame")
+
+        self.assertEqual(response.status_code, 503)
+
     def test_scan_control_routes_share_session_status(self):
         original = self.api_module.scan_session
         self.api_module.scan_session = self.api_module.ScanSession(simulation=True)

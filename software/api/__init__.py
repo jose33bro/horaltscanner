@@ -16,7 +16,9 @@ def create_app() -> Flask:
     register_error_handlers(app)
 
     # Blueprints
+    from api.horalscanner_api import api_bp
     from api.blueprints.scan import scan_bp
+    app.register_blueprint(api_bp)
     app.register_blueprint(scan_bp)
 
     return app

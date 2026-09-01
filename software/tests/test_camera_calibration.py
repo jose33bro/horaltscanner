@@ -154,8 +154,11 @@ class CameraCalibrationAPITests(unittest.TestCase):
     """Integration tests for the calibration pose API endpoints."""
 
     def setUp(self):
-        self.api_module = importlib.import_module("software.api.horalscanner_api")
+        from api import create_app
+
+        self.api_module = importlib.import_module("api.horalscanner_api")
         self.calib_module = importlib.import_module("software.api.camera_calibration")
+        self.app = create_app()
 
         class FakeSTM32:
             def __init__(self):
@@ -182,7 +185,7 @@ class CameraCalibrationAPITests(unittest.TestCase):
         self.api_module.lidar_driver = FakeLidar()
         self.addCleanup(setattr, self.api_module, "lidar_driver", self.original_lidar)
 
-        self.client = self.api_module.app.test_client()
+        self.client = self.app.test_client()
 
     # ------------------------------------------------------------------
 

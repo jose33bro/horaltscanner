@@ -150,7 +150,10 @@ class TestCalibrationPoseAPIEndpoints(unittest.TestCase):
     """Integration tests for the calibration pose API endpoints."""
 
     def setUp(self):
-        self.api_module = importlib.import_module("software.api.horalscanner_api")
+        from api import create_app
+
+        self.api_module = importlib.import_module("api.horalscanner_api")
+        self.app = create_app()
 
         class FakeSTM32:
             def __init__(self):
@@ -191,7 +194,7 @@ class TestCalibrationPoseAPIEndpoints(unittest.TestCase):
         self.api_module.pose_memory = PoseMemory(path=self.tmp.name)
         self.original_lidar_driver = self.api_module.lidar_driver
 
-        self.client = self.api_module.app.test_client()
+        self.client = self.app.test_client()
 
     def tearDown(self):
         self.api_module.lidar_driver = self.original_lidar_driver

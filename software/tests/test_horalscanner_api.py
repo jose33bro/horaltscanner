@@ -10,7 +10,10 @@ except Exception:  # pragma: no cover
 @unittest.skipIf(Flask is None, "Flask is required for API tests")
 class HoralScannerAPITests(unittest.TestCase):
     def setUp(self):
-        self.api_module = importlib.import_module("software.api.horalscanner_api")
+        from api import create_app
+
+        self.api_module = importlib.import_module("api.horalscanner_api")
+        self.app = create_app()
 
         class FakeGPIO:
             def __init__(self):
@@ -92,7 +95,7 @@ class HoralScannerAPITests(unittest.TestCase):
         self.api_module.gpio_driver = self.fake_gpio
         self.api_module.stm32_driver = self.fake_stm32
 
-        self.client = self.api_module.app.test_client()
+        self.client = self.app.test_client()
 
     def test_laser_route_uses_gpio_driver(self):
         response = self.client.post("/api/laser/left", json={"state": True})
@@ -195,6 +198,13 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertTrue(data["status"]["gpio_driver"])
         self.assertTrue(data["status"]["stm32_driver"])
         self.assertIn("version", data["status"])
+
+    def test_health_endpoints_return_ok(self):
+        for route in ("/health", "/api/health"):
+            with self.subTest(route=route):
+                response = self.client.get(route)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json(), {"status": "ok"})
 
     def test_laser_status_route(self):
         self.fake_gpio.laser_status = {"left": True, "right": False}

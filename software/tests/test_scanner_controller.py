@@ -1,39 +1,106 @@
 import unittest
 
-from software.app.pi_hardware import LaserController, SensorRig
-from software.app.scanner_controller import ScanController
-from software.app.usb_driver import CrealityUsbDriver
-from software.tests.helpers import FakeTransport
+from firmware.raspberry_pi.gpio_laser_control import LaserController
+from firmware.raspberry_pi.motor_control import MotorController
+from firmware.raspberry_pi.scanner_app import ScannerApp
+from firmware.raspberry_pi.usb_driver import ScannerStatus
 
 
-class RecordingLaser(LaserController):
+class FakeDriver:
     def __init__(self):
-        super().__init__(left_gpio_pin=17, right_gpio_pin=27)
         self.calls = []
+        self.pos_x = 0
+        self.pos_y = 0
+        self.pos_z = 0
 
-    def set_state(self, left_on: bool, right_on: bool) -> None:
-        self.calls.append((left_on, right_on))
+    def _status(self):
+        return ScannerStatus(status=0, error=0, pos_x=self.pos_x, pos_y=self.pos_y, pos_z=self.pos_z, endstop_mask=0)
+
+    def home_x(self):
+        self.calls.append("home_x")
+        self.pos_x = 0
+        return self._status()
+
+    def home_y(self):
+        self.calls.append("home_y")
+        self.pos_y = 0
+        return self._status()
+
+    def home_z(self):
+        self.calls.append("home_z")
+        self.pos_z = 0
+        return self._status()
+
+    def move_x(self, steps, speed=0):
+        self.calls.append(("move_x", steps, speed))
+        self.pos_x += steps
+        return self._status()
+
+    def move_y(self, steps, speed=0):
+        self.calls.append(("move_y", steps, speed))
+        self.pos_y += steps
+        return self._status()
+
+    def move_z(self, steps, speed=0):
+        self.calls.append(("move_z", steps, speed))
+        self.pos_z += steps
+        return self._status()
 
 
-class TestScanController(unittest.TestCase):
-    def test_acquire_scan_step_returns_sync_payload(self):
-        usb = CrealityUsbDriver(FakeTransport([b"OK MOVE\n", b"OK SYNC token42\n"]))
-        lasers = RecordingLaser()
-        controller = ScanController(
-            usb=usb,
-            lasers=lasers,
-            sensors=SensorRig(
-                lidar_port="/dev/ttyUSB0",
-                usb_camera_id="logitech-0",
-                dsi_camera_id="picam-v3",
-            ),
+class FakeGPIO:
+    def __init__(self):
+        self.writes = []
+
+    def setup_output(self, pin):
+        self.writes.append(("setup", pin, None))
+
+    def write(self, pin, value):
+        self.writes.append(("write", pin, value))
+
+
+class FakeSensors:
+    def __init__(self):
+        self.frames = 0
+
+    def capture(self):
+        self.frames += 1
+        return {"frame": self.frames}
+
+
+class ScannerControllerTests(unittest.TestCase):
+    def test_scan_sequence_captures_expected_frames(self):
+        driver = FakeDriver()
+        controller = MotorController(driver)
+        gpio = FakeGPIO()
+        lasers = LaserController(gpio, left_pin=17, right_pin=27)
+        sensors = FakeSensors()
+        app = ScannerApp(controller, lasers, sensors)
+
+        frames = app.run_scan(x_offsets=[10], z_offsets=[5], rotation_steps=4, step_per_rotation=90)
+
+        self.assertEqual(len(frames), 4)
+        self.assertEqual(sensors.frames, 4)
+        self.assertIn("home_x", driver.calls)
+        self.assertIn(("move_y", 90, 0), driver.calls)
+        self.assertEqual(frames[-1].point.status.pos_y, 360)
+
+    def test_scan_sequence_uses_absolute_offsets(self):
+        driver = FakeDriver()
+        controller = MotorController(driver)
+        events = []
+
+        controller.perform_scan_sequence(
+            x_offsets=[10, 20],
+            z_offsets=[5, 15],
+            rotation_steps=1,
+            step_per_rotation=90,
+            on_capture=events.append,
         )
 
-        payload = controller.acquire_scan_step(20, "token42")
-
-        self.assertEqual("OK SYNC token42", payload["sync"])
-        self.assertIn("lidar_distance_mm", payload)
-        self.assertEqual([(True, True), (False, False)], lasers.calls)
+        move_x_calls = [c for c in driver.calls if isinstance(c, tuple) and c[0] == "move_x"]
+        move_z_calls = [c for c in driver.calls if isinstance(c, tuple) and c[0] == "move_z"]
+        self.assertEqual(move_x_calls, [("move_x", 10, 0), ("move_x", 10, 0)])
+        self.assertEqual(move_z_calls, [("move_z", 5, 0), ("move_z", 10, 0), ("move_z", -10, 0), ("move_z", 10, 0)])
 
 
 if __name__ == "__main__":

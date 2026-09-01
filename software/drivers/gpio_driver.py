@@ -4,6 +4,7 @@ Supports a *simulation* mode (no hardware required) used by the test suite.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable
 
 _DEFAULT_HARDWARE_CONFIG: dict = {
@@ -43,6 +44,7 @@ class GPIODriver:
         output_device_factory: Callable | None = None,
         pwm_device_factory: Callable | None = None,
         temperature_reader: Callable | None = None,
+        cpu_temperature_reader: Callable[[], float | None] | None = None,
     ) -> None:
         cfg_in = hardware_config or {}
 
@@ -63,6 +65,7 @@ class GPIODriver:
         self._output_device_factory = output_device_factory
         self._pwm_device_factory = pwm_device_factory
         self._temperature_reader = temperature_reader
+        self._cpu_temperature_reader = cpu_temperature_reader or self._read_cpu_temperature
 
         self._pin_laser_left: int = lasers_cfg.get("left", {}).get("gpio", 17)
         self._pin_laser_right: int = lasers_cfg.get("right", {}).get("gpio", 27)
@@ -158,6 +161,14 @@ class GPIODriver:
             self._last_error = exc
             self._hardware_available = False
             return False
+
+    @property
+    def simulation(self) -> bool:
+        return self._simulation
+
+    @property
+    def hardware_available(self) -> bool:
+        return self._hardware_available
 
     def close(self) -> None:
         for device_name in (
@@ -275,6 +286,23 @@ class GPIODriver:
 
     def get_fan_status(self) -> dict:
         return {"speed": self._pi_fan_speed}
+
+    @staticmethod
+    def _read_cpu_temperature() -> float | None:
+        """Read the Raspberry Pi SoC temperature exposed by the Linux kernel."""
+        try:
+            millidegrees = int(
+                Path("/sys/class/thermal/thermal_zone0/temp").read_text().strip()
+            )
+        except (OSError, ValueError):
+            return None
+        return millidegrees / 1000.0
+
+    def read_cpu_temperature(self) -> float | None:
+        try:
+            return self._cpu_temperature_reader()
+        except (OSError, ValueError):
+            return None
 
     def update_pi_fan_auto_control(self) -> bool:
         reader = self._temperature_reader

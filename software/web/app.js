@@ -386,7 +386,7 @@ const HoralScannerUI = (() => {
     const results = await Promise.allSettled([
       api("/api/motor/status"),
       api("/api/fan/status"),
-      api("/api/temperature/board"),
+      api("/api/temperature/all"),
     ]);
     if (results[0].status === "fulfilled") updateMotorPositions(results[0].value.status);
     if (results[1].status === "fulfilled") {
@@ -403,7 +403,13 @@ const HoralScannerUI = (() => {
       });
     }
     if (results[2].status === "fulfilled") {
-      byId("temp-board").textContent = Number(results[2].value.status.board_c).toFixed(1);
+      const temperatures = results[2].value.status;
+      byId("temp-board").textContent = temperatures.board_c == null
+        ? "--"
+        : Number(temperatures.board_c).toFixed(1);
+      byId("temp-pi").textContent = temperatures.pi_cpu_c == null
+        ? "--"
+        : `${Number(temperatures.pi_cpu_c).toFixed(1)} °C`;
     }
   }
 

@@ -32,7 +32,7 @@ api_bp = Blueprint("api", __name__)
 # Modern API imports
 try:
     from . import config_manager
-except ImportError:  # pragma: no cover - used when launched as a script
+except ImportError:  # pragma: no cover - direct script execution
     from software.api import config_manager
 from software.api.camera_calibration import (
     get_all_saved_poses,
@@ -258,19 +258,32 @@ def _json_error(
     return jsonify(payload), status_code
 
 
+def _gpio_ready() -> bool:
+    return bool(
+        gpio_driver is not None
+        and (
+            getattr(gpio_driver, "simulation", False)
+            or getattr(gpio_driver, "hardware_available", False)
+        )
+    )
+
+
+def _stm32_ready() -> bool:
+    return bool(stm32_driver is not None and getattr(stm32_driver, "connected", False))
+
+
 def _runtime_capabilities() -> dict[str, Any]:
     camera_status = {
         "pi": bool(pi_camera and (pi_camera.is_open or pi_camera.open())),
         "usb": bool(usb_camera and (usb_camera.is_open or usb_camera.open())),
     }
     simulation_mode = bool(getattr(scan_session, "_simulation", False))
-    gpio_ready = _gpio_driver_ready()
-    stm32_ready = _stm32_driver_ready()
-    acquisition_backend_ready = bool(simulation_mode or stm32_ready or gpio_ready)
+    acquisition_backend_ready = bool(
+        simulation_mode or _stm32_ready() or _gpio_ready()
+    )
     return {
         "camera_available": camera_status,
-        "gpio_available": gpio_ready,
-        "stm32_connected": stm32_ready,
+        "gpio_available": _gpio_ready(),
         "open3d_available": bool(_O3D_AVAILABLE),
         "acquisition_backend_ready": acquisition_backend_ready,
         "simulation_mode": simulation_mode,
@@ -530,18 +543,18 @@ def temperature_board():
 
 @api_bp.route("/api/temperature/all", methods=["GET"])
 def temperature_all():
-    if stm32_driver is None:
-        return _json_error("STM32 driver unavailable", 503)
+    if stm32_driver is None and gpio_driver is None:
+        return _json_error("Temperature drivers unavailable", 503)
 
     try:
-        board_temperature = stm32_driver.read_board_temperature()
-        if board_temperature is None:
-            return _json_error("Failed to read board temperature", 502)
-        status = {
-            "board_c": board_temperature,
+        status: dict[str, Any] = {
             "sensor_pin": "PC5",
             "sensor_type": "EPCOS 100K B57560G104F",
         }
+        if stm32_driver is not None:
+            status["board_c"] = stm32_driver.read_board_temperature()
+        if gpio_driver is not None:
+            status["pi_cpu_c"] = gpio_driver.read_cpu_temperature()
         return jsonify({"success": True, "status": status})
     except Exception:
         logger.exception("All temperature route failed")
@@ -1142,8 +1155,8 @@ def camera_scan_pose_goto():
 
 @api_bp.route("/api/status", methods=["GET"])
 def api_status():
-    gpio_ready = _gpio_driver_ready()
-    stm32_ready = _stm32_driver_ready()
+    gpio_ready = _gpio_ready()
+    stm32_ready = _stm32_ready()
     capabilities = _runtime_capabilities()
     status_payload = {
         "api": "ok",
@@ -1191,5 +1204,8 @@ def _create_standalone_app() -> Flask:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    app = _create_standalone_app()
+    from flask import Flask
+
+    app = Flask(__name__)
+    app.register_blueprint(api_bp)
     app.run(host="0.0.0.0", port=5000, debug=False)

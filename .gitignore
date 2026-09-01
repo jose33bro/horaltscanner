@@ -15,3 +15,6 @@ firmware/creality_v422/build/
 config/scan_poses.json
 venv/
 venv/
+
+venv/
+.venv/

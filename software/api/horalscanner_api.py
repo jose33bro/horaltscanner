@@ -32,11 +32,7 @@ api_bp = Blueprint("api", __name__)
 # Modern API imports
 try:
     from . import config_manager
-<<<<<<< HEAD
 except ImportError:  # pragma: no cover - direct script execution
-=======
-except ImportError:  # pragma: no cover - used when launched as a script
->>>>>>> origin/main
     from software.api import config_manager
 from software.api.camera_calibration import (
     get_all_saved_poses,
@@ -282,22 +278,12 @@ def _runtime_capabilities() -> dict[str, Any]:
         "usb": bool(usb_camera and (usb_camera.is_open or usb_camera.open())),
     }
     simulation_mode = bool(getattr(scan_session, "_simulation", False))
-<<<<<<< HEAD
     acquisition_backend_ready = bool(
         simulation_mode or _stm32_ready() or _gpio_ready()
     )
     return {
         "camera_available": camera_status,
         "gpio_available": _gpio_ready(),
-=======
-    gpio_ready = _gpio_driver_ready()
-    stm32_ready = _stm32_driver_ready()
-    acquisition_backend_ready = bool(simulation_mode or stm32_ready or gpio_ready)
-    return {
-        "camera_available": camera_status,
-        "gpio_available": gpio_ready,
-        "stm32_connected": stm32_ready,
->>>>>>> origin/main
         "open3d_available": bool(_O3D_AVAILABLE),
         "acquisition_backend_ready": acquisition_backend_ready,
         "simulation_mode": simulation_mode,
@@ -1169,13 +1155,8 @@ def camera_scan_pose_goto():
 
 @api_bp.route("/api/status", methods=["GET"])
 def api_status():
-<<<<<<< HEAD
     gpio_ready = _gpio_ready()
     stm32_ready = _stm32_ready()
-=======
-    gpio_ready = _gpio_driver_ready()
-    stm32_ready = _stm32_driver_ready()
->>>>>>> origin/main
     capabilities = _runtime_capabilities()
     status_payload = {
         "api": "ok",
@@ -1223,12 +1204,8 @@ def _create_standalone_app() -> Flask:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-<<<<<<< HEAD
     from flask import Flask
 
     app = Flask(__name__)
     app.register_blueprint(api_bp)
-=======
-    app = _create_standalone_app()
->>>>>>> origin/main
     app.run(host="0.0.0.0", port=5000, debug=False)

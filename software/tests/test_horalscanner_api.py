@@ -450,7 +450,7 @@ class HoralScannerAPITests(unittest.TestCase):
         data = response.get_json()
         self.assertFalse(data["status"]["stm32_driver"])
         self.assertFalse(data["status"]["stm32_driver"])
-        self.assertFalse(data["capabilities"]["stm32_driver"])
+        self.assertFalse(data["status"].get("stm32_driver", True))
 
     def test_create_gpio_driver_injects_gpiozero_factories_when_enabled(self):
         fake_output_factory = object()

@@ -230,7 +230,7 @@ def _gpio_driver_ready() -> bool:
             return bool(status.get("simulation") or status.get("hardware_available"))
         except Exception:
             return False
-    return True
+    return False
 
 
 def _stm32_driver_ready() -> bool:

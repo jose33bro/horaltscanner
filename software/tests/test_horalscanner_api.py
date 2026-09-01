@@ -398,6 +398,18 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.get_json()["status"]["gpio_driver"])
 
+    def test_api_status_uses_gpio_status_when_partial_attrs_are_exposed(self):
+        class PartialGPIO:
+            simulation = False
+
+            def status(self):
+                return {"simulation": False, "hardware_available": True}
+
+        self.api_module.gpio_driver = PartialGPIO()
+        response = self.client.get("/api/status")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["status"]["gpio_driver"])
+
     def test_api_status_no_stm32_driver(self):
         self.api_module.stm32_driver = None
         response = self.client.get("/api/status")

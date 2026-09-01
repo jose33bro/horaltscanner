@@ -63,7 +63,7 @@ class HoralScannerAPITests(unittest.TestCase):
         class FakeSTM32:
             def __init__(self):
                 self.calls = []
-                self.connected = True
+                self._connected = True
                 self.status = {
                     "positions": {"x": 0.0, "y": 0.0, "z": 0.0},
                     "moving": {"x": False, "y": False, "z": False},
@@ -101,7 +101,7 @@ class HoralScannerAPITests(unittest.TestCase):
 
             @property
             def connected(self):
-                return True
+                return self._connected
 
         self.fake_gpio = FakeGPIO()
         self.fake_stm32 = FakeSTM32()

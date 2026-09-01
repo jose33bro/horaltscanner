@@ -27,7 +27,10 @@ from flask import (
 api_bp = Blueprint("api", __name__)
 
 # Modern API imports
-from . import config_manager
+try:
+    from . import config_manager
+except ImportError:  # pragma: no cover - direct script execution
+    from software.api import config_manager
 from software.api.camera_calibration import (
     get_all_saved_poses,
     get_calibration_pose,
@@ -1080,7 +1083,7 @@ def api_status():
     )
     stm32_ready = bool(
         stm32_driver is not None
-        and getattr(stm32_driver, "connected", True)
+        and getattr(stm32_driver, "connected", False)
     )
     capabilities = _runtime_capabilities()
     status_payload = {
@@ -1109,4 +1112,8 @@ def health():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    from flask import Flask
+
+    app = Flask(__name__)
+    app.register_blueprint(api_bp)
     app.run(host="0.0.0.0", port=5000, debug=False)

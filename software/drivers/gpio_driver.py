@@ -217,10 +217,7 @@ class GPIODriver:
         return True
 
     def get_fan_status(self) -> dict:
-        return {
-            "speed": self._pi_fan_speed,
-            "cpu_temperature_c": self.read_cpu_temperature(),
-        }
+        return {"speed": self._pi_fan_speed}
 
     @staticmethod
     def _read_cpu_temperature() -> float | None:

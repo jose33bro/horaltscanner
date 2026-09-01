@@ -36,6 +36,7 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
     def test_connect_returns_true(self):
         driver = STM32Driver()
         self.assertTrue(driver.connect())
+        self.assertTrue(driver.connected)
 
     def test_connect_opens_configured_serial_port(self):
         serial_port = Mock()
@@ -60,6 +61,7 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
             write_timeout=0.5,
         )
         serial_port.reset_input_buffer.assert_called_once_with()
+        self.assertTrue(driver.connected)
 
     def test_read_board_temperature_from_pc5_response(self):
         serial_port = Mock()

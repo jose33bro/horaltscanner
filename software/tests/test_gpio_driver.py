@@ -71,7 +71,6 @@ class GPIODriverTests(unittest.TestCase):
         )
 
         self.assertEqual(driver.read_cpu_temperature(), 48.75)
-        self.assertEqual(driver.get_fan_status()["cpu_temperature_c"], 48.75)
 
     def test_real_gpio_outputs_use_active_high_devices(self):
         output_devices = [Mock(), Mock(), Mock()]

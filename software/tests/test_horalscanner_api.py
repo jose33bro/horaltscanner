@@ -92,6 +92,10 @@ class HoralScannerAPITests(unittest.TestCase):
                 self.calls.append(("read_board_temperature",))
                 return self.temperature
 
+            @property
+            def connected(self):
+                return True
+
         self.fake_gpio = FakeGPIO()
         self.fake_stm32 = FakeSTM32()
 

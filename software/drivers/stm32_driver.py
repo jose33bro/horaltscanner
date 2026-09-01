@@ -103,6 +103,10 @@ class STM32Driver:
         except Exception:
             return False
 
+    @property
+    def connected(self) -> bool:
+        return self._simulation or self._port is not None
+
     # ------------------------------------------------------------------
     # Internal helpers (can be monkey-patched in tests)
     # ------------------------------------------------------------------

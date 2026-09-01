@@ -1,311 +1,179 @@
-"""
-USB Driver - Communication bas niveau avec le firmware STM32F103
-Protocole texte CDC sur USB serial
-"""
+from __future__ import annotations
 
-import serial
+from dataclasses import dataclass
+from enum import Enum
 import logging
 import re
-import time
-from typing import Optional, Dict, List, Tuple
-from enum import Enum
+import serial
+import struct
+from typing import Protocol
+
+
+CMD_MOVE_X = 0x01
+CMD_MOVE_Y = 0x02
+CMD_MOVE_Z = 0x03
+CMD_HOME_X = 0x10
+CMD_HOME_Y = 0x11
+CMD_HOME_Z = 0x12
+CMD_SET_SPEED = 0x20
+CMD_GET_STATUS = 0x30
+CMD_STOP = 0x40
+
+STATUS_OK = 0x00
+
+PACKET_FORMAT = "<BBiiB"
+RESPONSE_FORMAT = "<BBiiiBB"
 
 logger = logging.getLogger(__name__)
 
 
-class CommandStatus(Enum):
-    """Status des commandes"""
-    SUCCESS = "OK"
-    ERROR = "ERR"
-    UNKNOWN = "UNKNOWN"
+class USBProtocolError(RuntimeError):
+    """Raised on malformed USB protocol responses."""
 
 
-class USBDriver:
-    """Driver USB CDC pour communication avec STM32F103 (Creality V4.2.2)"""
+class USBTransport(Protocol):
+    def exchange(self, payload: bytes) -> bytes:
+        """Send one command and return one response frame."""
 
-    def __init__(self, port: str = "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",
-                 baudrate: int = 115200, timeout: float = 5.0):
-        """
-        Initialiser la connexion USB
-        
-        Args:
-            port: Port série USB
-            baudrate: Vitesse de communication (115200)
-            timeout: Timeout en secondes
-        """
-        self.port = port
-        self.baudrate = baudrate
-        self.timeout = timeout
-        self.ser = None
-        self.connected = False
+
+@dataclass(frozen=True)
+class ScannerStatus:
+    status: int
+    error: int
+    pos_x: int
+    pos_y: int
+    pos_z: int
+    endstop_mask: int
+
+
+class PyUSBTransport:
+    """USB transport for a custom STM32 scanner firmware endpoint pair."""
+
+    def __init__(self, vendor_id: int, product_id: int, out_ep: int = 0x01, in_ep: int = 0x81, timeout_ms: int = 250):
+        try:
+            import usb.core
+            import usb.util
+        except ImportError as exc:  # pragma: no cover - depends on runtime environment
+            raise RuntimeError("pyusb is required for PyUSBTransport") from exc
+
+        self._usb_core = usb.core
+        self._device = usb.core.find(idVendor=vendor_id, idProduct=product_id)
+        if self._device is None:
+            raise RuntimeError("Scanner USB device not found")
+
+        self._out_ep = out_ep
+        self._in_ep = in_ep
+        self._timeout_ms = timeout_ms
+
+    def exchange(self, payload: bytes) -> bytes:
+        self._device.write(self._out_ep, payload, timeout=self._timeout_ms)
+        return bytes(self._device.read(self._in_ep, struct.calcsize(RESPONSE_FORMAT), timeout=self._timeout_ms))
+
+
+class USBScannerDriver:
+    def __init__(self, transport: USBTransport):
+        self._transport = transport
+
+    @staticmethod
+    def checksum(payload: bytes) -> int:
+        value = 0
+        for byte in payload:
+            value ^= byte
+        return value
+
+    def _build_packet(self, command: int, axis: int = 0, value: int = 0, speed: int = 0) -> bytes:
+        head = struct.pack("<BBii", command, axis, value, speed)
+        return struct.pack(PACKET_FORMAT, command, axis, value, speed, self.checksum(head))
+
+    def _parse_response(self, response: bytes) -> ScannerStatus:
+        if len(response) != struct.calcsize(RESPONSE_FORMAT):
+            raise USBProtocolError(f"Bad response size: {len(response)}")
+
+        status, error, pos_x, pos_y, pos_z, endstop_mask, checksum = struct.unpack(RESPONSE_FORMAT, response)
+        expected = self.checksum(response[:-1])
+        if checksum != expected:
+            raise USBProtocolError("Bad response checksum")
+
+        return ScannerStatus(status=status, error=error, pos_x=pos_x, pos_y=pos_y, pos_z=pos_z, endstop_mask=endstop_mask)
+
+    def _exchange(self, command: int, axis: int = 0, value: int = 0, speed: int = 0) -> ScannerStatus:
+        packet = self._build_packet(command, axis=axis, value=value, speed=speed)
+        response = self._transport.exchange(packet)
+        parsed = self._parse_response(response)
+        if parsed.status != STATUS_OK:
+            raise USBProtocolError(f"Firmware error code: {parsed.error}")
+        return parsed
+
+    def move_x(self, steps: int, speed: int = 0) -> ScannerStatus:
+        return self._exchange(CMD_MOVE_X, value=steps, speed=speed)
+
+    def move_y(self, steps: int, speed: int = 0) -> ScannerStatus:
+        return self._exchange(CMD_MOVE_Y, value=steps, speed=speed)
+
+    def move_z(self, steps: int, speed: int = 0) -> ScannerStatus:
+        return self._exchange(CMD_MOVE_Z, value=steps, speed=speed)
+
+    def home_x(self) -> ScannerStatus:
+        return self._exchange(CMD_HOME_X)
+
+    def home_y(self) -> ScannerStatus:
+        return self._exchange(CMD_HOME_Y)
+
+    def home_z(self) -> ScannerStatus:
+        return self._exchange(CMD_HOME_Z)
+
+    def home_axis(self, axis: str) -> ScannerStatus:
+        axis_normalized = axis.upper()
+        if axis_normalized == "X":
+            return self.home_x()
+        if axis_normalized == "Y":
+            return self.home_y()
+        if axis_normalized == "Z":
+            return self.home_z()
+        raise ValueError(f"Unsupported axis: {axis}")
+
+    def set_speed(self, axis: str, speed: int) -> ScannerStatus:
+        axis_map = {"X": 0, "Y": 1, "Z": 2}
+        axis_normalized = axis.upper()
+        if axis_normalized not in axis_map:
+            raise ValueError(f"Unsupported axis: {axis}")
+        return self._exchange(CMD_SET_SPEED, axis=axis_map[axis_normalized], speed=speed)
+
+    def get_status(self) -> ScannerStatus:
+        return self._exchange(CMD_GET_STATUS)
+
+    def stop(self) -> ScannerStatus:
+        return self._exchange(CMD_STOP)
+
+
+class USBDriver(USBScannerDriver):
+    """Compatibility wrapper around USBScannerDriver exposing a simpler API."""
+
+    def __init__(self, transport: "USBTransport | None" = None):
+        if transport is None:
+            self._transport = None  # type: ignore[assignment]
+        else:
+            super().__init__(transport)
 
     def connect(self) -> bool:
-        """Établir la connexion USB"""
-        try:
-            self.ser = serial.Serial(
-                port=self.port,
-                baudrate=self.baudrate,
-                timeout=self.timeout,
-                write_timeout=self.timeout
-            )
-            self.connected = True
-            logger.info(f"USB connecté: {self.port} @ {self.baudrate} baud")
-            
-            # Ping de test
-            if self.ping():
-                logger.info("Handshake réussi")
-                return True
-            else:
-                logger.warning("Handshake failed - firmware may not be responding")
-                return False
-                
-        except serial.SerialException as e:
-            logger.error(f"Erreur connexion USB: {e}")
-            self.connected = False
-            return False
-
-    def disconnect(self) -> None:
-        """Fermer la connexion USB"""
-        if self.ser and self.ser.is_open:
-            self.ser.close()
-            self.connected = False
-            logger.info("USB déconnecté")
-
-    def send_command(self, command: str) -> Optional[str]:
-        """
-        Envoyer une commande et récupérer la réponse
-        
-        Args:
-            command: Commande à envoyer (ex: "PING", "MOVE X 100 50")
-            
-        Returns:
-            Réponse du firmware (sans newline) ou None en cas d'erreur
-        """
-        if not self.connected or not self.ser:
-            logger.error("USB non connecté")
-            return None
-
-        try:
-            # Envoyer la commande avec newline
-            cmd_bytes = (command + "\n").encode('utf-8')
-            self.ser.write(cmd_bytes)
-            logger.debug(f"TX: {command}")
-            
-            # Lire la réponse
-            response = self._read_response()
-            if response:
-                logger.debug(f"RX: {response}")
-            return response
-            
-        except serial.SerialException as e:
-            logger.error(f"Erreur envoi commande: {e}")
-            self.connected = False
-            return None
-
-    def _read_response(self) -> Optional[str]:
-        """
-        Lire une ligne de réponse depuis le firmware
-        
-        Returns:
-            Ligne sans newline ou None si timeout
-        """
-        try:
-            line = self.ser.readline().decode('utf-8').strip()
-            if line:
-                return line
-            return None
-        except (serial.SerialException, UnicodeDecodeError) as e:
-            logger.error(f"Erreur lecture réponse: {e}")
-            return None
-
-    def _parse_response(self, response: str) -> Tuple[CommandStatus, str]:
-        """
-        Parser la réponse du firmware
-        
-        Format attendu: "OK <payload>" ou "ERR <reason>"
-        
-        Returns:
-            (status, payload)
-        """
-        if not response:
-            return CommandStatus.UNKNOWN, ""
-
-        parts = response.split(maxsplit=1)
-        status_str = parts[0]
-        payload = parts[1] if len(parts) > 1 else ""
-
-        if status_str == "OK":
-            return CommandStatus.SUCCESS, payload
-        elif status_str == "ERR":
-            return CommandStatus.ERROR, payload
-        else:
-            return CommandStatus.UNKNOWN, response
-
-    # ============================================================
-    #   COMMANDES FIRMWARE
-    # ============================================================
-
-    def ping(self) -> bool:
-        """Test de connectivité"""
-        response = self.send_command("PING")
-        status, payload = self._parse_response(response)
-        return status == CommandStatus.SUCCESS and "PONG" in payload
-
-    def move(self, axis: str, steps: int, speed: int) -> bool:
-        """
-        Déplacer un moteur
-        
-        Args:
-            axis: 'X', 'Y' ou 'Z'
-            steps: Nombre de steps (positif=avance, négatif=recul)
-            speed: Vitesse en steps/s (simplifié)
-            
-        Returns:
-            True si succès
-        """
-        if axis not in ['X', 'Y', 'Z']:
-            logger.error(f"Axe invalide: {axis}")
-            return False
-
-        command = f"MOVE {axis} {steps} {speed}"
-        response = self.send_command(command)
-        status, _ = self._parse_response(response)
-        return status == CommandStatus.SUCCESS
-
-    def home(self, axis: str) -> bool:
-        """
-        Homing d'un axe
-        
-        Args:
-            axis: 'X', 'Y' ou 'Z'
-            
-        Returns:
-            True si succès
-        """
-        if axis not in ['X', 'Y', 'Z']:
-            logger.error(f"Axe invalide: {axis}")
-            return False
-
-        command = f"HOME {axis}"
-        response = self.send_command(command)
-        status, _ = self._parse_response(response)
-        if status == CommandStatus.SUCCESS:
-            logger.info(f"Homing {axis} réussi")
-            return True
-        else:
-            logger.error(f"Homing {axis} échoué")
-            return False
-
-    def get_endstop(self, axis: str) -> Optional[bool]:
-        """
-        Lire l'état d'un endstop
-        
-        Args:
-            axis: 'X', 'Y' ou 'Z'
-            
-        Returns:
-            True (déclenché), False (non déclenché), None (erreur)
-        """
-        if axis not in ['X', 'Y', 'Z']:
-            logger.error(f"Axe invalide: {axis}")
-            return None
-
-        command = f"ENDSTOP {axis}"
-        response = self.send_command(command)
-        status, payload = self._parse_response(response)
-        
-        if status == CommandStatus.SUCCESS:
-            # Parser "ENDSTOP 0" ou "ENDSTOP 1"
-            match = re.search(r"ENDSTOP (\d)", payload)
-            if match:
-                return bool(int(match.group(1)))
-        
-        return None
-
-    def get_status(self) -> Optional[Dict]:
-        """
-        Lire l'état complet du scanner
-        
-        Returns:
-            Dict avec positions et flags homing, ou None
-        """
-        response = self.send_command("STATUS")
-        status, payload = self._parse_response(response)
-        
-        if status == CommandStatus.SUCCESS:
-            # Parser "X:0.00 Y:0.00 Z:0.00 HX:0 HY:0 HZ:0"
-            result = {}
-            for part in payload.split():
-                if ':' in part:
-                    key, value = part.split(':')
-                    try:
-                        result[key] = float(value) if '.' in value else int(value)
-                    except ValueError:
-                        pass
-            return result if result else None
-        
-        return None
-
-    def sync(self, token: str) -> Optional[str]:
-        """
-        Synchronisation avec token
-        
-        Args:
-            token: Token de synchronisation
-            
-        Returns:
-            Token reçu ou None en cas d'erreur
-        """
-        command = f"SYNC {token}"
-        response = self.send_command(command)
-        status, payload = self._parse_response(response)
-        
-        if status == CommandStatus.SUCCESS:
-            # Parser "SYNC <token>"
-            match = re.search(r"SYNC\s+(\S+)", payload)
-            if match:
-                return match.group(1)
-        
-        return None
-
-    def execute_sequence(self, commands: List[tuple]) -> bool:
-        """
-        Exécuter une séquence de commandes
-        
-        Args:
-            commands: Liste de tuples (type, args...)
-                      ex: [('MOVE', 'X', 100, 50), ('HOME', 'Y'), ...]
-                      
-        Returns:
-            True si toutes les commandes réussissent
-        """
-        for cmd_tuple in commands:
-            cmd_type = cmd_tuple[0]
-            
-            if cmd_type == "MOVE":
-                _, axis, steps, speed = cmd_tuple
-                if not self.move(axis, steps, speed):
-                    return False
-                    
-            elif cmd_type == "HOME":
-                _, axis = cmd_tuple
-                if not self.home(axis):
-                    return False
-                    
-            elif cmd_type == "WAIT":
-                _, delay_ms = cmd_tuple
-                time.sleep(delay_ms / 1000.0)
-                
-            else:
-                logger.warning(f"Type de commande inconnu: {cmd_type}")
-                
         return True
 
-    def __enter__(self):
-        """Context manager entry"""
-        self.connect()
-        return self
+    def disconnect(self) -> bool:
+        return True
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit"""
-        self.disconnect()
+    def home(self, axis: str) -> "ScannerStatus | bool":
+        if self._transport is None:
+            return True
+        return self.home_axis(axis)
+
+    def move(self, axis: str, steps: int, speed: int = 0) -> "ScannerStatus | bool":
+        if self._transport is None:
+            return True
+        axis_upper = axis.upper()
+        if axis_upper == "X":
+            return self.move_x(steps, speed=speed)
+        if axis_upper == "Y":
+            return self.move_y(steps, speed=speed)
+        if axis_upper == "Z":
+            return self.move_z(steps, speed=speed)
+        raise ValueError(f"Unsupported axis: {axis}")

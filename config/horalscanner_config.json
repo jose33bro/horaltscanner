@@ -1,0 +1,107 @@
+{
+  "hardware": {
+    "mcu": "creality_4.2.2",
+    "pi_gpio": true
+  },
+  "motors": {
+    "x": {
+      "step_pin": "PC2",
+      "dir_pin": "PB9",
+      "enable_pin": "PC3",
+      "rotation_distance": 40,
+      "endstop_pin": "PA5",
+      "position_max": 210,
+      "microsteps": 16,
+      "homing_speed": 40
+    },
+    "y": {
+      "step_pin": "PB8",
+      "dir_pin": "PB7",
+      "enable_pin": "PC3",
+      "rotation_distance": 620,
+      "endstop_pin": "PA6",
+      "position_max": 628.32,
+      "microsteps": 16,
+      "homing_speed": 12
+    },
+    "z": {
+      "step_pin": "PB6",
+      "dir_pin": "PB5",
+      "enable_pin": "PC3",
+      "rotation_distance": 8,
+      "endstop_pin": "PA7",
+      "position_max": 270,
+      "microsteps": 16,
+      "homing_speed": 5
+    }
+  },
+  "lasers": {
+    "left": {
+      "gpio": 27,
+      "pin": "rpi:gpio27",
+      "active_high": true
+    },
+    "right": {
+      "gpio": 22,
+      "pin": "rpi:gpio22",
+      "active_high": true
+    }
+  },
+  "led_rgb": {
+    "active_high": true,
+    "pwm_frequency_hz": 100,
+    "red": {
+      "gpio": 18,
+      "pin": "rpi:gpio18"
+    },
+    "green": {
+      "gpio": 13,
+      "pin": "rpi:gpio13"
+    },
+    "blue": {
+      "gpio": 19,
+      "pin": "rpi:gpio19"
+    }
+  },
+  "fans": {
+    "board_fan": {
+      "pin": "PA0"
+    },
+    "pi_fan": {
+      "gpio": 23,
+      "pin": "rpi:gpio23",
+      "active_high": true,
+      "default_value": 0,
+      "auto_control": true,
+      "on_temp_c": 55,
+      "off_temp_c": 45,
+      "poll_interval_s": 5
+    }
+  },
+  "temperature": {
+    "board_sensor": {
+      "sensor_type": "EPCOS 100K B57560G104F",
+      "sensor_pin": "PC5",
+      "min_temp": -10,
+      "max_temp": 90
+    },
+    "board_fan_control": {
+      "pin": "PA8",
+      "target_temp": 37,
+      "min_temp": 0,
+      "max_temp": 70
+    }
+  },
+  "serial": {
+    "mcu_port": "/dev/horalscanner_mcu",
+    "baud": 115200,
+    "timeout_s": 1.0,
+    "lidar_port": "/dev/horalscanner_lidar",
+    "lidar_baud": 115200
+  },
+  "cameras": {
+    "pi_name": "Pi Camera V3 NoIR",
+    "usb_name": "Logitech C270",
+    "usb_device_id": 2
+  }
+}

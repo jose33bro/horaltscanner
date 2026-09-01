@@ -56,6 +56,7 @@ class STM32Driver:
         self._serial_factory = serial_factory
         self._port = None  # serial port object once connected
         self._connected = False
+        self._last_error: Exception | None = None
 
         # Fan status
         self._fan_status: dict[str, float] = {name: 0.0 for name in _FAN_CHANNELS}
@@ -87,7 +88,13 @@ class STM32Driver:
     def connected(self) -> bool:
         return self._simulation or self._connected
 
+    @property
+    def last_error(self) -> Exception | None:
+        """Last exception raised while attempting to connect, if any."""
+        return self._last_error
+
     def connect(self) -> bool:
+        self._last_error = None
         if self._simulation:
             self._connected = True
             return True
@@ -100,7 +107,8 @@ class STM32Driver:
             try:
                 import serial as _serial
                 factory = _serial.Serial
-            except ImportError:  # pragma: no cover
+            except ImportError as exc:  # pragma: no cover
+                self._last_error = exc
                 self._connected = False
                 return False
         try:
@@ -108,7 +116,8 @@ class STM32Driver:
             self._port.reset_input_buffer()
             self._connected = True
             return True
-        except Exception:
+        except Exception as exc:
+            self._last_error = exc
             self._port = None
             self._connected = False
             return False

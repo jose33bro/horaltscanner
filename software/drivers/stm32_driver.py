@@ -116,15 +116,8 @@ class STM32Driver:
             self._port.reset_input_buffer()
             self._connected = True
             return True
-<<<<<<< HEAD
         except Exception:
             self._port = None
-=======
-        except Exception as exc:
-            self._last_error = exc
-            self._port = None
-            self._connected = False
->>>>>>> origin/main
             return False
 
     @property

@@ -9,17 +9,17 @@ RPi.GPIO>=0.7.0
 
 # Vision par ordinateur
 opencv-python>=4.5.0
-opencv-contrib-python>=4.5.0
+opencv-contrib-python>=5.0.0.93
 
 # Calcul scientifique
-numpy>=1.21.0
+numpy>=2.5.2
 scipy>=1.7.0
 
 # Images
 Pillow>=8.3.0
 
 # Caméra Raspberry Pi
-picamera2>=0.1.0  # optionnel
+picamera2>=0.3.37  # optionnel
 
 # 3D et géométrie
 # PyPI does not publish Linux ARM64 wheels. Raspberry Pi uses the official
@@ -37,7 +37,7 @@ python-dateutil>=2.8.0
 pyyaml>=5.4.0
 
 # Web API
-flask>=2.3.0
+flask>=3.1.3
 flask-cors>=4.0.0
 
 # HTTP client (Moonraker)

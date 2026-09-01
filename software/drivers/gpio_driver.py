@@ -171,11 +171,7 @@ class GPIODriver:
         return self._hardware_available
 
     def close(self) -> None:
-<<<<<<< HEAD
-        for attribute in (
-=======
         for device_name in (
->>>>>>> origin/main
             "_laser_left_device",
             "_laser_right_device",
             "_led_r_device",
@@ -183,22 +179,14 @@ class GPIODriver:
             "_led_b_device",
             "_fan_device",
         ):
-<<<<<<< HEAD
-            device = getattr(self, attribute)
-=======
             device = getattr(self, device_name)
->>>>>>> origin/main
             if device is None:
                 continue
             try:
                 device.close()
             except Exception:
                 pass
-<<<<<<< HEAD
-            setattr(self, attribute, None)
-=======
             setattr(self, device_name, None)
->>>>>>> origin/main
         self._hardware_available = False
         self._pi_fan_speed = 0.0
 

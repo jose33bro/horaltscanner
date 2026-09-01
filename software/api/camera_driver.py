@@ -92,10 +92,12 @@ class LogitechCamera:
         with self._lock:
             candidates = [self.device_id, *self.FALLBACK_DEVICE_IDS]
             seen: set = set()
+            tried: list = []
             for idx in candidates:
                 if idx in seen:
                     continue
                 seen.add(idx)
+                tried.append(idx)
 
                 cap = cv2.VideoCapture(idx)
                 opened = cap.isOpened()
@@ -127,7 +129,7 @@ class LogitechCamera:
             self._cap = None
             logger.error(
                 "USB camera: no working device found among candidates %s",
-                list(seen),
+                tried,
             )
             return False
 

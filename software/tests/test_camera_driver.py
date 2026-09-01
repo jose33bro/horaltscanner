@@ -6,6 +6,112 @@ import numpy as np
 from software.api import camera_driver
 
 
+class FakeVideoCapture:
+    """Minimal cv2.VideoCapture stand-in for LogitechCamera fallback tests."""
+
+    def __init__(self, working_indices, opened_log):
+        self._working_indices = working_indices
+        self._opened_log = opened_log
+
+    def __call__(self, idx):
+        self._opened_log.append(idx)
+        return _FakeCap(idx, idx in self._working_indices)
+
+
+class _FakeCap:
+    def __init__(self, idx, works):
+        self.idx = idx
+        self._works = works
+        self.released = False
+
+    def isOpened(self):
+        return self._works
+
+    def read(self):
+        if not self._works:
+            return False, None
+        return True, np.zeros((480, 640, 3), dtype=np.uint8)
+
+    def set(self, *_args):
+        return True
+
+    def release(self):
+        self.released = True
+
+
+class FakeCv2ForLogitech:
+    CAP_PROP_FRAME_WIDTH = 3
+    CAP_PROP_FRAME_HEIGHT = 4
+
+    def __init__(self, working_indices):
+        self._opened_log: list = []
+        self.VideoCapture = FakeVideoCapture(working_indices, self._opened_log)
+
+
+class LogitechCameraOpenTests(unittest.TestCase):
+    def test_opens_on_configured_device_id_without_fallback(self):
+        fake_cv2 = FakeCv2ForLogitech(working_indices={0})
+        camera = camera_driver.LogitechCamera(device_id=0)
+
+        with (
+            mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
+            mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
+        ):
+            self.assertTrue(camera.open())
+
+        self.assertEqual(camera.device_id, 0)
+        self.assertEqual(fake_cv2._opened_log, [0])
+
+    def test_falls_back_to_working_index_when_configured_one_fails(self):
+        # Configured device_id=2 is bad; only index 0 actually works.
+        fake_cv2 = FakeCv2ForLogitech(working_indices={0})
+        camera = camera_driver.LogitechCamera(device_id=2)
+
+        with (
+            mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
+            mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
+        ):
+            self.assertTrue(camera.open())
+
+        self.assertEqual(camera.device_id, 0)
+        # Configured id (2) is tried first, then fallback candidates 0,1,2,3
+        # without duplicating the already-tried index 2.
+        self.assertEqual(fake_cv2._opened_log, [2, 0])
+        self.assertTrue(camera.is_open)
+
+    def test_does_not_duplicate_candidate_indices(self):
+        fake_cv2 = FakeCv2ForLogitech(working_indices={3})
+        camera = camera_driver.LogitechCamera(device_id=3)
+
+        with (
+            mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
+            mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
+        ):
+            self.assertTrue(camera.open())
+
+        # device_id (3) is also the last fallback candidate; it must only be
+        # attempted once.
+        self.assertEqual(fake_cv2._opened_log, [3])
+
+    def test_returns_false_and_releases_all_when_nothing_works(self):
+        fake_cv2 = FakeCv2ForLogitech(working_indices=set())
+        camera = camera_driver.LogitechCamera(device_id=5)
+
+        with (
+            mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
+            mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
+        ):
+            self.assertFalse(camera.open())
+
+        self.assertFalse(camera.is_open)
+        self.assertEqual(fake_cv2._opened_log, [5, 0, 1, 2, 3])
+
+    def test_open_returns_false_when_cv2_unavailable(self):
+        camera = camera_driver.LogitechCamera(device_id=0)
+        with mock.patch.object(camera_driver, "_CV2_AVAILABLE", False):
+            self.assertFalse(camera.open())
+
+
 class FakeCv2:
     IMREAD_COLOR = 1
     COLOR_BGR2GRAY = 2

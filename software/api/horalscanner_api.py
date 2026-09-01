@@ -10,8 +10,10 @@ from typing import Any, Callable
 
 # Add repo root to path so 'software' module can be imported
 _API_DIR = Path(__file__).resolve().parent
+_SOFTWARE_DIR = _API_DIR.parent
 _REPO_ROOT = _API_DIR.parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_SOFTWARE_DIR))
 
 # Modern Flask imports
 from flask import (

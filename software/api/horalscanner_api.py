@@ -24,7 +24,7 @@ from flask import (
 )
 
 # Blueprint moderne
-api_bp = Blueprint("api", __name__, url_prefix="/api")
+api_bp = Blueprint("api", __name__)
 
 # Modern API imports
 from . import config_manager
@@ -46,6 +46,7 @@ from software.api.calibration_pose import (
     PoseMemory,
     get_default_pose,
     move_to_pose,
+    read_lidar_distance,
 )
 from software.api.lidar_driver import LidarDriver
 from software.api.scanner_engine import ReconstructionEngine, ScanSession
@@ -1038,6 +1039,7 @@ def api_status():
         },
     })
 
+@api_bp.route("/api/health", methods=["GET"])
 @api_bp.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200

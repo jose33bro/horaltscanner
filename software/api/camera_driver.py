@@ -77,6 +77,10 @@ def _make_placeholder() -> bytes:
 class LogitechCamera:
     """Captures frames from a V4L2 USB camera (Logitech C270 etc.)."""
 
+    #: Indices tried, in order, when the configured ``device_id`` fails to
+    #: open or fails to deliver a frame.
+    FALLBACK_DEVICE_IDS = (0, 1, 2, 3)
+
     def __init__(self, device_id: int = 0):
         self.device_id = device_id
         self._cap = None
@@ -86,13 +90,46 @@ class LogitechCamera:
         if not _CV2_AVAILABLE:
             return False
         with self._lock:
-            self._cap = cv2.VideoCapture(self.device_id)
-            if not self._cap.isOpened():
-                self._cap = None
-                return False
-            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-            return True
+            candidates = [self.device_id, *self.FALLBACK_DEVICE_IDS]
+            seen: set = set()
+            for idx in candidates:
+                if idx in seen:
+                    continue
+                seen.add(idx)
+
+                cap = cv2.VideoCapture(idx)
+                opened = cap.isOpened()
+                ok = False
+                if opened:
+                    ok, _frame = cap.read()
+
+                if opened and ok:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+                    self._cap = cap
+                    if idx != self.device_id:
+                        logger.info(
+                            "USB camera: configured device_id=%s failed, "
+                            "falling back to working index %s",
+                            self.device_id, idx,
+                        )
+                    else:
+                        logger.info("USB camera: opened on device_id=%s", idx)
+                    self.device_id = idx
+                    return True
+
+                logger.warning(
+                    "USB camera: failed to open index %s (opened=%s, read=%s)",
+                    idx, opened, ok,
+                )
+                cap.release()
+
+            self._cap = None
+            logger.error(
+                "USB camera: no working device found among candidates %s",
+                list(seen),
+            )
+            return False
 
     def close(self) -> None:
         with self._lock:

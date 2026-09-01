@@ -1,4 +1,4 @@
-"""HoralScanner Flask API."""
+"""HoralScanner Flask API (modern version)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,20 @@ _API_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _API_DIR.parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
-from flask import Flask, Response, jsonify, request, send_file, send_from_directory
+# Modern Flask imports
+from flask import (
+    Blueprint,
+    Response,
+    jsonify,
+    request,
+    send_file,
+    send_from_directory,
+)
+
+# Blueprint moderne
+api_bp = Blueprint("api", __name__, url_prefix="/api")
+
+# Modern API imports
 from software.api import config_manager
 from software.api.camera_calibration import (
     get_all_saved_poses,
@@ -23,13 +36,23 @@ from software.api.camera_calibration import (
     restore_scan_pose,
     save_current_pose,
 )
-from software.api.camera_driver import LogitechCamera, PiCamera, analyze_camera_frame, analyze_laser_line
-from software.api.calibration_pose import PoseMemory, get_default_pose, move_to_pose, read_lidar_distance
+from software.api.camera_driver import (
+    LogitechCamera,
+    PiCamera,
+    analyze_camera_frame,
+    analyze_laser_line,
+)
+from software.api.calibration_pose import (
+    PoseMemory,
+    get_default_pose,
+    move_to_pose,
+)
 from software.api.lidar_driver import LidarDriver
 from software.api.scanner_engine import ReconstructionEngine, ScanSession
 
 logger = logging.getLogger(__name__)
 
+# Drivers
 try:
     from software.drivers.stm32_driver import STM32Driver
 except Exception as exc:  # pragma: no cover - environment dependent
@@ -41,9 +64,6 @@ try:
 except Exception as exc:  # pragma: no cover - environment dependent
     GPIODriver = None  # type: ignore[assignment]
     logger.warning("GPIODriver import failed: %s", exc)
-
-
-app = Flask(__name__)
 
 _WEB_DIR = _API_DIR.parent / "web"
 _VERSION_FILE = _REPO_ROOT / "VERSION"
@@ -61,7 +81,7 @@ CAMERA_CALIBRATION_POSES: dict[str, dict[str, float | None]] = {
 _scan_pose: dict[str, Any] | None = None
 
 
-@app.after_request
+@api_bp.after_request
 def _add_cors(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
@@ -69,22 +89,22 @@ def _add_cors(response):
     return response
 
 
-@app.route("/", methods=["GET"])
+@api_bp.route("/", methods=["GET"])
 def index():
     return send_from_directory(str(_WEB_DIR), "index.html")
 
 
-@app.route("/app.js", methods=["GET"])
+@api_bp.route("/app.js", methods=["GET"])
 def web_app_script():
     return send_from_directory(str(_WEB_DIR), "app.js")
 
 
-@app.route("/style.css", methods=["GET"])
+@api_bp.route("/style.css", methods=["GET"])
 def web_styles():
     return send_from_directory(str(_WEB_DIR), "style.css")
 
 
-@app.route("/viewer3d.js", methods=["GET"])
+@api_bp.route("/viewer3d.js", methods=["GET"])
 def web_3d_viewer_script():
     return send_from_directory(str(_WEB_DIR), "viewer3d.js")
 
@@ -200,7 +220,7 @@ def _parse_pwm_speed(data: dict[str, Any]) -> float:
     raise ValueError("Missing speed value")
 
 
-@app.route("/api/laser/<side>", methods=["POST"])
+@api.route("/api/laser/<side>", methods=["POST"])
 def laser(side: str):
     data = request.get_json(silent=True) or {}
     state = bool(data.get("state", False))
@@ -219,7 +239,7 @@ def laser(side: str):
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/led/color", methods=["POST"])
+@api_bp.route("/api/led/color", methods=["POST"])
 def led_color():
     data = request.get_json(silent=True) or {}
     try:
@@ -243,7 +263,7 @@ def led_color():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/move/<axis>", methods=["POST"])
+@api_bp.route("/api/move/<axis>", methods=["POST"])
 def move(axis: str):
     data = request.get_json(silent=True) or {}
     try:
@@ -265,7 +285,7 @@ def move(axis: str):
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/home/<target>", methods=["POST"])
+@api_bp.route("/api/home/<target>", methods=["POST"])
 def home(target: str):
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -281,7 +301,7 @@ def home(target: str):
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/motor/status", methods=["GET", "POST"])
+@api_bp.route("/api/motor/status", methods=["GET", "POST"])
 def motor_status():
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -293,7 +313,7 @@ def motor_status():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/motor/stop", methods=["POST"])
+@api_bp.route("/api/motor/stop", methods=["POST"])
 def motor_stop():
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -312,7 +332,7 @@ def motor_stop():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/fan/pi", methods=["POST"])
+@api_bp.route("/api/fan/pi", methods=["POST"])
 def fan_pi():
     if gpio_driver is None:
         return _json_error("GPIO driver unavailable", 503)
@@ -333,7 +353,7 @@ def fan_pi():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/fan/creality", methods=["POST"])
+@api_bp.route("/api/fan/creality", methods=["POST"])
 def fan_creality():
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -354,7 +374,7 @@ def fan_creality():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/fan/temperature", methods=["POST"])
+@api_bp.route("/api/fan/temperature", methods=["POST"])
 def fan_temperature():
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -375,7 +395,7 @@ def fan_temperature():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/fan/status", methods=["GET"])
+@api_bp.route("/api/fan/status", methods=["GET"])
 def fan_status():
     if gpio_driver is None and stm32_driver is None:
         return _json_error("No fan drivers available", 503)
@@ -392,7 +412,7 @@ def fan_status():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/temperature/board", methods=["GET"])
+@api_bp.route("/api/temperature/board", methods=["GET"])
 def temperature_board():
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -407,7 +427,7 @@ def temperature_board():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/temperature/all", methods=["GET"])
+@api_bp.route("/api/temperature/all", methods=["GET"])
 def temperature_all():
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -427,7 +447,7 @@ def temperature_all():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/laser/status", methods=["GET"])
+@api_bp.route("/api/laser/status", methods=["GET"])
 def laser_status():
     if gpio_driver is None:
         return _json_error("GPIO driver unavailable", 503)
@@ -438,7 +458,7 @@ def laser_status():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/led/status", methods=["GET"])
+@api_bp.route("/api/led/status", methods=["GET"])
 def led_status():
     if gpio_driver is None:
         return _json_error("GPIO driver unavailable", 503)
@@ -449,7 +469,7 @@ def led_status():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/lidar/read", methods=["POST"])
+@api_bp.route("/api/lidar/read", methods=["POST"])
 def lidar_read():
     if not _ensure_lidar_connected():
         return _json_error("TF-Luna unavailable", 503)
@@ -463,7 +483,7 @@ def lidar_read():
     })
 
 
-@app.route("/api/lidar/calibrate", methods=["POST"])
+@api_bp.route("/api/lidar/calibrate", methods=["POST"])
 def lidar_calibrate():
     data = request.get_json(silent=True) or {}
     try:
@@ -480,7 +500,7 @@ def lidar_calibrate():
     return jsonify({"success": True, "offset_mm": round(offset, 1)})
 
 
-@app.route("/api/camera/<camera_name>/frame", methods=["GET"])
+@api_bp.route("/api/camera/<camera_name>/frame", methods=["GET"])
 def camera_frame(camera_name: str):
     camera = _get_camera(camera_name)
     if camera is None:
@@ -493,7 +513,7 @@ def camera_frame(camera_name: str):
     return Response(jpeg, mimetype="image/jpeg")
 
 
-@app.route("/api/camera/<camera_name>/status", methods=["GET"])
+@api_bp.route("/api/camera/<camera_name>/status", methods=["GET"])
 def camera_status(camera_name: str):
     camera = _get_camera(camera_name)
     if camera is None:
@@ -506,7 +526,7 @@ def camera_status(camera_name: str):
     })
 
 
-@app.route("/api/camera/<camera_name>/test", methods=["POST"])
+@api_bp.route("/api/camera/<camera_name>/test", methods=["POST"])
 def camera_test(camera_name: str):
     camera = _get_camera(camera_name)
     if camera is None:
@@ -526,7 +546,7 @@ def camera_test(camera_name: str):
 # Camera calibration pose endpoints
 # ---------------------------------------------------------------------------
 
-@app.route("/api/camera/<camera_name>/goto_calibration_pose", methods=["POST"])
+@api_bp.route("/api/camera/<camera_name>/goto_calibration_pose", methods=["POST"])
 def camera_goto_calibration_pose(camera_name: str):
     """Move motors to the default calibration pose for *camera_name*.
 
@@ -579,7 +599,7 @@ def camera_goto_calibration_pose(camera_name: str):
     })
 
 
-@app.route("/api/camera/<camera_name>/save_scan_pose", methods=["POST"])
+@api_bp.route("/api/camera/<camera_name>/save_scan_pose", methods=["POST"])
 def camera_save_scan_pose(camera_name: str):
     """Save the current motor position as the scan pose for *camera_name*.
 
@@ -616,7 +636,7 @@ def camera_save_scan_pose(camera_name: str):
     })
 
 
-@app.route("/api/camera/<camera_name>/goto_scan_pose", methods=["POST"])
+@api_bp.route("/api/camera/<camera_name>/goto_scan_pose", methods=["POST"])
 def camera_goto_scan_pose(camera_name: str):
     """Return the machine to the previously saved scan pose for *camera_name*.
 
@@ -664,7 +684,7 @@ def camera_goto_scan_pose(camera_name: str):
     })
 
 
-@app.route("/api/camera/scan_poses", methods=["GET"])
+@api_bp.route("/api/camera/scan_poses", methods=["GET"])
 def camera_scan_poses():
     """Return all saved scan poses.
 
@@ -674,7 +694,7 @@ def camera_scan_poses():
     return jsonify({"success": True, "poses": pose_memory.all_poses()})
 
 
-@app.route("/api/laser/align/<side>", methods=["POST"])
+@api_bp.route("/api/laser/align/<side>", methods=["POST"])
 def laser_align(side: str):
     """Automatic laser alignment check using the Pi Camera.
 
@@ -736,7 +756,7 @@ def laser_align(side: str):
     })
 
 
-@app.route("/api/camera/calibrate/pose/<camera_name>", methods=["POST"])
+@api_bp.route("/api/camera/calibrate/pose/<camera_name>", methods=["POST"])
 def camera_calibrate_pose(camera_name: str):
     """Move motors to the calibration pose for the requested camera.
 
@@ -763,13 +783,13 @@ def camera_calibrate_pose(camera_name: str):
     return jsonify({"success": True, **result})
 
 
-@app.route("/api/scan/pose", methods=["GET"])
+@api_bp.route("/api/scan/pose", methods=["GET"])
 def scan_pose_get():
     """Return all saved scan poses."""
     return jsonify({"success": True, "poses": get_all_saved_poses()})
 
 
-@app.route("/api/scan/pose/save", methods=["POST"])
+@api_bp.route("/api/scan/pose/save", methods=["POST"])
 def scan_pose_save():
     """Save the current motor position as the scan reference pose for a camera.
 
@@ -790,7 +810,7 @@ def scan_pose_save():
     return jsonify({"success": True, **result})
 
 
-@app.route("/api/scan/pose/restore", methods=["POST"])
+@api_bp.route("/api/scan/pose/restore", methods=["POST"])
 def scan_pose_restore():
     """Move motors back to the saved scan pose for a camera.
 
@@ -811,7 +831,7 @@ def scan_pose_restore():
     return jsonify({"success": True, **result})
 
 
-@app.route("/api/scan/start", methods=["POST"])
+@api_bp.route("/api/scan/start", methods=["POST"])
 def scan_start():
     try:
         scan_session.start()
@@ -820,30 +840,30 @@ def scan_start():
     return jsonify({"success": True, "status": scan_session.status()})
 
 
-@app.route("/api/scan/stop", methods=["POST"])
+@api_bp.route("/api/scan/stop", methods=["POST"])
 def scan_stop():
     scan_session.stop()
     return jsonify({"success": True, "status": scan_session.status()})
 
 
-@app.route("/api/scan/status", methods=["GET"])
+@api_bp.route("/api/scan/status", methods=["GET"])
 def scan_status():
     return jsonify({"success": True, "status": scan_session.status()})
 
 
-@app.route("/api/scan/pointcloud", methods=["GET"])
+@api_bp.route("/api/scan/pointcloud", methods=["GET"])
 def scan_pointcloud():
     return jsonify({"success": True, **scan_session.get_pointcloud()})
 
 
-@app.route("/api/model/reconstruct", methods=["POST"])
+@api_bp.route("/api/model/reconstruct", methods=["POST"])
 def model_reconstruct():
     result = reconstruction_engine.reconstruct()
     status_code = 200 if result["ok"] else 409
     return jsonify({"success": result["ok"], **result}), status_code
 
 
-@app.route("/api/model/current", methods=["GET"])
+@api_bp.route("/api/model/current", methods=["GET"])
 def model_current():
     model_format = request.args.get("format", "stl").lower()
     if model_format not in {"stl", "amf"}:
@@ -859,7 +879,7 @@ def model_current():
     )
 
 
-@app.route("/api/camera/<camera_name>/calibration-pose", methods=["POST"])
+@api_bp.route("/api/camera/<camera_name>/calibration-pose", methods=["POST"])
 def camera_calibration_pose(camera_name: str):
     """Move motors to the calibration pose for the selected camera.
 
@@ -924,7 +944,7 @@ def camera_calibration_pose(camera_name: str):
         return _json_error("Erreur interne", 500)
 
 
-@app.route("/api/camera/scan-pose/save", methods=["POST"])
+@api_bp.route("/api/camera/scan-pose/save", methods=["POST"])
 def camera_scan_pose_save():
     """Save the current motor position as the scan pose for the given camera."""
     global _scan_pose
@@ -957,7 +977,7 @@ def camera_scan_pose_save():
         return _json_error("Erreur interne", 500)
 
 
-@app.route("/api/camera/scan-pose", methods=["GET"])
+@api_bp.route("/api/camera/scan-pose", methods=["GET"])
 def camera_scan_pose_get():
     """Return the memorized scan pose."""
     if _scan_pose is None:
@@ -965,7 +985,7 @@ def camera_scan_pose_get():
     return jsonify({"success": True, "scan_pose": _scan_pose})
 
 
-@app.route("/api/camera/scan-pose/goto", methods=["POST"])
+@api_bp.route("/api/camera/scan-pose/goto", methods=["POST"])
 def camera_scan_pose_goto():
     """Move motors back to the memorized scan pose."""
     if _scan_pose is None:
@@ -995,7 +1015,7 @@ def camera_scan_pose_goto():
         return _json_error("Erreur interne", 500)
 
 
-@app.route("/api/status", methods=["GET"])
+@api_bp.route("/api/status", methods=["GET"])
 def api_status():
     gpio_ready = bool(
         gpio_driver is not None
@@ -1018,7 +1038,7 @@ def api_status():
         },
     })
 
-@app.route("/health", methods=["GET"])
+@api_bp.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
 

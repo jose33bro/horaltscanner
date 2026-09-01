@@ -88,3 +88,7 @@ Depuis la racine du repo :
 ```bash
 python3 hardware/cad/pi_camera_tilt_mount/generate.py
 ```
+
+## Notes
+- Les filetages sont modélisés pour impression FDM.
+- Pour un ajustement parfait, un passage léger au taraud M3/M5 est possible après impression.

@@ -31,11 +31,6 @@ def _driver_required():
     """Return (driver, None) or (None, error_response)."""
     if _stm32 is None:
         return None, (jsonify({"ok": False, "error": "STM32 driver not initialised"}), 503)
-<<<<<<< HEAD
-    return _stm32, None
-
-
-=======
     try:
         _stm32.ensure_connected()
     except ConnectionError as exc:
@@ -48,7 +43,6 @@ def _error(message: str, status: int):
     return jsonify({"ok": False, "error": message}), status
 
 
->>>>>>> origin/main
 @motor_bp.route("/api/motor/<axis>/move", methods=["POST"])
 def motor_move(axis: str):
     """Move the given axis by *distance* mm (relative)."""
@@ -73,10 +67,6 @@ def motor_move(axis: str):
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "velocity must be a number"}), 400
 
-<<<<<<< HEAD
-    ok = driver.motor_move(axis, distance, velocity)
-    return jsonify({"ok": ok, "axis": axis, "distance_mm": distance})
-=======
     try:
         result = driver.motor_move(axis, distance, velocity)
     except ValueError as exc:
@@ -89,7 +79,6 @@ def motor_move(axis: str):
         logger.error("STM32 unavailable during move: %s", exc)
         return _error("STM32 unavailable", 503)
     return jsonify({"ok": True, **result})
->>>>>>> origin/main
 
 
 @motor_bp.route("/api/motor/home", methods=["POST"])
@@ -103,15 +92,6 @@ def motor_home():
     axis = str(data.get("axis", "all")).upper()
 
     if axis == "ALL":
-<<<<<<< HEAD
-        ok = driver.motor_home_all()
-    elif axis in ("X", "Y", "Z"):
-        ok = driver.motor_home(axis)
-    else:
-        return jsonify({"ok": False, "error": "axis must be X, Y, Z or all"}), 400
-
-    return jsonify({"ok": ok, "axis": axis})
-=======
         try:
             result = driver.motor_home_all()
         except (RuntimeError, ConnectionError) as exc:
@@ -127,7 +107,6 @@ def motor_home():
         return jsonify({"ok": False, "error": "axis must be X, Y, Z or all"}), 400
 
     return jsonify({"ok": True, "axis": axis, "result": result})
->>>>>>> origin/main
 
 
 @motor_bp.route("/api/motor/stop", methods=["POST"])
@@ -137,17 +116,12 @@ def motor_stop():
     if err:
         return err
 
-<<<<<<< HEAD
-    ok = driver.motor_stop()
-    return jsonify({"ok": ok})
-=======
     try:
         result = driver.motor_stop()
     except (RuntimeError, ConnectionError) as exc:
         logger.error("Motor stop failed: %s", exc)
         return _error("Motor stop failed", 503)
     return jsonify({"ok": True, **result})
->>>>>>> origin/main
 
 
 @motor_bp.route("/api/motor/status", methods=["GET"])
@@ -157,9 +131,5 @@ def motor_status():
     if err:
         return err
 
-<<<<<<< HEAD
-    return jsonify({"ok": True, "motors": driver.motor_status()})
-=======
     status = driver.motor_status()
     return jsonify({"ok": True, **status})
->>>>>>> origin/main

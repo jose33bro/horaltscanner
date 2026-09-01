@@ -29,22 +29,6 @@ from flask import (
 # Blueprint moderne
 api_bp = Blueprint("api", __name__)
 
-<<<<<<< HEAD
-# New drivers and API blueprints
-import sys as _sys
-_sys.path.insert(0, str(_REPO_ROOT / "software" / "drivers"))
-from stm32_driver import STM32Driver
-from gpio_driver import GPIODriver
-from motor_control import motor_bp, init_driver as _init_motor_driver
-from laser_control import laser_bp, init_driver as _init_laser_driver
-from led_control import led_bp, init_driver as _init_led_driver
-
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
-app = Flask(__name__, static_folder=str(_WEB_DIR), static_url_path="")
-CORS(app)
-=======
 # Modern API imports
 try:
     from . import config_manager
@@ -72,7 +56,6 @@ from software.api.calibration_pose import (
 )
 from software.api.lidar_driver import LidarDriver
 from software.api.scanner_engine import ReconstructionEngine, ScanSession, _O3D_AVAILABLE
->>>>>>> origin/main
 
 logger = logging.getLogger(__name__)
 
@@ -89,28 +72,9 @@ except Exception as exc:  # pragma: no cover - environment dependent
     GPIODriver = None  # type: ignore[assignment]
     logger.warning("GPIODriver import failed: %s", exc)
 
-<<<<<<< HEAD
-# New hardware drivers (connect on startup; non-fatal if unavailable)
-_stm32 = STM32Driver()
-_gpio = GPIODriver()
-
-# Register new blueprints
-app.register_blueprint(motor_bp)
-app.register_blueprint(laser_bp)
-app.register_blueprint(led_bp)
-
-# Inject drivers into blueprints
-_init_motor_driver(_stm32)
-_init_laser_driver(_gpio)
-_init_led_driver(_gpio)
-
-# Print queue:  {id: {id, name, gcode_b64, added_at, status}}
-_print_queue: dict = {}
-=======
 _WEB_DIR = _API_DIR.parent / "web"
 _VERSION_FILE = _REPO_ROOT / "VERSION"
 _VERSION = _VERSION_FILE.read_text().strip() if _VERSION_FILE.exists() else "unknown"
->>>>>>> origin/main
 
 # Calibration poses for each camera.
 # Pi Camera: X/Y only (Z must not be changed automatically).
@@ -1226,23 +1190,6 @@ def _create_standalone_app() -> Flask:
 
 
 if __name__ == "__main__":
-<<<<<<< HEAD
-    cfg = config_manager.load()
-    port = cfg.get("system", {}).get("port", 5000)
-    log_level = cfg.get("system", {}).get("log_level", "INFO")
-    logging.getLogger().setLevel(getattr(logging, log_level, logging.INFO))
-
-    # Try to open cameras and LIDAR at startup (non-fatal if they fail)
-    _logitech.open()
-    _picam.open()
-    _lidar.connect()
-    _stm32.connect()
-
-    logger.info("🚀 HoralScanner PRO API starting on port %d", port)
-    logger.info("📍 Web UI: http://0.0.0.0:%d/", port)
-    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
-=======
     logging.basicConfig(level=logging.INFO)
     app = _create_standalone_app()
     app.run(host="0.0.0.0", port=5000, debug=False)
->>>>>>> origin/main

@@ -106,6 +106,10 @@ class HoralScannerAPITests(unittest.TestCase):
             def connected(self):
                 return self._connected
 
+            @connected.setter
+            def connected(self, value):
+                self._connected = bool(value)
+
         self.fake_gpio = FakeGPIO()
         self.fake_stm32 = FakeSTM32()
 
@@ -417,6 +421,7 @@ class HoralScannerAPITests(unittest.TestCase):
     def test_api_status_uses_gpio_status_when_partial_attrs_are_exposed(self):
         class PartialGPIO:
             simulation = False
+            hardware_available = True
 
             def status(self):
                 return {"simulation": False, "hardware_available": True}

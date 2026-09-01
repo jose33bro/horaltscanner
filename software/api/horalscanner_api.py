@@ -27,7 +27,7 @@ from flask import (
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 
 # Modern API imports
-from software.api import config_manager
+from . import config_manager
 from software.api.camera_calibration import (
     get_all_saved_poses,
     get_calibration_pose,
@@ -220,7 +220,7 @@ def _parse_pwm_speed(data: dict[str, Any]) -> float:
     raise ValueError("Missing speed value")
 
 
-@api.route("/api/laser/<side>", methods=["POST"])
+@api_bp.route("/api/laser/<side>", methods=["POST"])
 def laser(side: str):
     data = request.get_json(silent=True) or {}
     state = bool(data.get("state", False))

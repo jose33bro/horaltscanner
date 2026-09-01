@@ -13,3 +13,12 @@ firmware/creality_v422/build/
 
 # Runtime-generated scan pose memory (user-specific, not for version control)
 config/scan_poses.json
+<<<<<<< HEAD
+=======
+
+venv/
+.venv/
+
+venv/
+.venv/
+>>>>>>> 44a4fac (Resolve PR #15 conflicts by keeping latest main API/drivers; remove tracked venv artifacts)

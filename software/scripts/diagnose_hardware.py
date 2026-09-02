@@ -66,7 +66,7 @@ def check_usb_camera() -> None:
         return
 
     hardware_config = config_manager.load_hardware_config()
-    device_id = int(hardware_config.get("cameras", {}).get("usb_device_id", 0))
+    device_id = hardware_config.get("cameras", {}).get("usb_device_id", "auto")
     camera = LogitechCamera(device_id=device_id)
     opened = camera.open()
     _report(f"Camera USB (device_id={device_id}) - ouverture", opened, camera.last_error)

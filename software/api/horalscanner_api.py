@@ -196,12 +196,19 @@ lidar_driver = LidarDriver(
     baud=int(serial_config.get("lidar_baud", 115200)),
 )
 pi_camera = PiCamera()
-usb_camera = LogitechCamera(device_id=int(camera_config.get("usb_device_id", 0)))
+usb_camera = LogitechCamera(device_id=camera_config.get("usb_device_id", "auto"))
 scan_session = ScanSession(simulation=bool(scanner_config.get("simulation", False)))
 reconstruction_engine = ReconstructionEngine(scan_session)
 pose_memory = PoseMemory()
 _CALIBRATION_LIDAR_TARGET_MM = {"pi": 300.0, "usb": 300.0}
 _CALIBRATION_LIDAR_TOLERANCE_MM = 20.0
+CAMERA_FRAME_TIMEOUT_SECONDS = 8.0
+CAMERA_TEST_TIMEOUT_SECONDS = 10.0
+_camera_operation_locks = {
+    "pi": threading.Lock(),
+    "usb": threading.Lock(),
+}
+_laser_operation_lock = threading.Lock()
 
 _initialize_driver(stm32_driver, "STM32Driver")
 _initialize_driver(gpio_driver, "GPIODriver")
@@ -230,6 +237,84 @@ def _get_camera(camera_name: str):
 
 def _ensure_camera_open(camera) -> bool:
     return camera.is_open or camera.open()
+
+
+class CameraOperationBusy(RuntimeError):
+    """Raised when another request already owns a camera."""
+
+
+class CameraOperationTimeout(TimeoutError):
+    """Raised when a camera operation exceeds its endpoint deadline."""
+
+
+class CameraLaserControlError(RuntimeError):
+    """Raised when lasers cannot be safely managed for camera diagnostics."""
+
+
+def _run_camera_operation(
+    camera_name: str,
+    operation: Callable[[], Any],
+    timeout_seconds: float,
+) -> Any:
+    """Run one operation per camera and bound the request wait time.
+
+    The worker owns the lock until it actually exits. If libcamera or OpenCV
+    remains stuck after the request deadline, later requests fail fast instead
+    of starting more work against the same camera.
+    """
+    lock = _camera_operation_locks[camera_name]
+    if not lock.acquire(blocking=False):
+        raise CameraOperationBusy(f"Camera {camera_name} busy")
+
+    completed = threading.Event()
+    outcome: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            outcome["value"] = operation()
+        except Exception as exc:
+            outcome["error"] = exc
+        finally:
+            lock.release()
+            completed.set()
+
+    try:
+        worker = threading.Thread(
+            target=run,
+            name=f"camera-{camera_name}-operation",
+            daemon=True,
+        )
+        worker.start()
+    except Exception:
+        lock.release()
+        raise
+
+    if not completed.wait(timeout_seconds):
+        raise CameraOperationTimeout(
+            f"Camera {camera_name} operation exceeded {timeout_seconds:.1f}s"
+        )
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("value")
+
+
+def _camera_operation_error(camera_name: str, exc: Exception):
+    if isinstance(exc, CameraOperationBusy):
+        return _json_error(
+            f"Camera {camera_name} busy; another capture or analysis is running",
+            409,
+        )
+    if isinstance(exc, CameraOperationTimeout):
+        logger.error("%s", exc)
+        return _json_error(
+            f"Camera {camera_name} operation timed out; retry after it finishes",
+            504,
+        )
+    if isinstance(exc, CameraLaserControlError):
+        logger.error("%s", exc)
+        return _json_error(str(exc), 503)
+    logger.exception("Camera %s operation failed", camera_name)
+    return _json_error("Internal server error", 500)
 
 
 def _ensure_lidar_connected() -> bool:
@@ -309,8 +394,8 @@ def _stm32_ready() -> bool:
 
 def _runtime_capabilities() -> dict[str, Any]:
     camera_status = {
-        "pi": bool(pi_camera and (pi_camera.is_open or pi_camera.open())),
-        "usb": bool(usb_camera and (usb_camera.is_open or usb_camera.open())),
+        "pi": bool(pi_camera and pi_camera.is_open),
+        "usb": bool(usb_camera and usb_camera.is_open),
     }
     simulation_mode = bool(getattr(scan_session, "_simulation", False))
     acquisition_backend_ready = bool(
@@ -442,15 +527,20 @@ def laser(side: str):
     if gpio_driver is None:
         return _json_error("GPIO driver unavailable", 503)
 
+    if not _laser_operation_lock.acquire(blocking=False):
+        return _json_error("Laser control busy; camera diagnostic in progress", 409)
     try:
-        success = gpio_driver.laser_on(side) if state else gpio_driver.laser_off(side)
-        if not success:
-            return _json_error("Failed to update laser state")
+        try:
+            success = gpio_driver.laser_on(side) if state else gpio_driver.laser_off(side)
+            if not success:
+                return _json_error("Failed to update laser state")
 
-        return jsonify({"success": True, "status": gpio_driver.get_laser_status()})
-    except Exception:
-        logger.exception("Laser route failed")
-        return _json_error("Internal server error", 500)
+            return jsonify({"success": True, "status": gpio_driver.get_laser_status()})
+        except Exception:
+            logger.exception("Laser route failed")
+            return _json_error("Internal server error", 500)
+    finally:
+        _laser_operation_lock.release()
 
 
 @api_bp.route("/api/led/color", methods=["POST"])
@@ -722,9 +812,22 @@ def camera_frame(camera_name: str):
     camera = _get_camera(camera_name)
     if camera is None:
         return _json_error("Unknown camera", 404)
-    if not _ensure_camera_open(camera):
+
+    def capture():
+        if not _ensure_camera_open(camera):
+            return False, None
+        return True, camera.capture_jpeg()
+
+    try:
+        available, jpeg = _run_camera_operation(
+            camera_name,
+            capture,
+            CAMERA_FRAME_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        return _camera_operation_error(camera_name, exc)
+    if not available:
         return _json_error("Camera unavailable", 503)
-    jpeg = camera.capture_jpeg()
     if jpeg is None:
         return _json_error("Camera capture failed", 502)
     return Response(jpeg, mimetype="image/jpeg")
@@ -735,7 +838,14 @@ def camera_status(camera_name: str):
     camera = _get_camera(camera_name)
     if camera is None:
         return _json_error("Unknown camera", 404)
-    available = _ensure_camera_open(camera)
+    try:
+        available = _run_camera_operation(
+            camera_name,
+            lambda: _ensure_camera_open(camera),
+            CAMERA_FRAME_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        return _camera_operation_error(camera_name, exc)
     return jsonify({
         "success": True,
         "camera": camera_name,
@@ -749,13 +859,64 @@ def camera_test(camera_name: str):
     camera = _get_camera(camera_name)
     if camera is None:
         return _json_error("Unknown camera", 404)
-    if not _ensure_camera_open(camera):
+
+    def capture_and_analyze():
+        def capture():
+            available = _ensure_camera_open(camera)
+            return available, camera.capture_jpeg() if available else None
+
+        if camera_name == "pi" and gpio_driver is not None:
+            with _laser_operation_lock:
+                previous_laser_status = gpio_driver.get_laser_status()
+                restore_failures = []
+                try:
+                    for laser_side in ("left", "right"):
+                        if not gpio_driver.laser_off(laser_side):
+                            raise CameraLaserControlError(
+                                "Unable to disable lasers for Pi Camera test"
+                            )
+                    available, jpeg = capture()
+                finally:
+                    for laser_side in ("left", "right"):
+                        restore = (
+                            gpio_driver.laser_on
+                            if previous_laser_status.get(laser_side, False)
+                            else gpio_driver.laser_off
+                        )
+                        try:
+                            if not restore(laser_side):
+                                restore_failures.append(laser_side)
+                        except Exception as exc:
+                            logger.error(
+                                "Could not restore %s laser after camera test: %s",
+                                laser_side,
+                                exc,
+                            )
+                            restore_failures.append(laser_side)
+                    if restore_failures:
+                        raise CameraLaserControlError(
+                            "Unable to restore laser state after Pi Camera test"
+                        )
+        else:
+            available, jpeg = capture()
+
+        if not available or jpeg is None:
+            return available, jpeg, None
+        return True, jpeg, analyze_camera_frame(jpeg)
+
+    try:
+        available, jpeg, result = _run_camera_operation(
+            camera_name,
+            capture_and_analyze,
+            CAMERA_TEST_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        return _camera_operation_error(camera_name, exc)
+    if not available:
         return _json_error("Camera unavailable", 503)
-    jpeg = camera.capture_jpeg()
     if jpeg is None:
         return _json_error("Camera capture failed", 502)
-    result = analyze_camera_frame(jpeg)
-    if not result["analysis_available"]:
+    if not result.get("analysis_available", False):
         return _json_error("OpenCV camera analysis unavailable", 503)
     return jsonify({"success": True, "camera": camera_name, "result": result})
 
@@ -933,33 +1094,47 @@ def laser_align(side: str):
     if gpio_driver is None:
         return _json_error("GPIO driver unavailable", 503)
 
-    if not _ensure_camera_open(pi_camera):
-        return _json_error("Pi Camera unavailable", 503)
-
     side_label = "gauche" if side == "left" else "droit"
 
+    def capture_and_analyze_laser():
+        if not _ensure_camera_open(pi_camera):
+            return False, None, None
+        with _laser_operation_lock:
+            if not gpio_driver.laser_off("left"):
+                raise CameraLaserControlError("Unable to disable left laser")
+            if not gpio_driver.laser_off("right"):
+                raise CameraLaserControlError("Unable to disable right laser")
+            if not gpio_driver.laser_on(side):
+                raise CameraLaserControlError(f"Unable to enable {side} laser")
+            try:
+                jpeg = pi_camera.capture_jpeg()
+            finally:
+                if not gpio_driver.laser_off(side):
+                    logger.error("Unable to disable %s laser after alignment", side)
+        return (
+            True,
+            jpeg,
+            analyze_laser_line(jpeg) if jpeg is not None else None,
+        )
+
     try:
-        # Turn off both lasers, then enable only the requested one
-        gpio_driver.laser_off("left")
-        gpio_driver.laser_off("right")
-        gpio_driver.laser_on(side)
-
-        jpeg = pi_camera.capture_jpeg()
-
-        gpio_driver.laser_off(side)
-    except Exception:
-        # Best-effort cleanup
+        available, jpeg, result = _run_camera_operation(
+            "pi",
+            capture_and_analyze_laser,
+            CAMERA_TEST_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
         try:
             gpio_driver.laser_off(side)
-        except Exception:
-            pass
-        logger.exception("Laser align route failed")
-        return _json_error("Internal server error", 500)
+        except Exception as cleanup_exc:
+            logger.error("Laser cleanup failed after camera error: %s", cleanup_exc)
+        return _camera_operation_error("pi", exc)
 
+    if not available:
+        return _json_error("Pi Camera unavailable", 503)
     if jpeg is None:
         return _json_error("Pi Camera capture failed", 503)
 
-    result = analyze_laser_line(jpeg)
     if not result.get("analysis_available", False):
         return _json_error("OpenCV laser analysis unavailable", 503)
 

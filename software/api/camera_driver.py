@@ -88,11 +88,28 @@ class LogitechCamera:
     #: in half.
     _last_working_device_id: int | None = None
 
-    def __init__(self, device_id: int = 0):
-        self.device_id = device_id
+    def __init__(self, device_id: int | str | None = None):
+        self.device_id = self._normalize_device_id(device_id)
         self._cap = None
         self._lock = threading.Lock()
         self.last_error: str | None = None
+
+    @staticmethod
+    def _normalize_device_id(device_id: int | str | None) -> int | None:
+        if device_id is None:
+            return None
+        if isinstance(device_id, str):
+            if device_id.strip().lower() in ("", "auto"):
+                return None
+            try:
+                return int(device_id)
+            except ValueError:
+                logger.warning(
+                    "Invalid USB camera device_id=%r; falling back to automatic detection",
+                    device_id,
+                )
+                return None
+        return int(device_id)
 
     def open(self) -> bool:
         if not _CV2_AVAILABLE:
@@ -102,7 +119,9 @@ class LogitechCamera:
             )
             return False
         with self._lock:
-            candidates = [self.device_id, *self.FALLBACK_DEVICE_IDS]
+            candidates = [*self.FALLBACK_DEVICE_IDS]
+            if self.device_id is not None:
+                candidates = [self.device_id, *candidates]
             if LogitechCamera._last_working_device_id is not None:
                 candidates = [LogitechCamera._last_working_device_id, *candidates]
             seen: set = set()
@@ -200,9 +219,19 @@ class LogitechCamera:
 class PiCamera:
     """Captures frames from the Raspberry Pi camera module."""
 
+    LOCK_WAIT_SECONDS = 0.25
+
     def __init__(self):
         self._cam = None
+        self._lock = threading.Lock()
         self.last_error: str | None = None
+
+    def _acquire(self, operation: str) -> bool:
+        if self._lock.acquire(timeout=self.LOCK_WAIT_SECONDS):
+            return True
+        self.last_error = f"Pi Camera occupee pendant {operation}; reessayez."
+        logger.warning("PiCam %s skipped because another operation is active", operation)
+        return False
 
     def open(self) -> bool:
         if not _PICAM_AVAILABLE:
@@ -210,6 +239,8 @@ class PiCamera:
                 "picamera2 n'est pas installe ou le module libcamera est indisponible. "
                 "Installez-le avec: sudo apt install -y python3-picamera2"
             )
+            return False
+        if not self._acquire("l'ouverture"):
             return False
         try:
             self._cam = Picamera2()
@@ -229,15 +260,20 @@ class PiCamera:
             )
             self._cam = None
             return False
+        finally:
+            self._lock.release()
 
     def close(self) -> None:
+        if not self._acquire("la fermeture"):
+            return
         if self._cam:
             try:
                 self._cam.stop()
                 self._cam.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("PiCam close failed: %s", exc)
             self._cam = None
+        self._lock.release()
 
     @property
     def is_open(self) -> bool:
@@ -245,6 +281,8 @@ class PiCamera:
 
     def capture_jpeg(self) -> bytes | None:
         if not self.is_open:
+            return None
+        if not self._acquire("la capture"):
             return None
         try:
             from PIL import Image
@@ -262,7 +300,10 @@ class PiCamera:
             return buf.getvalue()
         except Exception as exc:
             logger.error("PiCam capture failed: %s", exc)
+            self.last_error = f"Capture Pi Camera impossible: {exc}"
             return None
+        finally:
+            self._lock.release()
 
     def capture_jpeg_b64(self) -> str | None:
         jpeg = self.capture_jpeg()
@@ -384,8 +425,14 @@ def analyze_laser_line(jpeg: bytes) -> dict:
 def analyze_camera_frame(
     jpeg: bytes,
     checkerboard_sizes: tuple[tuple[int, int], ...] = ((12, 7), (11, 6), (9, 6)),
+    max_analysis_width: int = 960,
 ) -> dict:
-    """Measure image quality and detect a calibration checkerboard."""
+    """Measure image quality and detect a calibration checkerboard.
+
+    Checkerboard detection runs on a bounded-size image, while reported image
+    dimensions and checkerboard coordinates remain in the captured frame's
+    coordinate system.
+    """
     if not _CV2_AVAILABLE:
         return {"analysis_available": False}
 
@@ -395,7 +442,20 @@ def analyze_camera_frame(
         image = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
         if image is None:
             raise ValueError("JPEG decode failed")
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        frame_height, frame_width = image.shape[:2]
+        analysis_image = image
+        if max_analysis_width > 0 and frame_width > max_analysis_width:
+            scale = max_analysis_width / frame_width
+            analysis_size = (
+                max_analysis_width,
+                max(1, int(round(frame_height * scale))),
+            )
+            analysis_image = cv2.resize(
+                image,
+                analysis_size,
+                interpolation=cv2.INTER_AREA,
+            )
+        gray = cv2.cvtColor(analysis_image, cv2.COLOR_BGR2GRAY)
         checkerboard_found = False
         checkerboard_size = None
         checkerboard_corners = None
@@ -407,7 +467,7 @@ def analyze_camera_frame(
                 checkerboard_corners = corners
                 break
 
-        height, width = gray.shape
+        analysis_height, analysis_width = gray.shape
         brightness = float(gray.mean())
         sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         center_x = None
@@ -416,15 +476,17 @@ def analyze_camera_frame(
         offset_y = None
         if checkerboard_corners is not None:
             points = checkerboard_corners.reshape(-1, 2)
-            center_x = float(points[:, 0].mean())
-            center_y = float(points[:, 1].mean())
-            offset_x = center_x - ((width - 1) / 2.0)
-            offset_y = center_y - ((height - 1) / 2.0)
+            center_x = float(points[:, 0].mean()) * frame_width / analysis_width
+            center_y = float(points[:, 1].mean()) * frame_height / analysis_height
+            offset_x = center_x - ((frame_width - 1) / 2.0)
+            offset_y = center_y - ((frame_height - 1) / 2.0)
 
         return {
             "analysis_available": True,
-            "width": width,
-            "height": height,
+            "width": frame_width,
+            "height": frame_height,
+            "analysis_width": analysis_width,
+            "analysis_height": analysis_height,
             "brightness": round(brightness, 1),
             "sharpness": round(sharpness, 1),
             "checkerboard_found": checkerboard_found,

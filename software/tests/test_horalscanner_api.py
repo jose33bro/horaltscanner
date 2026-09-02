@@ -2,6 +2,8 @@ import importlib
 import json
 import runpy
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -301,6 +303,28 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertIn("simulation_mode", data["status"])
         self.assertIn("acquisition_backend_ready", data["capabilities"])
 
+    def test_status_does_not_open_cameras_during_health_poll(self):
+        class ClosedCamera:
+            is_open = False
+
+            def open(self):
+                raise AssertionError("health polling must not initialize cameras")
+
+        original_pi_camera = self.api_module.pi_camera
+        original_usb_camera = self.api_module.usb_camera
+        self.addCleanup(setattr, self.api_module, "pi_camera", original_pi_camera)
+        self.addCleanup(setattr, self.api_module, "usb_camera", original_usb_camera)
+        self.api_module.pi_camera = ClosedCamera()
+        self.api_module.usb_camera = ClosedCamera()
+
+        response = self.client.get("/api/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json()["capabilities"]["camera_available"],
+            {"pi": False, "usb": False},
+        )
+
     def test_scan_start_falls_back_to_simulation(self):
         self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
         response = self.client.post("/api/scan/start")
@@ -419,11 +443,140 @@ class HoralScannerAPITests(unittest.TestCase):
             "sharpness": 300.0,
             "checkerboard_found": True,
         }
+        self.fake_gpio.laser_status["left"] = True
 
         response = self.client.post("/api/camera/pi/test")
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["result"]["checkerboard_found"])
+        self.assertEqual(
+            self.fake_gpio.laser_status,
+            {"left": True, "right": False},
+        )
+        self.assertIn(("laser_off", "left"), self.fake_gpio.calls)
+        self.assertIn(("laser_off", "right"), self.fake_gpio.calls)
+        self.assertIn(("laser_on", "left"), self.fake_gpio.calls)
+
+    def test_pi_camera_test_aborts_when_lasers_cannot_be_disabled(self):
+        class FakeCamera:
+            is_open = True
+
+            def open(self):
+                return True
+
+            def capture_jpeg(self):
+                raise AssertionError("capture must not run with lasers active")
+
+        original_camera = self.api_module.pi_camera
+        original_laser_off = self.fake_gpio.laser_off
+        self.addCleanup(setattr, self.api_module, "pi_camera", original_camera)
+        self.addCleanup(setattr, self.fake_gpio, "laser_off", original_laser_off)
+        self.api_module.pi_camera = FakeCamera()
+        self.fake_gpio.laser_off = lambda _side: False
+
+        response = self.client.post("/api/camera/pi/test")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("laser", response.get_json()["error"].lower())
+
+    def test_camera_frame_timeout_returns_promptly_and_keeps_camera_busy(self):
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+
+        class BlockingCamera:
+            is_open = True
+
+            def open(self):
+                return True
+
+            def capture_jpeg(self):
+                started.set()
+                release.wait(1)
+                finished.set()
+                return b"jpeg"
+
+        original_camera = self.api_module.pi_camera
+        original_timeout = self.api_module.CAMERA_FRAME_TIMEOUT_SECONDS
+        original_lock = self.api_module._camera_operation_locks["pi"]
+        self.addCleanup(setattr, self.api_module, "pi_camera", original_camera)
+        self.addCleanup(
+            setattr,
+            self.api_module,
+            "CAMERA_FRAME_TIMEOUT_SECONDS",
+            original_timeout,
+        )
+        self.addCleanup(
+            self.api_module._camera_operation_locks.__setitem__,
+            "pi",
+            original_lock,
+        )
+        self.api_module.pi_camera = BlockingCamera()
+        self.api_module.CAMERA_FRAME_TIMEOUT_SECONDS = 0.02
+        self.api_module._camera_operation_locks["pi"] = threading.Lock()
+
+        began = time.monotonic()
+        response = self.client.get("/api/camera/pi/frame")
+        elapsed = time.monotonic() - began
+        self.assertTrue(started.is_set())
+        self.assertEqual(response.status_code, 504)
+        self.assertLess(elapsed, 0.5)
+
+        busy_response = self.client.post("/api/camera/pi/test")
+        self.assertEqual(busy_response.status_code, 409)
+
+        release.set()
+        self.assertTrue(finished.wait(0.5))
+
+    def test_camera_test_timeout_does_not_start_overlapping_analysis(self):
+        analysis_started = threading.Event()
+        release = threading.Event()
+        analysis_finished = threading.Event()
+
+        class FakeCamera:
+            is_open = True
+
+            def open(self):
+                return True
+
+            def capture_jpeg(self):
+                return b"jpeg"
+
+        def blocking_analysis(_jpeg):
+            analysis_started.set()
+            release.wait(1)
+            analysis_finished.set()
+            return {"analysis_available": True}
+
+        original_camera = self.api_module.pi_camera
+        original_analyzer = self.api_module.analyze_camera_frame
+        original_timeout = self.api_module.CAMERA_TEST_TIMEOUT_SECONDS
+        original_lock = self.api_module._camera_operation_locks["pi"]
+        self.addCleanup(setattr, self.api_module, "pi_camera", original_camera)
+        self.addCleanup(setattr, self.api_module, "analyze_camera_frame", original_analyzer)
+        self.addCleanup(
+            setattr,
+            self.api_module,
+            "CAMERA_TEST_TIMEOUT_SECONDS",
+            original_timeout,
+        )
+        self.addCleanup(
+            self.api_module._camera_operation_locks.__setitem__,
+            "pi",
+            original_lock,
+        )
+        self.api_module.pi_camera = FakeCamera()
+        self.api_module.analyze_camera_frame = blocking_analysis
+        self.api_module.CAMERA_TEST_TIMEOUT_SECONDS = 0.02
+        self.api_module._camera_operation_locks["pi"] = threading.Lock()
+
+        response = self.client.post("/api/camera/pi/test")
+        self.assertTrue(analysis_started.is_set())
+        self.assertEqual(response.status_code, 504)
+        self.assertEqual(self.client.get("/api/camera/pi/frame").status_code, 409)
+
+        release.set()
+        self.assertTrue(analysis_finished.wait(0.5))
 
     def test_camera_usb_status_reports_available_when_open_succeeds(self):
         class FakeUsbCamera:
@@ -649,6 +802,55 @@ class HoralScannerAPITests(unittest.TestCase):
         # Laser should have been turned on then off
         self.assertIn(("laser_on", "left"), self.fake_gpio.calls)
         self.assertIn(("laser_off", "left"), self.fake_gpio.calls)
+
+    def test_laser_align_analysis_timeout_returns_504(self):
+        analysis_started = threading.Event()
+        release = threading.Event()
+        analysis_finished = threading.Event()
+
+        class FakeCamera:
+            is_open = True
+
+            def open(self):
+                return True
+
+            def capture_jpeg(self):
+                return b"jpeg"
+
+        def blocking_analysis(_jpeg):
+            analysis_started.set()
+            release.wait(1)
+            analysis_finished.set()
+            return {"analysis_available": True, "line_detected": False}
+
+        original_camera = self.api_module.pi_camera
+        original_analyzer = self.api_module.analyze_laser_line
+        original_timeout = self.api_module.CAMERA_TEST_TIMEOUT_SECONDS
+        original_lock = self.api_module._camera_operation_locks["pi"]
+        self.addCleanup(setattr, self.api_module, "pi_camera", original_camera)
+        self.addCleanup(setattr, self.api_module, "analyze_laser_line", original_analyzer)
+        self.addCleanup(
+            setattr,
+            self.api_module,
+            "CAMERA_TEST_TIMEOUT_SECONDS",
+            original_timeout,
+        )
+        self.addCleanup(
+            self.api_module._camera_operation_locks.__setitem__,
+            "pi",
+            original_lock,
+        )
+        self.api_module.pi_camera = FakeCamera()
+        self.api_module.analyze_laser_line = blocking_analysis
+        self.api_module.CAMERA_TEST_TIMEOUT_SECONDS = 0.02
+        self.api_module._camera_operation_locks["pi"] = threading.Lock()
+
+        response = self.client.post("/api/laser/align/left")
+
+        self.assertTrue(analysis_started.is_set())
+        self.assertEqual(response.status_code, 504)
+        release.set()
+        self.assertTrue(analysis_finished.wait(0.5))
 
     def test_laser_align_invalid_side_returns_400(self):
         response = self.client.post("/api/laser/align/invalid")

@@ -3,6 +3,7 @@ LIDAR Driver - TF-Luna serial communication
 """
 
 import logging
+import math
 import struct
 import threading
 import time
@@ -88,23 +89,25 @@ class LidarDriver:
                 logger.error("LIDAR read error: %s", exc)
                 return None
 
-    def set_output_enabled(self, enabled: bool) -> bool:
+    def set_output_enabled(self, enabled: bool, *, timeout_s: float = 0.5) -> bool:
         """Enable or suspend TF-Luna ranging output using its checksummed command."""
+        if not math.isfinite(timeout_s) or timeout_s <= 0:
+            logger.error("LIDAR output command timeout must be positive")
+            return False
         command = TFLUNA_OUTPUT_ENABLE if enabled else TFLUNA_OUTPUT_DISABLE
         with self._io_lock:
             if not self.connected:
                 logger.error("LIDAR output command failed: device is disconnected")
                 return False
+            previous_write_timeout = getattr(self._ser, "write_timeout", None)
             try:
+                if hasattr(self._ser, "write_timeout"):
+                    self._ser.write_timeout = timeout_s
                 written = self._ser.write(command)
                 if written is not None and written != len(command):
                     raise IOError(
                         f"short TF-Luna command write: {written}/{len(command)} bytes"
                     )
-                flush = getattr(self._ser, "flush", None)
-                if flush is not None:
-                    flush()
-                self._ser.reset_input_buffer()
                 logger.info(
                     "LIDAR ranging output %s",
                     "enabled" if enabled else "suspended",
@@ -113,6 +116,9 @@ class LidarDriver:
             except Exception as exc:
                 logger.error("LIDAR output command failed: %s", exc)
                 return False
+            finally:
+                if hasattr(self._ser, "write_timeout"):
+                    self._ser.write_timeout = previous_write_timeout
 
     # ------------------------------------------------------------------
     # Calibration

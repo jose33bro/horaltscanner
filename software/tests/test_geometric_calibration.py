@@ -239,7 +239,8 @@ class _Lidar:
     def read_distance_mm():
         return 200.0
 
-    def set_output_enabled(self, enabled):
+    def set_output_enabled(self, enabled, *, timeout_s):
+        assert timeout_s > 0
         self.output_commands.append(enabled)
         return True
 
@@ -373,8 +374,11 @@ class CalibrationServiceTests(unittest.TestCase):
         self.assertFalse(self.service.status()["lidar_output_suspended"])
 
     def test_checkerboard_capture_attempts_restore_if_output_suspend_fails(self):
-        def set_output(enabled):
+        def set_output(enabled, *, timeout_s):
+            self.assertGreater(timeout_s, 0)
             self.service._lidar.output_commands.append(enabled)
+            if not enabled:
+                self.assertTrue(self.service._lidar_output_restore_required)
             return enabled
 
         self.service._lidar.set_output_enabled = set_output
@@ -384,6 +388,7 @@ class CalibrationServiceTests(unittest.TestCase):
             )
         self.assertEqual(self.service._lidar.output_commands, [False, True])
         self.assertFalse(self.service.status()["lidar_output_suspended"])
+        self.assertFalse(self.service._lidar_output_restore_required)
 
     def test_checkerboard_capture_restores_lidar_output_on_cancellation(self):
         def cancel(_poses):

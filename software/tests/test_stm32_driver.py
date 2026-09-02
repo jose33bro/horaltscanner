@@ -497,7 +497,7 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
                         "rotation_distance": 40,
                         "microsteps": 16,
                         "position_min": 0,
-                        "position_max": 195,
+                        "position_max": 210,
                     }
                 }
             }
@@ -505,9 +505,14 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
 
         self.assertFalse(driver.move_motor("x", 10))
         self.assertTrue(driver.home_motor("x"))
+        self.assertEqual(driver.get_motor_limits("x"), (0.0, 195.0))
         self.assertFalse(driver.move_motor("x", -1))
+        self.assertFalse(driver.move_motor("x", 195.001))
+        self.assertFalse(driver.move_motor_to("x", 200))
+        self.assertFalse(driver.move_motor_to("x", 195.001))
         self.assertFalse(driver.move_motor("x", 196))
         self.assertTrue(driver.move_motor("x", 195))
+        self.assertTrue(driver.move_motor_to("x", 195))
 
 
 if __name__ == "__main__":

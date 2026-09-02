@@ -455,7 +455,7 @@ class GeometricCalibrationService:
         self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
         self._active = False
-        self._lidar_output_suspended = False
+        self._lidar_output_restore_required = False
         self._status = self._new_status()
         self._report: dict[str, Any] = {}
         self._reference_pose = dict(
@@ -793,17 +793,21 @@ class GeometricCalibrationService:
         if setter is None:
             raise CalibrationError("TF-Luna driver cannot control ranging output")
         label = f"TF-Luna output {'enable' if enabled else 'suspend'}"
-        succeeded = self._hardware_call(
-            label,
-            lambda: setter(enabled),
-            float(self._config.get("lidar_timeout_s", 2.0)),
-            check_cancel=False,
-        )
+        if not enabled:
+            with self._lock:
+                self._lidar_output_restore_required = True
+                self._status["lidar_output_suspended"] = True
+        timeout_s = float(self._config.get("lidar_timeout_s", 2.0))
+        try:
+            succeeded = setter(enabled, timeout_s=timeout_s)
+        except Exception as exc:
+            raise CalibrationError(f"{label} failed: {exc}") from exc
         if succeeded is not True:
             raise CalibrationError(f"{label} failed")
-        with self._lock:
-            self._lidar_output_suspended = not enabled
-            self._status["lidar_output_suspended"] = not enabled
+        if enabled:
+            with self._lock:
+                self._lidar_output_restore_required = False
+                self._status["lidar_output_suspended"] = False
 
     def _capture_checkerboard_views_output_suspended(
         self, poses: list[dict[str, float]]
@@ -1520,7 +1524,7 @@ class GeometricCalibrationService:
             raise CalibrationError(f"failed to force lasers off: {', '.join(failures)}")
 
     def _safe_outputs(self) -> None:
-        if self._lidar_output_suspended:
+        if self._lidar_output_restore_required:
             try:
                 self._set_lidar_output_enabled(True)
             except Exception as exc:

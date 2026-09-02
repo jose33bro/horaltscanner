@@ -12,6 +12,8 @@ from typing import Callable
 
 logger = logging.getLogger(__name__)
 
+_HARD_X_MAX_MM = 195.0
+
 _FAN_CHANNELS: dict[str, str] = {
     "creality": "PA0",
     "temperature": "PA8",
@@ -288,7 +290,19 @@ class STM32Driver:
     # ------------------------------------------------------------------
 
     def _axis_cfg(self, axis: str) -> dict | None:
-        return self._motor_cfg.get(axis.lower())
+        axis = axis.lower()
+        cfg = self._motor_cfg.get(axis)
+        if cfg is None or axis != "x":
+            return cfg
+        capped = dict(cfg)
+        try:
+            capped["position_max"] = min(
+                float(capped.get("position_max", float("inf"))),
+                _HARD_X_MAX_MM,
+            )
+        except (TypeError, ValueError):
+            capped["position_max"] = float("-inf")
+        return capped
 
     def get_motor_limits(self, axis: str) -> tuple[float, float] | None:
         cfg = self._axis_cfg(axis)

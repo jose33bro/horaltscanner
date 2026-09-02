@@ -16,6 +16,7 @@ class _Serial:
         self.writes = []
         self.flushes = 0
         self.resets = 0
+        self.write_timeout = 0.5
 
     def write(self, data):
         self.writes.append(data)
@@ -44,6 +45,16 @@ class _BlockingReadSerial(_Serial):
         return next(self.responses)
 
 
+class _BlockingFlushSerial(_Serial):
+    def __init__(self):
+        super().__init__()
+        self.flush_entered = threading.Event()
+
+    def flush(self):
+        self.flush_entered.set()
+        threading.Event().wait(1)
+
+
 class LidarDriverTests(unittest.TestCase):
     def setUp(self):
         self.driver = LidarDriver()
@@ -59,8 +70,9 @@ class LidarDriverTests(unittest.TestCase):
         )
         self.assertEqual(TFLUNA_OUTPUT_DISABLE, bytes.fromhex("5A05070066"))
         self.assertEqual(TFLUNA_OUTPUT_ENABLE, bytes.fromhex("5A05070167"))
-        self.assertEqual(self.serial.flushes, 2)
-        self.assertEqual(self.serial.resets, 2)
+        self.assertEqual(self.serial.flushes, 0)
+        self.assertEqual(self.serial.resets, 0)
+        self.assertEqual(self.serial.write_timeout, 0.5)
 
     def test_output_command_reports_short_write(self):
         self.serial.write = lambda _data: 2
@@ -70,6 +82,21 @@ class LidarDriverTests(unittest.TestCase):
         self.serial.is_open = False
         self.assertFalse(self.driver.set_output_enabled(True))
         self.assertEqual(self.serial.writes, [])
+
+    def test_output_commands_never_call_potentially_blocking_flush(self):
+        serial = _BlockingFlushSerial()
+        self.driver._ser = serial
+        started = time.monotonic()
+
+        self.assertTrue(self.driver.set_output_enabled(False, timeout_s=0.05))
+        self.assertTrue(self.driver.set_output_enabled(True, timeout_s=0.05))
+
+        self.assertLess(time.monotonic() - started, 0.2)
+        self.assertFalse(serial.flush_entered.is_set())
+        self.assertEqual(
+            serial.writes,
+            [TFLUNA_OUTPUT_DISABLE, TFLUNA_OUTPUT_ENABLE],
+        )
 
     def test_output_command_waits_for_in_progress_read(self):
         serial = _BlockingReadSerial()

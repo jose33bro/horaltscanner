@@ -104,12 +104,12 @@ limited CPU cores:
 ```bash
 pip install -r requirements.txt  # installs gunicorn + gevent
 cd software
-gunicorn --workers 4 --worker-class gevent --bind 0.0.0.0:5000 "api:create_app()"
+gunicorn --workers 1 --worker-class gevent --bind 0.0.0.0:5000 "api:create_app()"
 ```
 
-- `--workers 4`: 4 worker processes let the API accept and answer several
-  requests (status polling, camera preview, UI) at once instead of queuing
-  behind a single-threaded dev server.
+- `--workers 1`: hardware acquisition must have exactly one owning process.
+  Multiple worker processes would each create independent GPIO, serial, camera,
+  and scan-session state and are unsafe for physical scanning.
 - `--worker-class gevent`: cooperative greenlets inside each worker so
   blocking I/O (camera reads, file responses) doesn't stall other
   in-flight requests on that worker.
@@ -120,7 +120,7 @@ Update the `ExecStart` line in the service file above to use Gunicorn
 instead of the Flask dev server:
 
 ```ini
-ExecStart=/home/pi/horaltscanner_env/bin/gunicorn --workers 4 --worker-class gevent --bind 0.0.0.0:5000 "api:create_app()"
+ExecStart=/home/pi/horaltscanner_env/bin/gunicorn --workers 1 --worker-class gevent --bind 0.0.0.0:5000 "api:create_app()"
 ```
 
 Then reload and restart as usual:

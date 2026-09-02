@@ -3,11 +3,13 @@ Camera Driver - PiCam (CSI) + Logitech (USB) capture
 """
 
 import base64
+import glob
 import io
 import logging
 import math
 import threading
 import time
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,8 @@ def _make_placeholder() -> bytes:
 class LogitechCamera:
     """Captures frames from a V4L2 USB camera (Logitech C270 etc.)."""
 
+    FRESH_FRAME_GRABS = 2
+
     #: Indices tried, in order, when the configured ``device_id`` fails to
     #: open or fails to deliver a frame.
     FALLBACK_DEVICE_IDS = (0, 1, 2, 3)
@@ -86,7 +90,7 @@ class LogitechCamera:
     #: camera open (e.g. after a restart) tries the known-good index first
     #: instead of re-probing every candidate, cutting USB init time roughly
     #: in half.
-    _last_working_device_id: int | None = None
+    _last_working_device_id: int | str | None = None
 
     def __init__(self, device_id: int | str | None = None):
         self.device_id = self._normalize_device_id(device_id)
@@ -119,7 +123,7 @@ class LogitechCamera:
             )
             return False
         with self._lock:
-            candidates = [*self.FALLBACK_DEVICE_IDS]
+            candidates = self._automatic_device_candidates()
             if self.device_id is not None:
                 candidates = [self.device_id, *candidates]
             if LogitechCamera._last_working_device_id is not None:
@@ -136,11 +140,14 @@ class LogitechCamera:
                 opened = cap.isOpened()
                 ok = False
                 if opened:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+                    buffer_size_property = getattr(cv2, "CAP_PROP_BUFFERSIZE", None)
+                    if buffer_size_property is not None:
+                        cap.set(buffer_size_property, 1)
                     ok, _frame = cap.read()
 
                 if opened and ok:
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
                     self._cap = cap
                     if idx != self.device_id:
                         logger.info(
@@ -173,6 +180,39 @@ class LogitechCamera:
             )
             return False
 
+    @classmethod
+    def _automatic_device_candidates(cls) -> list[int | str]:
+        """Prefer stable Logitech V4L2 identities, then enumerate all video nodes."""
+        candidates: list[int | str] = []
+        by_id = sorted(glob.glob("/dev/v4l/by-id/*"))
+        candidates.extend(
+            path
+            for path in by_id
+            if any(token in path.lower() for token in ("logitech", "046d", "c270"))
+            and "video-index0" in path.lower()
+        )
+
+        for name_path in sorted(glob.glob("/sys/class/video4linux/video*/name")):
+            try:
+                device_name = Path(name_path).read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if not any(
+                token in device_name.lower()
+                for token in ("logitech", "046d", "c270")
+            ):
+                continue
+            suffix = Path(name_path).parent.name.removeprefix("video")
+            if suffix.isdigit():
+                candidates.append(int(suffix))
+
+        for device_path in sorted(glob.glob("/dev/video[0-9]*")):
+            suffix = Path(device_path).name.removeprefix("video")
+            if suffix.isdigit():
+                candidates.append(int(suffix))
+        candidates.extend(cls.FALLBACK_DEVICE_IDS)
+        return candidates
+
     def close(self) -> None:
         with self._lock:
             if self._cap:
@@ -184,14 +224,28 @@ class LogitechCamera:
         return self._cap is not None and self._cap.isOpened()
 
     def capture_jpeg(self) -> bytes | None:
-        """Capture one frame and return JPEG bytes."""
+        """Discard a bounded queue prefix and return a freshly encoded frame."""
         with self._lock:
             if not self.is_open:
                 return None
+            grab = getattr(self._cap, "grab", None)
+            for _ in range(self.FRESH_FRAME_GRABS):
+                if callable(grab):
+                    ok = grab()
+                else:
+                    ok, _discarded = self._cap.read()
+                if not ok:
+                    self.last_error = "USB camera failed while discarding a queued frame"
+                    return None
             ret, frame = self._cap.read()
             if not ret:
+                self.last_error = "USB camera failed to capture a fresh frame"
                 return None
-            _, buf = cv2.imencode(".jpg", frame)
+            encoded, buf = cv2.imencode(".jpg", frame)
+            if not encoded:
+                self.last_error = "USB camera failed to encode a fresh frame"
+                return None
+            self.last_error = None
             return buf.tobytes()
 
     def capture_jpeg_b64(self) -> str | None:

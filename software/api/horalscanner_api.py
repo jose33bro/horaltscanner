@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import sys
 import threading
 import time
@@ -25,6 +24,8 @@ from flask import (
     Blueprint,
     Flask,
     Response,
+    g,
+    has_request_context,
     jsonify,
     request,
     send_file,
@@ -60,7 +61,14 @@ from software.api.calibration_pose import (
     read_lidar_distance,
 )
 from software.api.lidar_driver import LidarDriver
-from software.api.scanner_engine import ReconstructionEngine, ScanSession, _O3D_AVAILABLE
+from software.api.hardware_lock import HardwareReservationLock
+from software.api.scanner_engine import (
+    ReconstructionEngine,
+    ScanPreflightError,
+    ScanSession,
+    _O3D_AVAILABLE,
+)
+from api.services import scan_service
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +107,65 @@ def _add_cors(response):
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
+
+
+@api_bp.before_request
+def _guard_scan_hardware_reservation():
+    """Prevent manual controls from racing a physical acquisition."""
+    allowed = {"/api/motor/stop", "/api/motor/status"}
+    guarded = (
+        request.path.startswith((
+            "/api/move/",
+            "/api/home/",
+            "/api/rotate",
+            "/api/laser/",
+            "/api/camera/",
+            "/api/lidar/",
+        ))
+        or (
+            request.method == "POST"
+            and request.path.startswith("/api/scan/pose/")
+        )
+    )
+    if request.path in allowed or not guarded:
+        return None
+
+    session = globals().get("scan_session")
+    reservation = globals().get("_scan_hardware_lock")
+    if (
+        session is not None
+        and bool(getattr(session, "hardware_reserved", False))
+    ) or reservation is None or not reservation.acquire(blocking=False):
+        return _json_error(
+            "Scanner hardware is reserved by an active acquisition",
+            409,
+            hint="Stop the scan before using manual motor, laser, camera, or LiDAR controls.",
+        )
+    g.scan_hardware_lock_acquired = True
+    return None
+
+
+@api_bp.after_request
+def _release_request_hardware_reservation(response):
+    if getattr(g, "scan_hardware_lock_acquired", False):
+        g.scan_hardware_lock_acquired = False
+        camera_lock = getattr(g, "scan_hardware_operation_lock", None)
+        if camera_lock is not None and camera_lock.locked():
+            threading.Thread(
+                target=_release_after_camera_operation,
+                args=(camera_lock,),
+                name="camera-hardware-quarantine",
+                daemon=True,
+            ).start()
+        else:
+            _scan_hardware_lock.release()
+    return response
+
+
+def _release_after_camera_operation(camera_lock: threading.Lock) -> None:
+    camera_lock.acquire()
+    camera_lock.release()
+    _scan_hardware_lock.release()
 
 
 @api_bp.route("/", methods=["GET"])
@@ -185,6 +252,21 @@ serial_config = hardware_config.get("serial", {})
 camera_config = hardware_config.get("cameras", {})
 scanner_config = application_config.get("scanner", {})
 
+
+def _simulation_enabled(config: dict[str, Any]) -> bool:
+    """Resolve the configured acquisition mode without an implicit fallback."""
+    configured_mode = config.get("mode")
+    if configured_mode is None:
+        return bool(config.get("simulation", False))
+    mode = str(configured_mode).strip().lower()
+    if mode not in {"real", "simulation"}:
+        raise ValueError("scanner.mode must be either 'real' or 'simulation'")
+    legacy_mode = "simulation" if bool(config.get("simulation", False)) else "real"
+    if "simulation" in config and legacy_mode != mode:
+        raise ValueError("scanner.mode and scanner.simulation configure conflicting modes")
+    return mode == "simulation"
+
+
 stm32_driver = (
     STM32Driver(simulation=not stm32_enabled, hardware_config=hardware_config)
     if STM32Driver
@@ -199,7 +281,19 @@ lidar_driver = LidarDriver(
 )
 pi_camera = PiCamera()
 usb_camera = LogitechCamera(device_id=camera_config.get("usb_device_id", "auto"))
-scan_session = ScanSession(simulation=bool(scanner_config.get("simulation", False)))
+_scan_hardware_lock = HardwareReservationLock()
+scan_session = ScanSession(
+    simulation=_simulation_enabled(scanner_config),
+    motor_driver=stm32_driver,
+    gpio_driver=gpio_driver,
+    cameras={"pi": pi_camera, "usb": usb_camera},
+    lidar_driver=lidar_driver,
+    config=scanner_config.get("acquisition", {}),
+    calibration=hardware_config.get("scan_calibration", {}),
+    saved_poses_provider=get_all_saved_poses,
+    laser_line_analyzer=analyze_laser_line,
+    hardware_reservation=_scan_hardware_lock,
+)
 reconstruction_engine = ReconstructionEngine(scan_session)
 pose_memory = PoseMemory()
 _CALIBRATION_LIDAR_TARGET_MM = {"pi": 300.0, "usb": 300.0}
@@ -211,7 +305,6 @@ _camera_operation_locks = {
     "usb": threading.Lock(),
 }
 _laser_operation_lock = threading.Lock()
-_motor_operation_lock = threading.Lock()
 
 _initialize_driver(stm32_driver, "STM32Driver")
 _initialize_driver(gpio_driver, "GPIODriver")
@@ -268,6 +361,8 @@ def _run_camera_operation(
     lock = _camera_operation_locks[camera_name]
     if not lock.acquire(blocking=False):
         raise CameraOperationBusy(f"Camera {camera_name} busy")
+    if has_request_context() and getattr(g, "scan_hardware_lock_acquired", False):
+        g.scan_hardware_operation_lock = lock
 
     completed = threading.Event()
     outcome: dict[str, Any] = {}
@@ -395,78 +490,18 @@ def _stm32_ready() -> bool:
     return bool(stm32_driver is not None and getattr(stm32_driver, "connected", False))
 
 
-def _motor_limits(axis: str) -> tuple[float, float]:
-    limits_getter = getattr(stm32_driver, "get_motor_limits", None)
-    limits = limits_getter(axis) if callable(limits_getter) else None
-    if limits is None:
-        axis_config = hardware_config.get("motors", {}).get(axis, {})
-        limits = (
-            axis_config.get("position_min", 0.0),
-            axis_config.get("position_max"),
-        )
-    try:
-        position_min, position_max = (float(value) for value in limits)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"Invalid configured limits for axis {axis.upper()}"
-        ) from exc
-    if (
-        not math.isfinite(position_min)
-        or not math.isfinite(position_max)
-        or position_max <= position_min
-    ):
-        raise ValueError(f"Invalid configured limits for axis {axis.upper()}")
-    return position_min, position_max
-
-
-def _prepare_scan_x_center() -> dict[str, float | bool]:
-    if not _stm32_ready():
-        raise ConnectionError("STM32 motor controller unavailable")
-
-    position_min, position_max = _motor_limits("x")
-    target = position_min + ((position_max - position_min) / 2.0)
-    if not position_min <= target <= position_max:
-        raise ValueError("Calculated X center is outside configured limits")
-    if not stm32_driver.home_motor("x"):
-        raise RuntimeError("X homing failed")
-
-    move_to = getattr(stm32_driver, "move_motor_to", None)
-    if callable(move_to):
-        moved = move_to("x", target)
-    else:
-        status = stm32_driver.get_motor_status()
-        current = float(status.get("positions", {}).get("x", position_min))
-        moved = stm32_driver.move_motor("x", target - current)
-    if not moved:
-        raise RuntimeError("X centering failed")
-
-    return {
-        "homed": True,
-        "position_min_mm": position_min,
-        "position_max_mm": position_max,
-        "target_mm": target,
-    }
-
-
-def _stop_and_invalidate_x() -> None:
-    if stm32_driver is None:
-        return
-    try:
-        stm32_driver.stop_motor("x")
-    except Exception as exc:
-        logger.error("Failed to stop X after scan preparation error: %s", exc)
-    invalidate = getattr(stm32_driver, "invalidate_motor_position", None)
-    if callable(invalidate):
-        invalidate("x")
-
-
 def _serialized_motor_route(*, allow_while_scanning: bool = False):
     def decorate(route):
         @wraps(route)
         def wrapped(*args, **kwargs):
-            if not _motor_operation_lock.acquire(blocking=False):
+            if not scan_service.acquire_motor_operation():
                 return _json_error("Motor control busy", 409)
             try:
+                if scan_session.has_outstanding_operations():
+                    return _json_error(
+                        "A timed-out hardware operation is still completing",
+                        409,
+                    )
                 if (
                     not allow_while_scanning
                     and scan_session.status().get("scanning", False)
@@ -474,7 +509,7 @@ def _serialized_motor_route(*, allow_while_scanning: bool = False):
                     return _json_error("Motor movement unavailable during scan", 409)
                 return route(*args, **kwargs)
             finally:
-                _motor_operation_lock.release()
+                scan_service.release_motor_operation()
 
         return wrapped
 
@@ -486,17 +521,28 @@ def _runtime_capabilities() -> dict[str, Any]:
         "pi": bool(pi_camera and pi_camera.is_open),
         "usb": bool(usb_camera and usb_camera.is_open),
     }
-    simulation_mode = bool(getattr(scan_session, "_simulation", False))
-    acquisition_backend_ready = bool(
-        simulation_mode or _stm32_ready() or _gpio_ready()
-    )
+    _configure_scan_session_hardware()
+    acquisition = scan_session.readiness(probe=False)
+    simulation_mode = acquisition["mode"] == "simulation"
     return {
         "camera_available": camera_status,
         "gpio_available": _gpio_ready(),
         "open3d_available": bool(_O3D_AVAILABLE),
-        "acquisition_backend_ready": acquisition_backend_ready,
+        "acquisition_backend_ready": acquisition["ready"],
+        "acquisition_blockers": acquisition["blockers"],
+        "acquisition_mode": acquisition["mode"],
         "simulation_mode": simulation_mode,
     }
+
+
+def _configure_scan_session_hardware() -> None:
+    """Keep the acquisition session attached to the shared runtime drivers."""
+    scan_session.configure_hardware(
+        motor_driver=stm32_driver,
+        gpio_driver=gpio_driver,
+        cameras={"pi": pi_camera, "usb": usb_camera},
+        lidar_driver=lidar_driver,
+    )
 
 
 def _lidar_validation(camera_name: str, lidar_distance_mm: float | None) -> dict[str, Any]:
@@ -689,6 +735,7 @@ def home(target: str):
         success = stm32_driver.home_motor(target)
         if not success:
             return _json_error("Failed to home motor")
+        scan_session.clear_motion_fault(target)
 
         return jsonify({"success": True, "status": stm32_driver.get_motor_status()})
     except Exception:
@@ -1216,11 +1263,13 @@ def laser_align(side: str):
             capture_and_analyze_laser,
             CAMERA_TEST_TIMEOUT_SECONDS,
         )
-    except Exception as exc:
+    except CameraOperationTimeout as exc:
         try:
             gpio_driver.laser_off(side)
-        except Exception as cleanup_exc:
-            logger.error("Laser cleanup failed after camera error: %s", cleanup_exc)
+        except Exception:
+            logger.exception("Emergency laser shutdown failed after alignment timeout")
+        return _camera_operation_error("pi", exc)
+    except Exception as exc:
         return _camera_operation_error("pi", exc)
 
     if not available:
@@ -1322,44 +1371,45 @@ def scan_pose_restore():
 @api_bp.route("/api/scan/start", methods=["POST"])
 @_serialized_motor_route(allow_while_scanning=True)
 def scan_start():
-    current_status = scan_session.status()
-    if current_status.get("scanning"):
-        return jsonify({"success": True, "status": current_status})
-
-    motor_preparation = None
-    configured_simulation = bool(
-        getattr(scan_session, "_configured_simulation", current_status.get("simulation", False))
-    )
-    if not configured_simulation:
-        try:
-            motor_preparation = _prepare_scan_x_center()
-        except (ConnectionError, ValueError) as exc:
-            return _json_error(str(exc), 503)
-        except RuntimeError as exc:
-            _stop_and_invalidate_x()
-            return _json_error(str(exc), 502)
-        except Exception:
-            logger.exception("Unexpected X scan preparation failure")
-            _stop_and_invalidate_x()
-            return _json_error("X scan preparation failed", 502)
-
+    _configure_scan_session_hardware()
     try:
         scan_session.start()
+    except ScanPreflightError as exc:
+        return jsonify({
+            "success": False,
+            "error": "Real scan preflight failed",
+            "detail": "; ".join(exc.blockers),
+            "hint": "Resolve every preflight blocker; physical scans never fall back to simulation.",
+            "blockers": exc.blockers,
+            "status": scan_session.status(),
+        }), 409
     except RuntimeError as exc:
         return _json_error(
             str(exc),
-            503,
-            detail="Real scanner acquisition backend is not configured.",
-            hint="The scanner is running in simulation mode until hardware backend support is available.",
+            409,
+            detail="The requested scan could not be started.",
+            hint="Check /api/scan/preflight and resolve its blockers.",
         )
     status = scan_session.status()
-    payload = {"success": True, "status": status}
-    if motor_preparation is not None:
-        payload["motor_preparation"] = motor_preparation
-    if status.get("simulation"):
-        payload["mode"] = "simulation"
-        payload["hint"] = "Real acquisition backend unavailable; running in simulation mode."
-    return jsonify(payload)
+    return jsonify({
+        "success": True,
+        "mode": status["mode"],
+        "motor_preparation": status.get("motor_preparation"),
+        "status": status,
+        "hint": (
+            "Explicit synthetic scan started."
+            if status["simulation"]
+            else "Physical acquisition started with calibrated hardware."
+        ),
+    })
+
+
+@api_bp.route("/api/scan/preflight", methods=["GET", "POST"])
+def scan_preflight():
+    """Report blockers; POST deliberately probes cameras, LiDAR, and laser-off control."""
+    _configure_scan_session_hardware()
+    result = scan_session.readiness(probe=request.method == "POST")
+    return jsonify({"success": True, **result}), 200
 
 
 @api_bp.route("/api/scan/stop", methods=["POST"])
@@ -1370,6 +1420,7 @@ def scan_stop():
 
 @api_bp.route("/api/scan/status", methods=["GET"])
 def scan_status():
+    _configure_scan_session_hardware()
     return jsonify({"success": True, "status": scan_session.status()})
 
 

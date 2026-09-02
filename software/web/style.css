@@ -76,9 +76,13 @@ main { max-width: 1540px; margin: 0 auto; padding: 30px 34px 60px; }
 .preview-overlay { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
 .preview-overlay span { padding: 11px; border-radius: 8px; background: #0b1219; color: var(--muted); font-size: 12px; text-align: center; }
 .preview-overlay b { display: block; margin-bottom: 3px; color: var(--text); font-size: 17px; }
+.preview-overlay.scan-metrics { grid-template-columns: repeat(6, 1fr); }
+.scan-progress-track { height: 7px; margin-top: 10px; overflow: hidden; border-radius: 99px; background: #0b1219; }
+#scan-progress-fill { width: 0; height: 100%; background: linear-gradient(90deg, var(--cyan-dark), var(--cyan)); transition: width .2s; }
 .badge { display: inline-flex; align-items: center; padding: 5px 9px; border-radius: 99px; background: #18313e; color: #9beaf4; font-size: 11px; font-weight: 800; }
 .badge.idle { background: #252e39; color: var(--muted); }
 .badge.running { background: #16382c; color: var(--green); }
+.badge.warning { background: #49351b; color: var(--amber); }
 
 .field { display: grid; grid-template-columns: 1fr auto; gap: 7px; align-items: center; margin-bottom: 13px; }
 .field > span { grid-column: 1 / -1; color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -88,6 +92,12 @@ main { max-width: 1540px; margin: 0 auto; padding: 30px 34px 60px; }
 .check { display: inline-grid; place-items: center; width: 18px; height: 18px; margin-right: 6px; border-radius: 50%; background: #28323e; }
 .check.ok { background: #153d2d; color: var(--green); }
 .check.fail { background: #49222a; color: var(--red); }
+.scan-live-state { display: grid; gap: 8px; margin-top: 16px; padding: 12px; border-radius: 9px; background: #0b1219; }
+.scan-live-state div { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
+.scan-live-state b { color: var(--text); text-align: right; }
+.scan-message { margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 11px; line-height: 1.45; white-space: pre-line; }
+.scan-message.warning { border-color: #75572d; background: #2c2419; color: var(--amber); }
+.scan-message.error { border-color: #74303d; background: #301b22; color: #ffabb2; }
 .export-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
 
 .model-layout { display: grid; grid-template-columns: 285px minmax(0, 1fr); gap: 18px; }
@@ -186,6 +196,7 @@ main { max-width: 1540px; margin: 0 auto; padding: 30px 34px 60px; }
   .workshop-grid { grid-template-columns: repeat(2, minmax(270px, 1fr)); }
   .scan-sidebar { grid-template-columns: 1fr 1fr; }
   .model-tree { min-height: auto; }
+  .preview-overlay.scan-metrics { grid-template-columns: repeat(3, 1fr); }
 }
 @media (max-width: 720px) {
   .topbar, .nav-tabs { padding-inline: 16px; }

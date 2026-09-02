@@ -99,6 +99,45 @@ class LogitechCameraOpenTests(unittest.TestCase):
         self.assertEqual(camera.device_id, 1)
         self.assertEqual(fake_cv2._opened_log, [0, 1])
 
+    def test_auto_mode_prefers_stable_logitech_v4l_identity(self):
+        stable_path = "/dev/v4l/by-id/usb-046d_HD_Webcam_C270-video-index0"
+        fake_cv2 = FakeCv2ForLogitech(working_indices={stable_path})
+        camera = camera_driver.LogitechCamera(device_id="auto")
+
+        with (
+            mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
+            mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
+            mock.patch.object(
+                camera_driver.glob,
+                "glob",
+                side_effect=lambda pattern: [stable_path] if "by-id" in pattern else [],
+            ),
+        ):
+            self.assertTrue(camera.open())
+
+        self.assertEqual(camera.device_id, stable_path)
+        self.assertEqual(fake_cv2._opened_log, [stable_path])
+
+    def test_auto_mode_discovers_video_indices_above_fixed_fallbacks(self):
+        fake_cv2 = FakeCv2ForLogitech(working_indices={7})
+        camera = camera_driver.LogitechCamera(device_id="auto")
+
+        with (
+            mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
+            mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
+            mock.patch.object(
+                camera_driver.glob,
+                "glob",
+                side_effect=lambda pattern: ["/dev/video7"]
+                if pattern == "/dev/video[0-9]*"
+                else [],
+            ),
+        ):
+            self.assertTrue(camera.open())
+
+        self.assertEqual(camera.device_id, 7)
+        self.assertEqual(fake_cv2._opened_log, [7])
+
     def test_does_not_duplicate_candidate_indices(self):
         fake_cv2 = FakeCv2ForLogitech(working_indices={3})
         camera = camera_driver.LogitechCamera(device_id=3)

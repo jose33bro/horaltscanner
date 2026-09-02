@@ -99,6 +99,9 @@
     "mcu_port": "/dev/horalscanner_mcu",
     "baud": 115200,
     "timeout_s": 1.0,
+    "motion_timeout_s": 30,
+    "homing_timeout_s": 130,
+    "motion_poll_interval_s": 0.02,
     "lidar_port": "/dev/horalscanner_lidar",
     "lidar_baud": 115200
   },
@@ -106,5 +109,41 @@
     "pi_name": "Pi Camera V3 NoIR",
     "usb_name": "Logitech C270",
     "usb_device_id": "auto"
+  },
+  "scan_calibration": {
+    "cameras": {
+      "pi": {
+        "intrinsic_matrix": null,
+        "camera_to_scanner": null
+      },
+      "usb": {
+        "intrinsic_matrix": null,
+        "camera_to_scanner": null,
+        "carriage_axis": "z",
+        "carriage_direction": [0, 0, 1]
+      }
+    },
+    "laser_planes": {
+      "left": {
+        "normal": null,
+        "offset_mm": null
+      },
+      "right": {
+        "normal": null,
+        "offset_mm": null
+      }
+    },
+    "turntable": {
+      "center_mm": null,
+      "axis": null,
+      "mm_per_revolution": null
+    },
+    "lidar": {
+      "lidar_to_scanner": null,
+      "carriage_axis": "z",
+      "carriage_direction": [0, 0, 1],
+      "min_distance_mm": 20,
+      "max_distance_mm": 8000
+    }
   }
 }

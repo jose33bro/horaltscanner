@@ -67,7 +67,7 @@ app = create_app()
 ### 3. Gunicorn Command
 ```bash
 gunicorn \
-  --workers 4 \
+  --workers 1 \
   --worker-class gevent \
   --bind 0.0.0.0:5000 \
   --access-logfile - \
@@ -88,7 +88,7 @@ User=pi
 WorkingDirectory=/home/pi/horaltscanner
 Environment="PATH=/home/pi/horaltscanner_env/bin"
 ExecStart=/home/pi/horaltscanner_env/bin/gunicorn \
-  --workers 4 \
+  --workers 1 \
   --worker-class gevent \
   --bind 0.0.0.0:5000 \
   --access-logfile - \
@@ -250,7 +250,7 @@ python -c "from software.api import create_app; app = create_app()"
 
 - [x] All dependencies installed
 - [x] WSGI app wrapper created
-- [x] Gunicorn running with 4 Gevent workers
+- [x] Gunicorn running with 1 Gevent worker
 - [x] systemd service enabled & auto-restart working
 - [x] API `/api/health` endpoint responding
 - [x] Port 5000 accessible locally & remotely

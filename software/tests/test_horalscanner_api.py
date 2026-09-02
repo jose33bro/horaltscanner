@@ -143,6 +143,72 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertIn(("move_motor", "x", 10.0), self.fake_stm32.calls)
         self.assertIn(("home_motor", "all"), self.fake_stm32.calls)
 
+    def test_overlapping_motor_routes_are_rejected(self):
+        move_started = threading.Event()
+        release_move = threading.Event()
+        first_response = []
+        original_move = self.fake_stm32.move_motor
+
+        def blocking_move(axis, distance):
+            self.fake_stm32.calls.append(("move_motor", axis, distance))
+            move_started.set()
+            release_move.wait(1)
+            return True
+
+        self.fake_stm32.move_motor = blocking_move
+        self.addCleanup(setattr, self.fake_stm32, "move_motor", original_move)
+
+        def request_move():
+            with self.app.test_client() as client:
+                first_response.append(client.post("/api/move/x", json={"mm": 10}))
+
+        worker = threading.Thread(target=request_move)
+        worker.start()
+        self.assertTrue(move_started.wait(0.5))
+        try:
+            second_response = self.client.post("/api/home/x", json={})
+        finally:
+            release_move.set()
+            worker.join(1)
+
+        self.assertEqual(second_response.status_code, 409)
+        self.assertIn("reserved", second_response.get_json()["error"])
+        self.assertEqual(first_response[0].status_code, 200)
+        self.assertNotIn(("home_motor", "x"), self.fake_stm32.calls)
+
+    def test_motor_route_is_rejected_while_timed_operation_is_active(self):
+        original = self.api_module.scan_session.has_outstanding_operations
+        self.addCleanup(
+            setattr,
+            self.api_module.scan_session,
+            "has_outstanding_operations",
+            original,
+        )
+        self.api_module.scan_session.has_outstanding_operations = lambda: True
+
+        response = self.client.post("/api/move/x", json={"mm": 10})
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("still completing", response.get_json()["error"])
+        self.assertNotIn(("move_motor", "x", 10.0), self.fake_stm32.calls)
+
+    def test_pose_movement_is_rejected_while_scan_is_active(self):
+        original_session = self.api_module.scan_session
+        self.api_module.scan_session = self.api_module.ScanSession(simulation=True)
+        self.addCleanup(setattr, self.api_module, "scan_session", original_session)
+        self.addCleanup(self.api_module.scan_session.stop)
+        self.api_module.scan_session.start()
+        self.fake_stm32.calls.clear()
+
+        response = self.client.post("/api/camera/pi/goto_calibration_pose")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.get_json()["error"],
+            "Motor movement unavailable during scan",
+        )
+        self.assertEqual(self.fake_stm32.calls, [])
+
     def test_motor_status_and_stop_routes_use_stm32_driver(self):
         status_response = self.client.get("/api/motor/status")
         stop_response = self.client.post("/api/motor/stop", json={"axis": "z"})
@@ -325,128 +391,32 @@ class HoralScannerAPITests(unittest.TestCase):
             {"pi": False, "usb": False},
         )
 
-    def test_scan_start_falls_back_to_simulation(self):
-        original_session = self.api_module.scan_session
+    def test_scan_start_never_falls_back_to_simulation(self):
+        original = self.api_module.scan_session
+        self.addCleanup(setattr, self.api_module, "scan_session", original)
         self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
-        self.addCleanup(setattr, self.api_module, "scan_session", original_session)
-        self.addCleanup(self.api_module.scan_session.stop)
-        self.fake_stm32.calls.clear()
 
         response = self.client.post("/api/scan/start")
+
+        self.assertEqual(response.status_code, 409)
+        data = response.get_json()
+        self.assertFalse(data["success"])
+        self.assertEqual(data["status"]["mode"], "real")
+        self.assertFalse(data["status"]["simulation"])
+        self.assertTrue(data["blockers"])
+
+    def test_scan_preflight_exposes_blockers(self):
+        original = self.api_module.scan_session
+        self.addCleanup(setattr, self.api_module, "scan_session", original)
+        self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
+
+        response = self.client.get("/api/scan/preflight")
 
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
-        self.assertTrue(data["success"])
-        self.assertTrue(data["status"]["simulation"])
-        self.assertEqual(data["mode"], "simulation")
-        self.assertEqual(data["motor_preparation"]["target_mm"], 105.0)
-        self.assertEqual(
-            self.fake_stm32.calls[:2],
-            [("home_motor", "x"), ("move_motor", "x", 105.0)],
-        )
-
-    def test_scan_start_centers_x_from_asymmetric_configured_limits(self):
-        original_session = self.api_module.scan_session
-        self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
-        self.addCleanup(setattr, self.api_module, "scan_session", original_session)
-        self.addCleanup(self.api_module.scan_session.stop)
-        self.fake_stm32.get_motor_limits = lambda _axis: (10.0, 30.0)
-        self.fake_stm32.status["positions"]["x"] = 10.0
-        self.fake_stm32.calls.clear()
-
-        response = self.client.post("/api/scan/start")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["motor_preparation"]["target_mm"], 20.0)
-        self.assertEqual(
-            self.fake_stm32.calls[:2],
-            [("home_motor", "x"), ("move_motor", "x", 10.0)],
-        )
-
-    def test_scan_start_rejects_invalid_x_limits_without_motion(self):
-        original_session = self.api_module.scan_session
-        self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
-        self.addCleanup(setattr, self.api_module, "scan_session", original_session)
-        self.fake_stm32.get_motor_limits = lambda _axis: (30.0, 10.0)
-        self.fake_stm32.calls.clear()
-
-        response = self.client.post("/api/scan/start")
-
-        self.assertEqual(response.status_code, 503)
-        self.assertFalse(self.api_module.scan_session.status()["scanning"])
-        self.assertEqual(self.fake_stm32.calls, [])
-
-    def test_scan_start_stops_x_when_centering_fails(self):
-        original_session = self.api_module.scan_session
-        self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
-        self.addCleanup(setattr, self.api_module, "scan_session", original_session)
-        self.fake_stm32.get_motor_limits = lambda _axis: (0.0, 100.0)
-        original_move = self.fake_stm32.move_motor
-        self.fake_stm32.move_motor = lambda axis, distance: (
-            self.fake_stm32.calls.append(("move_motor", axis, distance)) or False
-        )
-        self.addCleanup(setattr, self.fake_stm32, "move_motor", original_move)
-        self.fake_stm32.calls.clear()
-
-        response = self.client.post("/api/scan/start")
-
-        self.assertEqual(response.status_code, 502)
-        self.assertIn(("stop_motor", "x"), self.fake_stm32.calls)
-        self.assertFalse(self.api_module.scan_session.status()["scanning"])
-
-    def test_concurrent_scan_start_does_not_repeat_x_preparation(self):
-        home_started = threading.Event()
-        release_home = threading.Event()
-        first_response = []
-        original_session = self.api_module.scan_session
-        self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
-        self.addCleanup(setattr, self.api_module, "scan_session", original_session)
-        self.addCleanup(self.api_module.scan_session.stop)
-        original_home = self.fake_stm32.home_motor
-
-        def blocking_home(axis):
-            self.fake_stm32.calls.append(("home_motor", axis))
-            home_started.set()
-            release_home.wait(1)
-            return True
-
-        self.fake_stm32.home_motor = blocking_home
-        self.addCleanup(setattr, self.fake_stm32, "home_motor", original_home)
-        self.fake_stm32.calls.clear()
-
-        def start_first_scan():
-            with self.app.test_client() as client:
-                first_response.append(client.post("/api/scan/start"))
-
-        first_thread = threading.Thread(target=start_first_scan)
-        first_thread.start()
-        self.assertTrue(home_started.wait(0.5))
-        try:
-            second_response = self.client.post("/api/scan/start")
-            self.assertEqual(second_response.status_code, 409)
-        finally:
-            release_home.set()
-            first_thread.join(1)
-
-        self.assertFalse(first_thread.is_alive())
-        self.assertEqual(first_response[0].status_code, 200)
-        self.assertEqual(
-            [call for call in self.fake_stm32.calls if call[0] == "home_motor"],
-            [("home_motor", "x")],
-        )
-
-    def test_pose_movement_is_rejected_while_scan_is_active(self):
-        original_session = self.api_module.scan_session
-        self.api_module.scan_session = self.api_module.ScanSession(simulation=True)
-        self.addCleanup(setattr, self.api_module, "scan_session", original_session)
-        self.addCleanup(self.api_module.scan_session.stop)
-        self.api_module.scan_session.start()
-        self.fake_stm32.calls.clear()
-
-        response = self.client.post("/api/camera/pi/goto_calibration_pose")
-
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(self.fake_stm32.calls, [])
+        self.assertEqual(data["mode"], "real")
+        self.assertFalse(data["ready"])
+        self.assertTrue(data["blockers"])
 
     def test_reconstruct_without_points_returns_structured_error(self):
         response = self.client.post("/api/model/reconstruct")
@@ -645,6 +615,15 @@ class HoralScannerAPITests(unittest.TestCase):
 
         release.set()
         self.assertTrue(finished.wait(0.5))
+
+    def test_camera_route_is_rejected_while_scan_owns_hardware(self):
+        self.assertTrue(self.api_module._scan_hardware_lock.acquire(blocking=False))
+        try:
+            response = self.client.get("/api/camera/pi/frame")
+        finally:
+            self.api_module._scan_hardware_lock.release()
+
+        self.assertEqual(response.status_code, 409)
 
     def test_camera_test_timeout_does_not_start_overlapping_analysis(self):
         analysis_started = threading.Event()
@@ -969,6 +948,43 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 504)
         release.set()
         self.assertTrue(analysis_finished.wait(0.5))
+
+    def test_laser_align_capture_timeout_forces_laser_off(self):
+        capture_started = threading.Event()
+        release = threading.Event()
+        capture_finished = threading.Event()
+
+        class BlockingCamera:
+            is_open = True
+
+            def open(self):
+                return True
+
+            def capture_jpeg(self):
+                capture_started.set()
+                release.wait(1)
+                capture_finished.set()
+                return b"jpeg"
+
+        original_camera = self.api_module.pi_camera
+        original_timeout = self.api_module.CAMERA_TEST_TIMEOUT_SECONDS
+        self.addCleanup(setattr, self.api_module, "pi_camera", original_camera)
+        self.addCleanup(
+            setattr,
+            self.api_module,
+            "CAMERA_TEST_TIMEOUT_SECONDS",
+            original_timeout,
+        )
+        self.api_module.pi_camera = BlockingCamera()
+        self.api_module.CAMERA_TEST_TIMEOUT_SECONDS = 0.02
+
+        response = self.client.post("/api/laser/align/left")
+
+        self.assertTrue(capture_started.is_set())
+        self.assertEqual(response.status_code, 504)
+        self.assertFalse(self.fake_gpio.laser_status["left"])
+        release.set()
+        self.assertTrue(capture_finished.wait(0.5))
 
     def test_laser_align_invalid_side_returns_400(self):
         response = self.client.post("/api/laser/align/invalid")

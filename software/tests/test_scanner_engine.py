@@ -374,6 +374,29 @@ class RealScanSessionTests(unittest.TestCase):
         self.assertFalse(any(self.gpio.state.values()))
         self.assertIn(("stop", "all"), self.motor.calls)
 
+    def test_initial_motor_status_exception_is_contained_and_cleaned_up(self):
+        session = self.make_session()
+        get_status = self.motor.get_motor_status
+        calls = 0
+
+        def fail_first_acquisition_status():
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("motor status read failed")
+            return get_status()
+
+        self.motor.get_motor_status = fail_first_acquisition_status
+
+        session.start()
+        status = self.wait_for_completion(session)
+
+        self.assertFalse(status["scanning"])
+        self.assertEqual(status["phase"], "error")
+        self.assertIn("motor status read failed", status["error"])
+        self.assertFalse(any(self.gpio.state.values()))
+        self.assertIn(("stop", "all"), self.motor.calls)
+
     def test_concurrent_start_is_rejected_while_preflight_is_reserved(self):
         lidar = _BlockingLidar()
         session = self.make_session(lidar=lidar)

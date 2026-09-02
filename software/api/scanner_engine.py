@@ -561,7 +561,6 @@ class ScanSession:
                 self._end_time = time.time()
 
     def _physical_capture_loop(self) -> None:
-        start_positions = self._motor_positions()
         laser_counts = {side: 0 for side in self._LASER_SIDES}
         camera_counts = {name: 0 for name in self._REQUIRED_CAMERAS}
         completed = False

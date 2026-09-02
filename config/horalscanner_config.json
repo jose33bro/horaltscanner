@@ -101,7 +101,6 @@
     "timeout_s": 1.0,
     "motion_timeout_s": 30,
     "homing_timeout_s": 130,
-    "homing_timeout_s": 130,
     "motion_poll_interval_s": 0.02,
     "lidar_port": "/dev/horalscanner_lidar",
     "lidar_baud": 115200

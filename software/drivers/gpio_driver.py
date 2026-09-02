@@ -188,8 +188,9 @@ class GPIODriver:
             r, g, b = _mode_colours[mode]
             self.led_set(r, g, b)
             self._led_mode = mode
+
     def get_led_status(self) -> dict:
-        return {"r": self._led_r, "g": self._led_g, "b": self._led_b}
+        return {"r": self._led_r, "g": self._led_g, "b": self._led_b, "mode": self._led_mode}
 
     def led_status(self) -> dict:
         return {

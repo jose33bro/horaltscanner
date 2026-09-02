@@ -29,6 +29,16 @@ class GPIODriverTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             driver.led_set_mode("strobe")
 
+    def test_led_status_includes_selected_mode(self):
+        driver = GPIODriver(simulation=True)
+
+        driver.led_set_mode("red")
+
+        self.assertEqual(
+            driver.get_led_status(),
+            {"r": 255, "g": 0, "b": 0, "mode": "red"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

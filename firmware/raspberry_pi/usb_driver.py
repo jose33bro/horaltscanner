@@ -242,7 +242,7 @@ class USBDriver:
         try:
             self.ser.write(b"ENDSTOP_Y\n")
             response = self.ser.readline().decode("ascii", errors="replace").strip()
-            return response.endswith("1")
+            return response.startswith("OK") and response.endswith("1")
         except Exception as exc:
             logger.error("USBDriver endstop read error: %s", exc)
             return False
@@ -252,12 +252,15 @@ class USBDriver:
     # ------------------------------------------------------------------
 
     def get_temperature(self) -> float | None:
-        """Read board temperature (NTC on PA0).  Returns °C or None."""
+        """Read board temperature.  Returns °C or None."""
         if self.ser is None:
             return None
         try:
             self.ser.write(b"GET_TEMP\n")
             response = self.ser.readline().decode("ascii", errors="replace").strip()
+            if not response.startswith("OK"):
+                logger.warning("Unexpected temperature response: %s", response)
+                return None
             for token in response.split():
                 try:
                     return float(token)

@@ -1,7 +1,7 @@
 """
 STM32Driver - High-level driver for the Creality V4.2.2 (STM32F103) board.
 
-Wraps the binary USB protocol exposed by the custom scanner firmware and
+Wraps the text-based USB serial protocol exposed by the custom scanner firmware and
 provides a clean interface for motors, fans and the board temperature sensor.
 
 Fan GPIO mapping (from hardware/wiring_diagram.md):
@@ -133,6 +133,8 @@ class STM32Driver:
     def motor_home(self, axis: str) -> dict:
         """Home a single axis (or 'all')."""
         axis = axis.upper()
+        if axis == "ALL":
+            return self.motor_home_all()
         if axis not in self._axes:
             raise ValueError(f"Unknown axis: {axis}")
         if not self._send_command(f"HOME_{axis}"):
@@ -154,17 +156,33 @@ class STM32Driver:
             raise RuntimeError("Motor stop command failed")
         return {"stopped": True, "endstop_mask": 0}
 
+    def move_motor(self, axis: str, distance_mm: float, velocity: Optional[float] = None) -> dict:
+        """Alias for motor_move()."""
+        return self.motor_move(axis, distance_mm, velocity)
+
+    def home_motor(self, axis: str) -> dict:
+        """Alias for motor_home()."""
+        return self.motor_home(axis)
+
+    def motor_stop(self, axis: str = "all") -> dict:
+        """Alias for stop_motor()."""
+        return self.stop_motor(axis)
+
     def get_motor_status(self) -> dict:
         """Return software-tracked motor positions and homing state."""
         return {
             "connected": self._connected,
-            "protocol": "binary_usb",
+            "protocol": "serial_text",
             "last_error": None,
             "axes": {
                 ax: dict(info)
                 for ax, info in self._axes.items()
             },
         }
+
+    def motor_status(self) -> dict:
+        """Alias for get_motor_status()."""
+        return self.get_motor_status()
 
     # ------------------------------------------------------------------
     # Fan control
@@ -209,12 +227,19 @@ class STM32Driver:
         try:
             self._serial.write(b"GET_TEMP\n")
             response = self._serial.readline().decode("ascii", errors="replace").strip()
+            if not response.startswith("OK"):
+                logger.warning("Unexpected temperature response: %s", response)
+                return None
             # Expected format: "OK 42.5" or "OK TEMP=42.5"
             for token in response.split():
                 try:
                     return float(token)
                 except ValueError:
-                    continue
+                    if token.startswith("TEMP="):
+                        try:
+                            return float(token.removeprefix("TEMP="))
+                        except ValueError:
+                            pass
             logger.warning("Unexpected temperature response: %s", response)
             return None
         except Exception as exc:

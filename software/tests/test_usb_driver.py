@@ -6,6 +6,7 @@ from firmware.raspberry_pi.usb_driver import (
     RESPONSE_FORMAT,
     STATUS_OK,
     USBProtocolError,
+    USBDriver,
     USBScannerDriver,
 )
 
@@ -63,6 +64,23 @@ class USBDriverTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             driver.set_speed("Q", 1200)
+
+    def test_text_driver_rejects_error_endstop_and_temperature_responses(self):
+        class FakeSerial:
+            def __init__(self, responses):
+                self.responses = iter(responses)
+
+            def write(self, _):
+                pass
+
+            def readline(self):
+                return next(self.responses).encode("ascii")
+
+        driver = USBDriver()
+        driver.ser = FakeSerial(["ERR 1\n", "ERR 42.5\n"])
+
+        self.assertFalse(driver.read_endstop_y())
+        self.assertIsNone(driver.get_temperature())
 
 
 if __name__ == "__main__":

@@ -86,11 +86,31 @@ class HoralScannerAPITests(unittest.TestCase):
                 self.calls.append(("read_board_temperature",))
                 return self.temperature
 
+        class FakeScanSession:
+            def __init__(self):
+                self.calls = []
+
+            def start(self):
+                self.calls.append("start")
+
+            def stop(self):
+                self.calls.append("stop")
+
+            def status(self):
+                return {"scanning": False, "points": 10, "elapsed_s": 0.0, "quality": 0.2}
+
+        class FakeReconstructionEngine:
+            def reconstruct(self):
+                return {"ok": True, "stl_size": 10, "amf_size": 20, "error": ""}
+
         self.fake_gpio = FakeGPIO()
         self.fake_stm32 = FakeSTM32()
 
         self.api_module.gpio_driver = self.fake_gpio
         self.api_module.stm32_driver = self.fake_stm32
+        self.fake_scan_session = FakeScanSession()
+        self.api_module._scan_session = self.fake_scan_session
+        self.api_module._reconstruction_engine = FakeReconstructionEngine()
 
         self.client = self.api_module.app.test_client()
 
@@ -223,6 +243,30 @@ class HoralScannerAPITests(unittest.TestCase):
         response = self.client.get("/api/status")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.get_json()["status"]["stm32_driver"])
+
+    def test_scan_and_reconstruction_routes_return_expected_status(self):
+        start_response = self.client.post("/api/scan/start")
+        stop_response = self.client.post("/api/scan/stop")
+        status_response = self.client.get("/api/scan/status")
+        reconstruct_response = self.client.post("/api/model/reconstruct")
+
+        self.assertEqual(start_response.status_code, 200)
+        self.assertEqual(stop_response.status_code, 200)
+        self.assertEqual(status_response.status_code, 200)
+        self.assertEqual(reconstruct_response.status_code, 200)
+        self.assertEqual(self.fake_scan_session.calls, ["start", "stop"])
+        self.assertEqual(status_response.get_json()["status"]["points"], 10)
+        self.assertTrue(reconstruct_response.get_json()["success"])
+        self.assertEqual(reconstruct_response.get_json()["stl_size"], 10)
+
+    def test_scan_routes_return_503_when_engines_are_unavailable(self):
+        self.api_module._scan_session = None
+        self.api_module._reconstruction_engine = None
+
+        self.assertEqual(self.client.post("/api/scan/start").status_code, 503)
+        self.assertEqual(self.client.post("/api/scan/stop").status_code, 503)
+        self.assertEqual(self.client.get("/api/scan/status").status_code, 503)
+        self.assertEqual(self.client.post("/api/model/reconstruct").status_code, 503)
 
 
 if __name__ == "__main__":

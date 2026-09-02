@@ -5,6 +5,9 @@ const HoralScannerUI = (() => {
     pointTimer: null,
     ledTimer: null,
     modelViewer: null,
+    cameraRequests: { pi: null, usb: null },
+    cameraPollTimers: { pi: null, usb: null },
+    cameraObjectUrls: { pi: null, usb: null },
   };
 
   const byId = id => document.getElementById(id);
@@ -52,8 +55,9 @@ const HoralScannerUI = (() => {
           initializeModelViewer();
           loadModel(false);
         }
-        if (tab === "camera-pi") refreshCamera("pi");
-        if (tab === "camera-usb") refreshCamera("usb");
+        stopCameraPolling();
+        if (tab === "camera-pi") startCameraPolling("pi");
+        if (tab === "camera-usb") startCameraPolling("usb");
       });
     });
   }
@@ -439,35 +443,164 @@ const HoralScannerUI = (() => {
     byId("goto-pose-pi").addEventListener("click", () => gotoCalibrationPose("pi"));
   }
 
-  async function refreshCamera(camera, notify = false) {
+  function setCameraControlsDisabled(camera, disabled) {
+    document.querySelectorAll(
+      `.camera-refresh[data-camera="${camera}"], .camera-test[data-camera="${camera}"], .camera-calibrate[data-camera="${camera}"]`,
+    ).forEach(element => {
+      element.disabled = disabled;
+    });
+  }
+
+  function beginCameraRequest(camera, operation, notifyBusy = true) {
+    if (state.cameraRequests[camera]) {
+      if (notifyBusy) {
+        toast(`Caméra occupée (${state.cameraRequests[camera]}). Réessayez dans un instant.`, true);
+      }
+      return false;
+    }
+    state.cameraRequests[camera] = operation;
+    setCameraControlsDisabled(camera, true);
+    return true;
+  }
+
+  function endCameraRequest(camera) {
+    state.cameraRequests[camera] = null;
+    setCameraControlsDisabled(camera, false);
+  }
+
+  function stopCameraPolling(camera = null) {
+    const cameras = camera ? [camera] : ["pi", "usb"];
+    cameras.forEach(name => {
+      clearTimeout(state.cameraPollTimers[name]);
+      state.cameraPollTimers[name] = null;
+    });
+  }
+
+  function scheduleCameraPolling(camera, delay = 5000) {
+    stopCameraPolling(camera);
+    if (state.activeTab !== `camera-${camera}`) return;
+    state.cameraPollTimers[camera] = setTimeout(async () => {
+      await refreshCamera(camera, false, true);
+      scheduleCameraPolling(camera);
+    }, delay);
+  }
+
+  function startCameraPolling(camera) {
+    scheduleCameraPolling(camera, 0);
+  }
+
+  function cameraTimeoutError() {
+    const error = new Error("La caméra ne répond pas dans le délai prévu.");
+    error.hint = "Attendez la fin de la capture en cours, puis réessayez.";
+    error.status = 504;
+    return error;
+  }
+
+  function localizeCameraError(error) {
+    if (error.status === 409) {
+      error.message = "La caméra est occupée par une autre capture ou analyse.";
+      error.hint = "Attendez un instant; l'actualisation automatique reprendra ensuite.";
+    } else if (error.status === 504) {
+      error.message = "La caméra a dépassé le délai de réponse.";
+      error.hint = "Attendez la fin de l'opération en cours, puis réessayez.";
+    }
+    return error;
+  }
+
+  async function cameraApi(path, options = {}, timeoutMs = 12000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await api(path, { ...options, signal: controller.signal });
+    } catch (error) {
+      if (error.name === "AbortError") throw cameraTimeoutError();
+      throw localizeCameraError(error);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function loadCameraFrame(camera, image) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    let objectUrl = null;
+    try {
+      const response = await fetch(`/api/camera/${camera}/frame?t=${Date.now()}`, {
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const type = response.headers.get("content-type") || "";
+        const payload = type.includes("application/json") ? await response.json() : null;
+        const error = new Error(payload?.error || `Erreur HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      objectUrl = URL.createObjectURL(await response.blob());
+      image.src = objectUrl;
+      await image.decode();
+      if (state.cameraObjectUrls[camera]) URL.revokeObjectURL(state.cameraObjectUrls[camera]);
+      state.cameraObjectUrls[camera] = objectUrl;
+      objectUrl = null;
+    } catch (error) {
+      if (error.name === "AbortError") throw cameraTimeoutError();
+      throw localizeCameraError(error);
+    } finally {
+      clearTimeout(timer);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  async function refreshCamera(camera, notify = false, polling = false) {
+    if (!beginCameraRequest(camera, "actualisation", notify && !polling)) return;
     const image = byId(`camera-${camera}-frame`);
     const badge = byId(`camera-${camera}-status`);
     badge.className = "badge idle";
     badge.textContent = "Connexion...";
     try {
-      const status = await api(`/api/camera/${camera}/status`);
+      const status = await cameraApi(`/api/camera/${camera}/status`, {}, 10000);
       if (!status.available) {
         throw new Error(status.error || "Camera indisponible");
       }
-      image.src = `/api/camera/${camera}/frame?t=${Date.now()}`;
-      await image.decode();
+      await loadCameraFrame(camera, image);
       badge.className = "badge running";
       badge.textContent = "Disponible";
+      badge.title = "";
       if (notify) toast("Image actualisee");
     } catch (error) {
       badge.className = "badge idle";
-      badge.textContent = "Indisponible";
-      badge.title = error.message || "";
-      if (notify) toast(error.message, true);
+      badge.textContent = error.status === 409 ? "Occupée" : error.status === 504 ? "Délai dépassé" : "Indisponible";
+      badge.title = formatUserError(error);
+      if (notify) toast(formatUserError(error), true);
+    } finally {
+      endCameraRequest(camera);
     }
   }
 
   async function testCamera(camera) {
+    stopCameraPolling(camera);
+    if (!beginCameraRequest(camera, "analyse")) {
+      scheduleCameraPolling(camera);
+      return;
+    }
+    const badge = byId(`camera-${camera}-status`);
+    badge.className = "badge idle";
+    badge.textContent = "Analyse...";
     try {
-      const response = await api(`/api/camera/${camera}/test`, { method: "POST" });
+      const response = await cameraApi(`/api/camera/${camera}/test`, { method: "POST" });
       renderCameraMetrics(camera, response.result);
+      badge.className = "badge running";
+      badge.textContent = "Disponible";
+      badge.title = "";
       toast("Analyse camera terminee");
-    } catch (error) { toast(error.message, true); }
+    } catch (error) {
+      badge.className = "badge idle";
+      badge.textContent = error.status === 409 ? "Occupée" : error.status === 504 ? "Délai dépassé" : "Erreur";
+      badge.title = formatUserError(error);
+      toast(formatUserError(error), true);
+    } finally {
+      endCameraRequest(camera);
+      scheduleCameraPolling(camera);
+    }
   }
 
   function renderCameraMetrics(camera, result) {
@@ -504,11 +637,19 @@ const HoralScannerUI = (() => {
   }
 
   async function calibrationTest(camera) {
+    stopCameraPolling(camera);
+    if (!beginCameraRequest(camera, "analyse")) {
+      scheduleCameraPolling(camera);
+      return;
+    }
+    const badge = byId(`camera-${camera}-status`);
+    badge.className = "badge idle";
+    badge.textContent = "Analyse...";
     const result = byId("calibration-result");
     result.className = "calibration-result";
     result.textContent = "Analyse de la mire en cours...";
     try {
-      const response = await api(`/api/camera/${camera}/test`, { method: "POST" });
+      const response = await cameraApi(`/api/camera/${camera}/test`, { method: "POST" });
       const data = response.result;
       result.replaceChildren();
       const title = document.createElement("h2");
@@ -523,9 +664,19 @@ const HoralScannerUI = (() => {
         ? `Decalage du centre: horizontal ${formatSigned(data.center_offset_x_px)} px · vertical ${formatSigned(data.center_offset_y_px)} px`
         : `Resolution ${data.width} × ${data.height} · luminosite ${data.brightness} · nettete ${data.sharpness}`;
       result.append(title, verdict, details);
+      badge.className = "badge running";
+      badge.textContent = "Disponible";
+      badge.title = "";
     } catch (error) {
-      result.textContent = error.message;
-      toast(error.message, true);
+      const message = formatUserError(error);
+      result.textContent = message;
+      badge.className = "badge idle";
+      badge.textContent = error.status === 409 ? "Occupée" : error.status === 504 ? "Délai dépassé" : "Erreur";
+      badge.title = message;
+      toast(message, true);
+    } finally {
+      endCameraRequest(camera);
+      scheduleCameraPolling(camera);
     }
   }
 
@@ -559,7 +710,7 @@ const HoralScannerUI = (() => {
     resultEl.className = "calibration-result";
     resultEl.textContent = `Analyse du laser ${label} en cours…`;
     try {
-      const response = await api(`/api/laser/align/${side}`, { method: "POST" });
+      const response = await cameraApi(`/api/laser/align/${side}`, { method: "POST" });
       resultEl.replaceChildren();
       const title = document.createElement("h2");
       title.textContent = `Laser ${label}`;
@@ -574,8 +725,9 @@ const HoralScannerUI = (() => {
         resultEl.append(details);
       }
     } catch (error) {
-      resultEl.textContent = error.message;
-      toast(error.message, true);
+      const message = formatUserError(error);
+      resultEl.textContent = message;
+      toast(message, true);
     }
   }
 

@@ -1,4 +1,5 @@
 import io
+import threading
 import unittest
 from unittest import mock
 
@@ -84,6 +85,19 @@ class LogitechCameraOpenTests(unittest.TestCase):
         # without duplicating the already-tried index 2.
         self.assertEqual(fake_cv2._opened_log, [2, 0])
         self.assertTrue(camera.is_open)
+
+    def test_auto_mode_probes_known_indices_until_one_works(self):
+        fake_cv2 = FakeCv2ForLogitech(working_indices={1})
+        camera = camera_driver.LogitechCamera(device_id="auto")
+
+        with (
+            mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
+            mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
+        ):
+            self.assertTrue(camera.open())
+
+        self.assertEqual(camera.device_id, 1)
+        self.assertEqual(fake_cv2._opened_log, [0, 1])
 
     def test_does_not_duplicate_candidate_indices(self):
         fake_cv2 = FakeCv2ForLogitech(working_indices={3})
@@ -197,27 +211,57 @@ class PiCameraCaptureTests(unittest.TestCase):
         self.assertGreater(int(decoded[0, 0, 0]), 200)
         self.assertLess(int(decoded[0, 0, 2]), 50)
 
+    def test_capture_rejects_overlap_while_picamera_is_busy(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        class BlockingPicamera:
+            def capture_array(self):
+                started.set()
+                release.wait(1)
+                return np.zeros((4, 4, 3), dtype=np.uint8)
+
+        camera = camera_driver.PiCamera()
+        camera._cam = BlockingPicamera()
+        camera.LOCK_WAIT_SECONDS = 0.01
+        capture_thread = threading.Thread(target=camera.capture_jpeg)
+        capture_thread.start()
+        self.assertTrue(started.wait(0.5))
+
+        self.assertIsNone(camera.capture_jpeg())
+        self.assertIn("occupee", camera.last_error)
+
+        release.set()
+        capture_thread.join(1)
+        self.assertFalse(capture_thread.is_alive())
+
 
 class FakeCv2:
     IMREAD_COLOR = 1
     COLOR_BGR2GRAY = 2
     CV_64F = 3
+    INTER_AREA = 4
 
     def __init__(self, detected_size=None):
         self.detected_size = detected_size
         self.checked_sizes = []
+        self.resize_calls = []
 
     def imdecode(self, _data, _mode):
         return np.zeros((960, 1280, 3), dtype=np.uint8)
 
-    def cvtColor(self, _image, _mode):
-        return np.full((960, 1280), 50, dtype=np.uint8)
+    def resize(self, _image, size, interpolation):
+        self.resize_calls.append((size, interpolation))
+        return np.zeros((size[1], size[0], 3), dtype=np.uint8)
+
+    def cvtColor(self, image, _mode):
+        return np.full(image.shape[:2], 50, dtype=np.uint8)
 
     def findChessboardCorners(self, _gray, size):
         self.checked_sizes.append(size)
         if size != self.detected_size:
             return False, None
-        corners = np.tile(np.array([[[700.0, 500.0]]], dtype=np.float32), (size[0] * size[1], 1, 1))
+        corners = np.tile(np.array([[[525.0, 375.0]]], dtype=np.float32), (size[0] * size[1], 1, 1))
         return True, corners
 
     def Laplacian(self, _gray, _depth):
@@ -239,6 +283,9 @@ class AnalyzeCameraFrameTests(unittest.TestCase):
         self.assertEqual(result["checkerboard_rows"], 6)
         self.assertEqual(result["center_offset_x_px"], 60.5)
         self.assertEqual(result["center_offset_y_px"], 20.5)
+        self.assertEqual(result["analysis_width"], 960)
+        self.assertEqual(result["analysis_height"], 720)
+        self.assertEqual(fake_cv2.resize_calls, [((960, 720), fake_cv2.INTER_AREA)])
         self.assertEqual(fake_cv2.checked_sizes, [(12, 7), (11, 6)])
 
     def test_reports_no_center_when_supported_boards_are_absent(self):

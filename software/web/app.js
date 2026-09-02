@@ -413,6 +413,19 @@ const HoralScannerUI = (() => {
     }
   }
 
+  async function refreshFanPi4Status() {
+    try {
+      const s = await api("/api/fan/pi4/status");
+      byId("fan-pi4-mode").textContent = "AUTO (Pi4)";
+      byId("fan-pi4-temp").textContent = s.temp_c == null ? "--" : `${Number(s.temp_c).toFixed(1)} °C`;
+      byId("fan-pi4-speed").textContent = s.fan_percent == null ? "--" : `${s.fan_percent}%`;
+      byId("fan-pi4-curve").textContent = `${s.t_min}°C → ${s.t_max}°C`;
+    } catch (error) {
+      byId("fan-pi4-temp").textContent = "Erreur";
+      byId("fan-pi4-speed").textContent = "--";
+    }
+  }
+
   function initializeCameras() {
     document.querySelectorAll(".camera-refresh").forEach(button => {
       button.addEventListener("click", () => refreshCamera(button.dataset.camera, true));
@@ -687,8 +700,10 @@ const HoralScannerUI = (() => {
     refreshSystemStatus();
     refreshWorkshop();
     refreshScanStatus();
+    refreshFanPi4Status();
     setInterval(refreshSystemStatus, 10000);
     setInterval(refreshWorkshop, 5000);
+    setInterval(refreshFanPi4Status, 2000);
   }
 
   document.addEventListener("DOMContentLoaded", initialize);

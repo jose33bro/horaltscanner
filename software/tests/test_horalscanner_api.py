@@ -1,5 +1,7 @@
 import importlib
+import json
 import runpy
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -178,6 +180,73 @@ class HoralScannerAPITests(unittest.TestCase):
             response.get_json()["status"],
             {"pi": {"speed": 0.4}, "creality": 0.6, "temperature": 0.8},
         )
+
+    def test_fan_pi4_status_defaults_when_files_missing(self):
+        self.api_module._PI4_FAN_THERMAL_FILE = Path("/nonexistent/thermal_zone0/temp")
+        self.api_module._PI4_FAN_CONFIG_FILE = Path("/nonexistent/fan_config.json")
+        self.api_module._PI4_FAN_STATE_FILE = Path("/nonexistent/fan_state.json")
+
+        response = self.client.get("/api/fan/pi4/status")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["mode"], "auto")
+        self.assertIsNone(data["temp_c"])
+        self.assertIsNone(data["fan_percent"])
+        self.assertEqual(data["t_min"], 30)
+        self.assertEqual(data["t_max"], 50)
+
+    def test_fan_pi4_status_reads_temp_config_and_state_files(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            thermal_file = tmp_path / "temp"
+            thermal_file.write_text("45123\n")
+            config_file = tmp_path / "fan_config.json"
+            config_file.write_text(json.dumps({"t_min": 25, "t_max": 55}))
+            state_file = tmp_path / "fan_state.json"
+            state_file.write_text(json.dumps({"temp_c": 46.7, "fan_percent": 62}))
+
+            self.api_module._PI4_FAN_THERMAL_FILE = thermal_file
+            self.api_module._PI4_FAN_CONFIG_FILE = config_file
+            self.api_module._PI4_FAN_STATE_FILE = state_file
+
+            response = self.client.get("/api/fan/pi4/status")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(
+            data,
+            {
+                "mode": "auto",
+                "temp_c": 46.7,
+                "fan_percent": 62,
+                "t_min": 25,
+                "t_max": 55,
+            },
+        )
+
+    def test_fan_pi4_status_ignores_malformed_state_and_config_files(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            thermal_file = tmp_path / "temp"
+            thermal_file.write_text("38000\n")
+            config_file = tmp_path / "fan_config.json"
+            config_file.write_text("not-json")
+            state_file = tmp_path / "fan_state.json"
+            state_file.write_text("not-json")
+
+            self.api_module._PI4_FAN_THERMAL_FILE = thermal_file
+            self.api_module._PI4_FAN_CONFIG_FILE = config_file
+            self.api_module._PI4_FAN_STATE_FILE = state_file
+
+            response = self.client.get("/api/fan/pi4/status")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["temp_c"], 38.0)
+        self.assertIsNone(data["fan_percent"])
+        self.assertEqual(data["t_min"], 30)
+        self.assertEqual(data["t_max"], 50)
 
     def test_temperature_routes_read_board_sensor(self):
         board_response = self.client.get("/api/temperature/board")

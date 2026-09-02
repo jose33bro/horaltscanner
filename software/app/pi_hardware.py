@@ -16,12 +16,12 @@ class LaserController:
 class SensorRig:
     lidar_port: str
     usb_camera_id: str
-    dsi_camera_id: str
+    csi_camera_id: str
 
     def capture_frame(self) -> dict[str, float | bytes | None]:
-        # Point d'intégration matériel: TF-Luna + Logitech USB + Pi Cam V3 DSI.
+        # Point d'intégration matériel: TF-Luna + Logitech USB + Pi Cam V3 CSI.
         return {
             "lidar_distance_mm": None,
             "usb_camera_frame": None,
-            "dsi_camera_frame": None,
+            "csi_camera_frame": None,
         }

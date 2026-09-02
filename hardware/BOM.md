@@ -53,7 +53,7 @@ Complete parts list for building HoralScanner with Raspberry Pi 4 and Creality V
 |------|---|---|---|
 | **TF-Luna LiDAR** | USB interface, 8m range | 1 | Distance measurement for Y-axis sync |
 | **Logitech USB Camera** | USB 2.0, 1080p @ 30fps (typical) | 1 | Point cloud RGB texture |
-| **Raspberry Pi Camera V3** | DSI ribbon, 12MP, noir | 1 | Alternative/backup RGB capture |
+| **Raspberry Pi Camera V3** | CSI ribbon, 12MP, noir | 1 | Alternative/backup RGB capture |
 
 ---
 
@@ -105,7 +105,7 @@ Complete parts list for building HoralScanner with Raspberry Pi 4 and Creality V
 | USB-A to USB-Micro | 2.0 High-Speed | 2m | 1 | Pi ↔ Creality |
 | USB-A to USB-Micro | 2.0 High-Speed | 1.5m | 1 | Pi ↔ TF-Luna |
 | USB-A to USB-Micro | 2.0 High-Speed | 1m | 1 | Pi ↔ Logitech Camera |
-| DSI Ribbon Cable | 22-pin | stock | 1 | Pi ↔ Pi Camera V3 |
+| CSI Ribbon Cable | 22-pin | stock | 1 | Pi ↔ Pi Camera V3 |
 | Dupont Jumper Wires | F-F 2.54mm | 200mm | 20 | GPIO connections |
 | Stepper Motor Cable | 4-wire 28AWG | 500mm | 3 | NEMA 17 → Creality |
 | Power Cable | 24V barrel jack | 2m | 1 | PSU → Pi + Creality |

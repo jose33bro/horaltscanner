@@ -10,7 +10,7 @@ from .usb_driver import CrealityUsbDriver
 class ScanStepPayload(TypedDict):
     lidar_distance_mm: Optional[float]
     usb_camera_frame: Optional[bytes]
-    dsi_camera_frame: Optional[bytes]
+    csi_camera_frame: Optional[bytes]
     sync: str
 
 

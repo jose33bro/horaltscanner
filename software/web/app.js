@@ -66,8 +66,8 @@ const HoralScannerUI = (() => {
       const simulationSuffix = status.simulation_mode ? " · Simulation" : "";
       byId("status-text").textContent = `Connecte · v${status.version || "?"}${simulationSuffix}`;
       updateCheck("check-api", status.api === "ok");
-      updateCheck("check-gpio", status.gpio_driver);
-      updateCheck("check-stm32", status.stm32_driver);
+      updateCheck("check-gpio", status.gpio_driver, status.gpio_error);
+      updateCheck("check-stm32", status.stm32_driver, status.stm32_error);
     } catch (error) {
       byId("status-dot").className = "status-dot offline";
       byId("status-text").textContent = "Scanner hors ligne";
@@ -75,10 +75,11 @@ const HoralScannerUI = (() => {
     }
   }
 
-  function updateCheck(id, ok) {
+  function updateCheck(id, ok, errorMessage) {
     const element = byId(id);
     element.className = `check ${ok ? "ok" : "fail"}`;
     element.textContent = ok ? "✓" : "×";
+    element.title = ok ? "" : (errorMessage || "");
   }
 
   function initializeScan() {
@@ -431,7 +432,10 @@ const HoralScannerUI = (() => {
     badge.className = "badge idle";
     badge.textContent = "Connexion...";
     try {
-      await api(`/api/camera/${camera}/status`);
+      const status = await api(`/api/camera/${camera}/status`);
+      if (!status.available) {
+        throw new Error(status.error || "Camera indisponible");
+      }
       image.src = `/api/camera/${camera}/frame?t=${Date.now()}`;
       await image.decode();
       badge.className = "badge running";
@@ -440,6 +444,7 @@ const HoralScannerUI = (() => {
     } catch (error) {
       badge.className = "badge idle";
       badge.textContent = "Indisponible";
+      badge.title = error.message || "";
       if (notify) toast(error.message, true);
     }
   }

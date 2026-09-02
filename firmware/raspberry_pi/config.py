@@ -77,7 +77,7 @@ STEPS_PER_ROTATION = 200
 
 CAMERAS = {
     'pi_v3_noir': {
-        'interface': 'DSI',
+        'interface': 'CSI',
         'location': 'droite',
         'description': 'Pi Camera V3 NoIR',
     },

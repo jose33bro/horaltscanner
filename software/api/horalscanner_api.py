@@ -674,6 +674,7 @@ def camera_status(camera_name: str):
         "success": True,
         "camera": camera_name,
         "available": available,
+        "error": None if available else getattr(camera, "last_error", None),
     })
 
 
@@ -1195,11 +1196,21 @@ def api_status():
     gpio_ready = _gpio_ready()
     stm32_ready = _stm32_ready()
     capabilities = _runtime_capabilities()
+    gpio_error = None
+    if not gpio_ready:
+        raw_error = getattr(gpio_driver, "last_error", None)
+        gpio_error = str(raw_error) if raw_error is not None else "GPIO driver unavailable"
+    stm32_error = None
+    if not stm32_ready:
+        raw_error = getattr(stm32_driver, "last_error", None)
+        stm32_error = str(raw_error) if raw_error is not None else "STM32 driver unavailable"
     status_payload = {
         "api": "ok",
         "gpio_driver": gpio_ready,
+        "gpio_error": gpio_error,
         "stm32_driver": stm32_ready,
         "stm32_connected": stm32_ready,
+        "stm32_error": stm32_error,
         "version": _VERSION,
         "simulation_mode": capabilities["simulation_mode"],
     }

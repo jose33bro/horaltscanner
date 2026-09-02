@@ -12,7 +12,7 @@
   - USB vers carte Creality V4.2.2 (protocole custom)
   - USB vers Lidar TF-Luna
   - USB vers caméra Logitech
-  - DSI vers caméra Pi V3 NoIR
+  - CSI vers caméra Pi V3 NoIR
   - GPIO27/22: lasers gauche/droit
   - GPIO18/13/19: LED RGB PWM
   - GPIO23: ventilateur Pi tout-ou-rien (`1` marche, `0` arrêt)

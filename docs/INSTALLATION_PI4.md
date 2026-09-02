@@ -24,7 +24,7 @@ Guide complet d'installation du scanner 3D USB sur un Raspberry Pi 4 avec Creali
 - **Alimentation USB-C** 5V/3A minimum
 - **Câble réseau Ethernet** ou WiFi
 - **Adaptateur USB** pour la Creality V4.2.2
-- **Caméra Raspberry Pi V3 NoIR** (connecteur DSI)
+- **Caméra Raspberry Pi V3 NoIR** (connecteur CSI)
 - **Webcam USB Logitech C270**
 - **LiDAR TF-Luna** (USB)
 - **Dissipateur thermique** pour le Pi
@@ -35,7 +35,7 @@ Raspberry Pi 4
 ├── USB (moteurs STM32) → Creality V4.2.2
 ├── USB → Logitech C270
 ├── USB → LiDAR TF-Luna
-├── DSI → Caméra Pi V3 NoIR
+├── CSI → Caméra Pi V3 NoIR
 ├── GPIO27 → Laser gauche
 ├── GPIO22 → Laser droit
 ├── GPIO18 → LED R (PWM)

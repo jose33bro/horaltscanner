@@ -149,6 +149,8 @@ class ScanSession:
         self._error: str | None = None
         self._last_blockers: list[str] = []
         self._axis_position = {"x": 0.0, "y": 0.0, "z": 0.0}
+        self._motor_preparation: dict[str, float | bool] | None = None
+        self._motion_fault: str | None = None
 
     def configure_hardware(
         self,
@@ -171,10 +173,42 @@ class ScanSession:
     # Preflight
     # ------------------------------------------------------------------
 
-    def readiness(self, *, probe: bool = False, _allow_starting: bool = False) -> dict:
+    def readiness(
+        self,
+        *,
+        probe: bool = False,
+        _allow_starting: bool = False,
+        _require_centered_x: bool = False,
+        _probe_reserved: bool = False,
+    ) -> dict:
         """Return actionable blockers; ``probe`` may initialize sensors."""
         if self._simulation:
             return {"ready": True, "mode": "simulation", "blockers": []}
+        if (
+            probe
+            and not _allow_starting
+            and not _probe_reserved
+            and self._hardware_reservation is not None
+            and not bool(
+                getattr(
+                    self._hardware_reservation,
+                    "owned_by_current_thread",
+                    False,
+                )
+            )
+        ):
+            if not self._hardware_reservation.acquire(blocking=False):
+                return {
+                    "ready": False,
+                    "mode": "real",
+                    "blockers": ["Scanner hardware is busy with another operation"],
+                }
+            with self._lock:
+                self._hardware_reserved = True
+            try:
+                return self.readiness(probe=True, _probe_reserved=True)
+            finally:
+                self._release_hardware_reservation()
 
         blockers: list[str] = []
         with self._lock:
@@ -193,6 +227,8 @@ class ScanSession:
             blockers.append(
                 f"{outstanding_operations} timed-out hardware operation(s) are still running"
             )
+        if self._motion_fault:
+            blockers.append(self._motion_fault)
         if self._motor is None or not bool(getattr(self._motor, "connected", False)):
             blockers.append("Creality STM32 motor controller is not connected")
 
@@ -218,7 +254,11 @@ class ScanSession:
                 blockers.append(f"Motor status unavailable: {exc}")
 
         for axis in self._required_axes():
-            if not bool(motor_status.get("homed", {}).get(axis, False)):
+            auto_x = axis == "x" and self._automatic_x_center_enabled()
+            if (
+                not bool(motor_status.get("homed", {}).get(axis, False))
+                and (not auto_x or _require_centered_x)
+            ):
                 blockers.append(f"Axis {axis.upper()} must be homed before a physical scan")
             if bool(motor_status.get("moving", {}).get(axis, False)):
                 blockers.append(f"Axis {axis.upper()} is still moving; wait or stop it before scanning")
@@ -299,6 +339,25 @@ class ScanSession:
             self._last_blockers = blockers
         return {"ready": not blockers, "mode": "real", "blockers": blockers}
 
+    def probe_readiness_with_reservation(self) -> dict:
+        """Adopt a request reservation and quarantine timed-out probe workers."""
+        owns_reservation = bool(
+            self._hardware_reservation is not None
+            and getattr(
+                self._hardware_reservation,
+                "owned_by_current_thread",
+                False,
+            )
+        )
+        if not owns_reservation:
+            return self.readiness(probe=True)
+        with self._lock:
+            self._hardware_reserved = True
+        try:
+            return self.readiness(probe=True, _probe_reserved=True)
+        finally:
+            self._release_hardware_reservation()
+
     def _required_axes(self) -> tuple[str, ...]:
         # The saved scan pose contains all three axes, so every axis must have a
         # trustworthy reference even when only Y/Z move during acquisition.
@@ -310,6 +369,13 @@ class ScanSession:
         saved_pose: Mapping[str, Any] | None,
     ) -> list[str]:
         blockers: list[str] = []
+        effective_pose = saved_pose
+        if saved_pose is not None and self._automatic_x_center_enabled():
+            try:
+                effective_pose = dict(saved_pose)
+                effective_pose["x"] = self._x_center_details()["target_mm"]
+            except RuntimeError as exc:
+                blockers.append(str(exc))
         try:
             rotation_axis = str(self._config.get("rotation_axis", "y")).lower()
             z_axis = str(self._config.get("z_axis", "z")).lower()
@@ -352,14 +418,15 @@ class ScanSession:
                 low = float(axis_limits["min"])
                 high = float(axis_limits["max"])
                 current = float(positions.get(axis, 0.0))
-                start = float(saved_pose[axis]) if saved_pose is not None else current
+                start = float(effective_pose[axis]) if effective_pose is not None else current
             except (KeyError, TypeError, ValueError) as exc:
                 blockers.append(f"Axis {axis.upper()} limits or saved pose are invalid: {exc}")
                 continue
             if not all(math.isfinite(value) for value in (low, high, current, start)) or high <= low:
                 blockers.append(f"Axis {axis.upper()} limits and positions must be finite with max > min")
                 continue
-            if not low <= current <= high:
+            axis_homed = bool(motor_status.get("homed", {}).get(axis, False))
+            if axis_homed and not low <= current <= high:
                 blockers.append(
                     f"Axis {axis.upper()} current position {current:.2f} mm is outside "
                     f"validated limits [{low:.2f}, {high:.2f}]"
@@ -372,6 +439,50 @@ class ScanSession:
                     f"validated limits [{low:.2f}, {high:.2f}]"
                 )
         return blockers
+
+    def _automatic_x_center_enabled(self) -> bool:
+        return bool(self._config.get("center_x_before_scan", True))
+
+    def _x_center_details(self) -> dict[str, float]:
+        limits = self._config.get("axis_limits_mm", {})
+        scan_limits = limits.get("x") if isinstance(limits, Mapping) else None
+        if not isinstance(scan_limits, Mapping):
+            raise RuntimeError("Explicit scan axis_limits_mm.x are required for automatic centering")
+        try:
+            scan_low = float(scan_limits["min"])
+            scan_high = float(scan_limits["max"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("Axis X scan limits are invalid for automatic centering") from exc
+
+        motor_limits_getter = getattr(self._motor, "get_motor_limits", None)
+        raw_motor_limits = (
+            motor_limits_getter("x")
+            if callable(motor_limits_getter)
+            else (scan_low, scan_high)
+        )
+        try:
+            motor_low, motor_high = (float(value) for value in raw_motor_limits)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Axis X motor limits are invalid for automatic centering") from exc
+        if not all(
+            math.isfinite(value)
+            for value in (scan_low, scan_high, motor_low, motor_high)
+        ) or scan_high <= scan_low or motor_high <= motor_low:
+            raise RuntimeError(
+                "Axis X limits must be finite with max > min for automatic centering"
+            )
+
+        target = motor_low + (motor_high - motor_low) / 2.0
+        if not scan_low <= target <= scan_high:
+            raise RuntimeError(
+                f"Axis X motor center {target:.2f} mm is outside validated scan limits "
+                f"[{scan_low:.2f}, {scan_high:.2f}]"
+            )
+        return {
+            "position_min_mm": motor_low,
+            "position_max_mm": motor_high,
+            "target_mm": target,
+        }
 
     def _validate_calibration(self) -> list[str]:
         blockers: list[str] = []
@@ -485,10 +596,13 @@ class ScanSession:
                 and not self._hardware_reservation.acquire(blocking=False)
             ):
                 raise RuntimeError("Scanner hardware is busy with another operation")
-            self._hardware_reserved = not self._simulation
+            self._hardware_reserved = (
+                not self._simulation and self._hardware_reservation is not None
+            )
             self._starting = True
             self._cancel_event = threading.Event()
             self._phase = "preflight"
+            self._motor_preparation = None
         try:
             readiness = self.readiness(
                 probe=not self._simulation,
@@ -497,6 +611,21 @@ class ScanSession:
             if not readiness["ready"]:
                 raise ScanPreflightError(readiness["blockers"])
             self._check_cancelled()
+            if not self._simulation and self._automatic_x_center_enabled():
+                try:
+                    self._prepare_automatic_x_center()
+                except Exception as exc:
+                    raise ScanPreflightError(
+                        [f"Automatic X homing/centering failed: {exc}"]
+                    ) from exc
+                readiness = self.readiness(
+                    probe=False,
+                    _allow_starting=True,
+                    _require_centered_x=True,
+                )
+                if not readiness["ready"]:
+                    raise ScanPreflightError(readiness["blockers"])
+                self._check_cancelled()
 
             with self._lock:
                 self._data.clear()
@@ -725,11 +854,121 @@ class ScanSession:
                 positions.append(target)
         return positions
 
+    def _prepare_automatic_x_center(self) -> None:
+        details = self._x_center_details()
+        homing_timeout = self._positive_float("x_homing_timeout_s", 135.0)
+        motion_timeout = self._positive_float("motion_timeout_s", 30.0)
+        preparation_valid = threading.Event()
+        preparation_valid.set()
+
+        def guarded(operation: Callable[[], Any]) -> Any:
+            try:
+                return operation()
+            finally:
+                if not preparation_valid.is_set():
+                    self._invalidate_x()
+
+        try:
+            homed = self._invoke_with_timeout(
+                lambda: guarded(lambda: self._motor.home_motor("x")),
+                homing_timeout,
+                "Axis X homing",
+            )
+            if not homed:
+                raise RuntimeError("axis X homing was rejected or stopped")
+            self._check_cancelled()
+
+            target = details["target_mm"]
+            move_to = getattr(self._motor, "move_motor_to", None)
+            if callable(move_to):
+                move = lambda: move_to("x", target)
+            else:
+                current = float(
+                    self._motor.get_motor_status()
+                    .get("positions", {})
+                    .get("x", details["position_min_mm"])
+                )
+                move = lambda: self._motor.move_motor("x", target - current)
+            centered = self._invoke_with_timeout(
+                lambda: guarded(move),
+                motion_timeout,
+                "Axis X centering",
+            )
+            if not centered:
+                raise RuntimeError("axis X centering was rejected or stopped")
+
+            status = self._motor.get_motor_status()
+            actual = float(status.get("positions", {}).get("x", float("nan")))
+            tolerance = self._positive_float("position_tolerance_mm", 0.05)
+            if (
+                not bool(status.get("homed", {}).get("x", False))
+                or not math.isfinite(actual)
+                or abs(actual - target) > tolerance
+            ):
+                raise RuntimeError(
+                    f"axis X did not confirm centered position {target:.2f} mm"
+                )
+            with self._lock:
+                self._axis_position["x"] = actual
+                self._motion_fault = None
+                self._motor_preparation = {
+                    "homed": True,
+                    **details,
+                    "actual_mm": actual,
+                }
+        except Exception:
+            preparation_valid.clear()
+            self._stop_and_invalidate_x()
+            raise
+
+    def _stop_and_invalidate_x(self) -> None:
+        try:
+            stopped = self._motor.stop_motor("x")
+            if not stopped:
+                with self._lock:
+                    self._motion_fault = (
+                        "Axis X emergency stop was rejected; complete a successful manual "
+                        "X home before another scan"
+                    )
+        except Exception:
+            logger.exception("Failed to stop X after automatic preparation failure")
+            with self._lock:
+                self._motion_fault = (
+                    "Axis X emergency stop failed; complete a successful manual X home "
+                    "before another scan"
+                )
+        self._invalidate_x()
+
+    def _invalidate_x(self) -> None:
+        invalidate = getattr(self._motor, "invalidate_motor_position", None)
+        if callable(invalidate):
+            try:
+                invalidate("x")
+            except Exception:
+                logger.exception("Failed to invalidate X after automatic preparation failure")
+
+    def clear_motion_fault(self, axis: str) -> None:
+        """Clear quarantine only after a successful explicit X/all-axis home."""
+        if axis.lower() in {"x", "all"}:
+            with self._lock:
+                self._motion_fault = None
+
+    def has_outstanding_operations(self) -> bool:
+        """Return whether a timed operation still owns hardware."""
+        with self._lock:
+            self._operation_threads = {
+                thread for thread in self._operation_threads if thread.is_alive()
+            }
+            return bool(self._operation_threads)
+
     def _move_to_saved_pose(self) -> None:
         pose_name = str(self._config.get("scan_pose_camera", "pi"))
         pose = (self._saved_poses_provider() or {}).get(pose_name)
         if not isinstance(pose, Mapping):
             raise RuntimeError(f"Saved scan pose '{pose_name}' disappeared after preflight")
+        pose = dict(pose)
+        if self._automatic_x_center_enabled():
+            pose["x"] = self._x_center_details()["target_mm"]
         with self._lock:
             self._phase = "moving-to-scan-pose"
         self._move_axes({axis: float(pose[axis]) for axis in ("x", "y", "z")})
@@ -1076,6 +1315,8 @@ class ScanSession:
             except Exception as exc:
                 outcome["error"] = exc
             finally:
+                with self._lock:
+                    self._operation_threads.discard(threading.current_thread())
                 completed.set()
 
         thread = threading.Thread(target=run, name=f"scan-{label}", daemon=True)
@@ -1137,6 +1378,11 @@ class ScanSession:
                 "phase": self._phase,
                 "progress": round(self._progress, 1),
                 "axis_position": dict(self._axis_position),
+                "motor_preparation": (
+                    dict(self._motor_preparation)
+                    if self._motor_preparation is not None
+                    else None
+                ),
                 "laser_side": self._laser_side,
                 "samples": self._samples,
                 "camera_frames": self._camera_frames,

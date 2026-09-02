@@ -3,11 +3,13 @@ Camera Driver - PiCam (CSI) + Logitech (USB) capture
 """
 
 import base64
+import glob
 import io
 import logging
 import math
 import threading
 import time
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +90,7 @@ class LogitechCamera:
     #: camera open (e.g. after a restart) tries the known-good index first
     #: instead of re-probing every candidate, cutting USB init time roughly
     #: in half.
-    _last_working_device_id: int | None = None
+    _last_working_device_id: int | str | None = None
 
     def __init__(self, device_id: int | str | None = None):
         self.device_id = self._normalize_device_id(device_id)
@@ -121,7 +123,7 @@ class LogitechCamera:
             )
             return False
         with self._lock:
-            candidates = [*self.FALLBACK_DEVICE_IDS]
+            candidates = self._automatic_device_candidates()
             if self.device_id is not None:
                 candidates = [self.device_id, *candidates]
             if LogitechCamera._last_working_device_id is not None:
@@ -177,6 +179,39 @@ class LogitechCamera:
                 tried,
             )
             return False
+
+    @classmethod
+    def _automatic_device_candidates(cls) -> list[int | str]:
+        """Prefer stable Logitech V4L2 identities, then enumerate all video nodes."""
+        candidates: list[int | str] = []
+        by_id = sorted(glob.glob("/dev/v4l/by-id/*"))
+        candidates.extend(
+            path
+            for path in by_id
+            if any(token in path.lower() for token in ("logitech", "046d", "c270"))
+            and "video-index0" in path.lower()
+        )
+
+        for name_path in sorted(glob.glob("/sys/class/video4linux/video*/name")):
+            try:
+                device_name = Path(name_path).read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if not any(
+                token in device_name.lower()
+                for token in ("logitech", "046d", "c270")
+            ):
+                continue
+            suffix = Path(name_path).parent.name.removeprefix("video")
+            if suffix.isdigit():
+                candidates.append(int(suffix))
+
+        for device_path in sorted(glob.glob("/dev/video[0-9]*")):
+            suffix = Path(device_path).name.removeprefix("video")
+            if suffix.isdigit():
+                candidates.append(int(suffix))
+        candidates.extend(cls.FALLBACK_DEVICE_IDS)
+        return candidates
 
     def close(self) -> None:
         with self._lock:

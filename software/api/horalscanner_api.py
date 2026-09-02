@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sys
-import tempfile
 import threading
 import time
+from functools import wraps
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
@@ -26,6 +25,7 @@ from flask import (
     Flask,
     Response,
     g,
+    has_request_context,
     jsonify,
     request,
     send_file,
@@ -61,61 +61,16 @@ from software.api.calibration_pose import (
     read_lidar_distance,
 )
 from software.api.lidar_driver import LidarDriver
+from software.api.hardware_lock import HardwareReservationLock
 from software.api.scanner_engine import (
     ReconstructionEngine,
     ScanPreflightError,
     ScanSession,
     _O3D_AVAILABLE,
 )
+from api.services import scan_service
 
 logger = logging.getLogger(__name__)
-
-
-class HardwareReservationLock:
-    """Process-local lock plus Linux flock for multi-worker exclusion."""
-
-    def __init__(self, path: str | None = None) -> None:
-        self._thread_lock = threading.Lock()
-        self._path = path or os.environ.get(
-            "HORALSCANNER_HARDWARE_LOCK",
-            os.path.join(tempfile.gettempdir(), "horalscanner-hardware.lock"),
-        )
-        self._file = None
-
-    def acquire(self, blocking: bool = True) -> bool:
-        if not self._thread_lock.acquire(blocking=blocking):
-            return False
-        try:
-            try:
-                import fcntl
-            except ImportError:
-                return True
-            self._file = open(self._path, "a+", encoding="ascii")
-            flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
-            try:
-                fcntl.flock(self._file.fileno(), flags)
-            except BlockingIOError:
-                self._file.close()
-                self._file = None
-                self._thread_lock.release()
-                return False
-            return True
-        except Exception:
-            if self._file is not None:
-                self._file.close()
-                self._file = None
-            self._thread_lock.release()
-            raise
-
-    def release(self) -> None:
-        try:
-            if self._file is not None:
-                import fcntl
-                fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
-                self._file.close()
-                self._file = None
-        finally:
-            self._thread_lock.release()
 
 # Drivers
 try:
@@ -157,10 +112,7 @@ def _add_cors(response):
 @api_bp.before_request
 def _guard_scan_hardware_reservation():
     """Prevent manual controls from racing a physical acquisition."""
-    allowed = {
-        "/api/motor/stop",
-        "/api/motor/status",
-    }
+    allowed = {"/api/motor/stop", "/api/motor/status"}
     guarded = (
         request.path.startswith((
             "/api/move/",
@@ -201,10 +153,7 @@ def _guard_scan_hardware_reservation():
 def _release_request_hardware_reservation(response):
     if getattr(g, "scan_hardware_lock_acquired", False):
         g.scan_hardware_lock_acquired = False
-        parts = request.path.strip("/").split("/")
-        camera_lock = None
-        if len(parts) >= 3 and parts[:2] == ["api", "camera"]:
-            camera_lock = _camera_operation_locks.get(parts[2])
+        camera_lock = getattr(g, "scan_hardware_operation_lock", None)
         if camera_lock is not None and camera_lock.locked():
             threading.Thread(
                 target=_release_after_camera_operation,
@@ -416,6 +365,8 @@ def _run_camera_operation(
     lock = _camera_operation_locks[camera_name]
     if not lock.acquire(blocking=False):
         raise CameraOperationBusy(f"Camera {camera_name} busy")
+    if has_request_context() and getattr(g, "scan_hardware_lock_acquired", False):
+        g.scan_hardware_operation_lock = lock
 
     completed = threading.Event()
     outcome: dict[str, Any] = {}
@@ -541,6 +492,32 @@ def _gpio_ready() -> bool:
 
 def _stm32_ready() -> bool:
     return bool(stm32_driver is not None and getattr(stm32_driver, "connected", False))
+
+
+def _serialized_motor_route(*, allow_while_scanning: bool = False):
+    def decorate(route):
+        @wraps(route)
+        def wrapped(*args, **kwargs):
+            if not scan_service.acquire_motor_operation():
+                return _json_error("Motor control busy", 409)
+            try:
+                if scan_session.has_outstanding_operations():
+                    return _json_error(
+                        "A timed-out hardware operation is still completing",
+                        409,
+                    )
+                if (
+                    not allow_while_scanning
+                    and scan_session.status().get("scanning", False)
+                ):
+                    return _json_error("Motor movement unavailable during scan", 409)
+                return route(*args, **kwargs)
+            finally:
+                scan_service.release_motor_operation()
+
+        return wrapped
+
+    return decorate
 
 
 def _runtime_capabilities() -> dict[str, Any]:
@@ -730,6 +707,7 @@ def led_color():
 
 
 @api_bp.route("/api/move/<axis>", methods=["POST"])
+@_serialized_motor_route()
 def move(axis: str):
     data = request.get_json(silent=True) or {}
     try:
@@ -752,6 +730,7 @@ def move(axis: str):
 
 
 @api_bp.route("/api/home/<target>", methods=["POST"])
+@_serialized_motor_route()
 def home(target: str):
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -760,6 +739,7 @@ def home(target: str):
         success = stm32_driver.home_motor(target)
         if not success:
             return _json_error("Failed to home motor")
+        scan_session.clear_motion_fault(target)
 
         return jsonify({"success": True, "status": stm32_driver.get_motor_status()})
     except Exception:
@@ -1088,6 +1068,7 @@ def camera_test(camera_name: str):
 # ---------------------------------------------------------------------------
 
 @api_bp.route("/api/camera/<camera_name>/goto_calibration_pose", methods=["POST"])
+@_serialized_motor_route()
 def camera_goto_calibration_pose(camera_name: str):
     """Move motors to the default calibration pose for *camera_name*.
 
@@ -1178,6 +1159,7 @@ def camera_save_scan_pose(camera_name: str):
 
 
 @api_bp.route("/api/camera/<camera_name>/goto_scan_pose", methods=["POST"])
+@_serialized_motor_route()
 def camera_goto_scan_pose(camera_name: str):
     """Return the machine to the previously saved scan pose for *camera_name*.
 
@@ -1285,11 +1267,13 @@ def laser_align(side: str):
             capture_and_analyze_laser,
             CAMERA_TEST_TIMEOUT_SECONDS,
         )
-    except Exception as exc:
+    except CameraOperationTimeout as exc:
         try:
             gpio_driver.laser_off(side)
-        except Exception as cleanup_exc:
-            logger.error("Laser cleanup failed after camera error: %s", cleanup_exc)
+        except Exception:
+            logger.exception("Emergency laser shutdown failed after alignment timeout")
+        return _camera_operation_error("pi", exc)
+    except Exception as exc:
         return _camera_operation_error("pi", exc)
 
     if not available:
@@ -1312,6 +1296,7 @@ def laser_align(side: str):
 
 
 @api_bp.route("/api/camera/calibrate/pose/<camera_name>", methods=["POST"])
+@_serialized_motor_route()
 def camera_calibrate_pose(camera_name: str):
     """Move motors to the calibration pose for the requested camera.
 
@@ -1366,6 +1351,7 @@ def scan_pose_save():
 
 
 @api_bp.route("/api/scan/pose/restore", methods=["POST"])
+@_serialized_motor_route()
 def scan_pose_restore():
     """Move motors back to the saved scan pose for a camera.
 
@@ -1387,6 +1373,7 @@ def scan_pose_restore():
 
 
 @api_bp.route("/api/scan/start", methods=["POST"])
+@_serialized_motor_route(allow_while_scanning=True)
 def scan_start():
     _configure_scan_session_hardware()
     try:
@@ -1411,6 +1398,7 @@ def scan_start():
     return jsonify({
         "success": True,
         "mode": status["mode"],
+        "motor_preparation": status.get("motor_preparation"),
         "status": status,
         "hint": (
             "Explicit synthetic scan started."
@@ -1424,7 +1412,19 @@ def scan_start():
 def scan_preflight():
     """Report blockers; POST deliberately probes cameras, LiDAR, and laser-off control."""
     _configure_scan_session_hardware()
-    result = scan_session.readiness(probe=request.method == "POST")
+    if request.method == "POST":
+        reserved_probe = getattr(
+            scan_session,
+            "probe_readiness_with_reservation",
+            None,
+        )
+        if callable(reserved_probe):
+            g.scan_hardware_lock_acquired = False
+            result = reserved_probe()
+        else:
+            result = scan_session.readiness(probe=True)
+    else:
+        result = scan_session.readiness(probe=False)
     return jsonify({"success": True, **result}), 200
 
 
@@ -1497,6 +1497,7 @@ def model_current():
 
 
 @api_bp.route("/api/camera/<camera_name>/calibration-pose", methods=["POST"])
+@_serialized_motor_route()
 def camera_calibration_pose(camera_name: str):
     """Move motors to the calibration pose for the selected camera.
 
@@ -1517,14 +1518,12 @@ def camera_calibration_pose(camera_name: str):
         return _json_error("Pilote STM32 indisponible", 503)
 
     try:
-        axes_moved: list[str] = []
-        for axis in ("x", "y", "z"):
-            target = pose.get(axis)
-            if target is not None:
-                ok = stm32_driver.move_motor(axis, float(target))
-                if not ok:
-                    return _json_error(f"Deplacement axe {axis.upper()} echoue", 502)
-                axes_moved.append(axis)
+        target_pose = {
+            axis: float(target)
+            for axis in ("x", "y", "z")
+            if (target := pose.get(axis)) is not None
+        }
+        axes_moved = move_to_pose(stm32_driver, target_pose)
 
         motor_status = stm32_driver.get_motor_status()
         positions = motor_status.get("positions", {})
@@ -1603,6 +1602,7 @@ def camera_scan_pose_get():
 
 
 @api_bp.route("/api/camera/scan-pose/goto", methods=["POST"])
+@_serialized_motor_route()
 def camera_scan_pose_goto():
     """Move motors back to the memorized scan pose."""
     if _scan_pose is None:
@@ -1612,12 +1612,12 @@ def camera_scan_pose_goto():
         return _json_error("Pilote STM32 indisponible", 503)
 
     try:
-        for axis in ("x", "y", "z"):
-            target = _scan_pose.get(axis)
-            if target is not None:
-                ok = stm32_driver.move_motor(axis, float(target))
-                if not ok:
-                    return _json_error(f"Retour axe {axis.upper()} echoue", 502)
+        target_pose = {
+            axis: float(target)
+            for axis in ("x", "y", "z")
+            if (target := _scan_pose.get(axis)) is not None
+        }
+        move_to_pose(stm32_driver, target_pose)
 
         motor_status = stm32_driver.get_motor_status()
         camera_label = "Pi Camera V3" if _scan_pose.get("camera") == "pi" else "Logitech C270"

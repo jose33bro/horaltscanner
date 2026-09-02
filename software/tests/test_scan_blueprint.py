@@ -81,6 +81,18 @@ class TestScanRoutes(unittest.TestCase):
             self.assertIn("blockers", data)
             self.assertIn("status", data)
 
+    def test_start_alias_uses_shared_motor_reservation(self):
+        from api.services import scan_service
+
+        self.assertTrue(scan_service.acquire_motor_operation())
+        try:
+            resp = self.client.post("/scan/start")
+        finally:
+            scan_service.release_motor_operation()
+
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.get_json()["error"], "Motor control busy")
+
     def test_preflight_returns_explicit_mode_and_blockers(self):
         resp = self.client.get("/scan/preflight")
 

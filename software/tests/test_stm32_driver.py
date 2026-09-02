@@ -139,6 +139,56 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
         self.assertAlmostEqual(driver.get_motor_status()["positions"]["x"], 10.0)
         self.assertEqual(commands, ["MOVE X 32000 20000"])
 
+    def test_absolute_move_uses_configured_nonzero_limits(self):
+        driver = STM32Driver(
+            hardware_config={
+                "motors": {
+                    "x": {
+                        "rotation_distance": 40,
+                        "microsteps": 16,
+                        "position_min": 10,
+                        "position_max": 30,
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(driver.get_motor_limits("x"), (10.0, 30.0))
+        self.assertTrue(driver.home_motor("x"))
+        self.assertEqual(driver.get_motor_status()["positions"]["x"], 10.0)
+        self.assertTrue(driver.move_motor_to("x", 20.0))
+        self.assertEqual(driver.get_motor_status()["positions"]["x"], 20.0)
+        self.assertFalse(driver.move_motor_to("x", 31.0))
+
+    def test_real_move_stops_when_motion_status_times_out(self):
+        serial_port = Mock()
+        serial_port.readline.side_effect = [
+            b"OK MOVE\n",
+            b"OK MOTION_STATUS RUNNING\n",
+            b"OK STOP\n",
+        ]
+        driver = STM32Driver(
+            simulation=False,
+            hardware_config={
+                "serial": {
+                    "mcu_port": "/dev/horalscanner_mcu",
+                    "motion_timeout_s": 0.001,
+                    "motion_poll_interval_s": 0.01,
+                },
+                "motors": {"x": {"rotation_distance": 40, "microsteps": 16}},
+            },
+            serial_factory=Mock(return_value=serial_port),
+        )
+        driver.connect()
+        driver._motor_status["homed"]["x"] = True
+
+        self.assertFalse(driver.move_motor("x", 1.0))
+        self.assertFalse(driver.get_motor_status()["homed"]["x"])
+        self.assertEqual(
+            [call.args[0] for call in serial_port.write.call_args_list],
+            [b"MOVE X 80 4000\n", b"MOTION_STATUS\n", b"STOP X\n"],
+        )
+
     def test_real_move_waits_for_motion_completion(self):
         serial_port = Mock()
         serial_port.readline.side_effect = [
@@ -163,6 +213,30 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
             [b"MOVE X 80 4000\n", b"MOTION_STATUS\n", b"MOTION_STATUS\n"],
         )
 
+    def test_real_home_waits_for_motion_completion_before_marking_homed(self):
+        serial_port = Mock()
+        serial_port.readline.side_effect = [
+            b"OK HOME\n",
+            b"OK MOTION_STATUS RUNNING\n",
+            b"OK MOTION_STATUS DONE\n",
+        ]
+        driver = STM32Driver(
+            simulation=False,
+            hardware_config={
+                "serial": {"mcu_port": "/dev/horalscanner_mcu"},
+                "motors": {"x": {"rotation_distance": 40, "microsteps": 16}},
+            },
+            serial_factory=Mock(return_value=serial_port),
+        )
+        driver.connect()
+
+        self.assertTrue(driver.home_motor("x"))
+        self.assertTrue(driver.get_motor_status()["homed"]["x"])
+        self.assertEqual(
+            [call.args[0] for call in serial_port.write.call_args_list],
+            [b"HOME X\n", b"MOTION_STATUS\n", b"MOTION_STATUS\n"],
+        )
+
     def test_stopped_motion_does_not_update_position(self):
         serial_port = Mock()
         serial_port.readline.side_effect = [
@@ -183,6 +257,52 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
         self.assertFalse(driver.move_motor("x", 1.0))
         self.assertEqual(driver.get_motor_status()["positions"]["x"], 0.0)
         self.assertFalse(driver.get_motor_status()["homed"]["x"])
+
+    def test_serial_poll_error_invalidates_position(self):
+        serial_port = Mock()
+        serial_port.readline.return_value = b"OK MOVE\n"
+        driver = STM32Driver(
+            simulation=False,
+            hardware_config={
+                "serial": {"mcu_port": "/dev/horalscanner_mcu"},
+                "motors": {"x": {"rotation_distance": 40, "microsteps": 16}},
+            },
+            serial_factory=Mock(return_value=serial_port),
+        )
+        driver.connect()
+        driver._motor_status["homed"]["x"] = True
+        driver._wait_for_motion = Mock(side_effect=OSError("serial failed"))
+
+        with self.assertRaisesRegex(OSError, "serial failed"):
+            driver.move_motor("x", 1.0)
+
+        status = driver.get_motor_status()
+        self.assertFalse(status["homed"]["x"])
+        self.assertFalse(status["moving"]["x"])
+        self.assertEqual(status["positions"]["x"], 0.0)
+        self.assertFalse(driver.connected)
+        serial_port.close.assert_called_once_with()
+
+    def test_move_acknowledgement_error_invalidates_position_and_connection(self):
+        serial_port = Mock()
+        serial_port.readline.side_effect = OSError("ack read failed")
+        driver = STM32Driver(
+            simulation=False,
+            hardware_config={
+                "serial": {"mcu_port": "/dev/horalscanner_mcu"},
+                "motors": {"x": {"rotation_distance": 40, "microsteps": 16}},
+            },
+            serial_factory=Mock(return_value=serial_port),
+        )
+        driver.connect()
+        driver._motor_status["homed"]["x"] = True
+
+        with self.assertRaisesRegex(OSError, "ack read failed"):
+            driver.move_motor("x", 1.0)
+
+        self.assertFalse(driver.get_motor_status()["homed"]["x"])
+        self.assertFalse(driver.connected)
+        serial_port.close.assert_called_once_with()
 
     def test_serial_exception_invalidates_homed_position(self):
         serial_port = Mock()
@@ -205,6 +325,7 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
             driver.move_motor("x", 1.0)
 
         self.assertFalse(driver.get_motor_status()["homed"]["x"])
+        self.assertFalse(driver.connected)
 
     def test_concurrent_moves_are_serialized_before_limit_check(self):
         driver = STM32Driver(

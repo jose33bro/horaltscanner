@@ -1,5 +1,4 @@
 import threading
-import threading
 import time
 import unittest
 from unittest import mock
@@ -71,10 +70,11 @@ class ScanDataBoundedMemoryTests(unittest.TestCase):
 
 
 class _FakeMotor:
-    def __init__(self, homed=True):
+    def __init__(self, homed=True, limits=(0.0, 10.0)):
         self.connected = True
         self.positions = {"x": 0.0, "y": 0.0, "z": 0.0}
         self.homed = {axis: homed for axis in self.positions}
+        self.limits = limits
         self.calls = []
 
     def get_motor_status(self):
@@ -88,6 +88,22 @@ class _FakeMotor:
         self.calls.append(("move", axis, distance))
         self.positions[axis] += distance
         return True
+
+    def get_motor_limits(self, axis):
+        return self.limits if axis == "x" else (0.0, 10.0)
+
+    def home_motor(self, axis):
+        self.calls.append(("home", axis))
+        self.positions[axis] = self.limits[0]
+        self.homed[axis] = True
+        return True
+
+    def move_motor_to(self, axis, target):
+        return self.move_motor(axis, target - self.positions[axis])
+
+    def invalidate_motor_position(self, axis):
+        self.calls.append(("invalidate", axis))
+        self.homed[axis] = False
 
     def stop_motor(self, axis="all"):
         self.calls.append(("stop", axis))
@@ -154,6 +170,21 @@ class _BlockingLidar(_FakeLidar):
         return self.distance
 
 
+class _FakeReservation:
+    def __init__(self):
+        self._lock = threading.Lock()
+
+    def acquire(self, blocking=True):
+        return self._lock.acquire(blocking=blocking)
+
+    def release(self):
+        self._lock.release()
+
+    @property
+    def locked(self):
+        return self._lock.locked()
+
+
 VALID_CALIBRATION = {
     "cameras": {
         "pi": {
@@ -187,6 +218,7 @@ VALID_CALIBRATION = {
 
 SAFE_CONFIG = {
     "scan_pose_camera": "pi",
+    "center_x_before_scan": True,
     "rotation_steps": 1,
     "z_levels": 1,
     "rotation_step_mm": 1,
@@ -234,6 +266,7 @@ class RealScanSessionTests(unittest.TestCase):
         lidar=None,
         saved_pose=None,
         laser_line_analyzer=None,
+        hardware_reservation=None,
     ):
         self.motor = _FakeMotor(homed=homed)
         self.gpio = _FakeGPIO()
@@ -250,6 +283,7 @@ class RealScanSessionTests(unittest.TestCase):
                 "pi": saved_pose or {"x": 0.0, "y": 0.0, "z": 0.0}
             },
             laser_line_analyzer=laser_line_analyzer,
+            hardware_reservation=hardware_reservation,
         )
 
     @staticmethod
@@ -324,12 +358,112 @@ class RealScanSessionTests(unittest.TestCase):
         self.assertEqual(status["points"], 0)
 
     def test_saved_pose_and_all_axes_are_checked_against_limits(self):
-        session = self.make_session(saved_pose={"x": 11.0, "y": 0.0, "z": 0.0})
+        session = self.make_session(saved_pose={"x": 0.0, "y": 11.0, "z": 0.0})
 
         readiness = session.readiness()
 
         self.assertFalse(readiness["ready"])
-        self.assertTrue(any("Axis X scan path" in item for item in readiness["blockers"]))
+        self.assertTrue(any("Axis Y scan path" in item for item in readiness["blockers"]))
+
+    def test_real_scan_automatically_homes_and_centers_x(self):
+        session = self.make_session(
+            homed=False,
+            saved_pose={"x": 9.0, "y": 0.0, "z": 0.0},
+        )
+        self.motor.homed["y"] = True
+        self.motor.homed["z"] = True
+
+        session.start()
+        status = self.wait_for_completion(session)
+
+        self.assertEqual(status["phase"], "complete")
+        self.assertEqual(self.motor.calls[:2], [("home", "x"), ("move", "x", 5.0)])
+        self.assertEqual(status["motor_preparation"]["target_mm"], 5.0)
+        self.assertEqual(status["motor_preparation"]["actual_mm"], 5.0)
+        self.assertFalse(
+            any(call == ("move", "x", 4.0) for call in self.motor.calls),
+            "The saved X pose must not move X away from its automatic center",
+        )
+
+    def test_invalid_x_limits_block_start_before_any_motion(self):
+        config = {
+            **SAFE_CONFIG,
+            "axis_limits_mm": {
+                **SAFE_CONFIG["axis_limits_mm"],
+                "x": {"min": 10, "max": 0},
+            },
+        }
+        session = self.make_session(config=config)
+
+        with self.assertRaises(ScanPreflightError):
+            session.start()
+
+        self.assertFalse(any(call[0] in {"home", "move"} for call in self.motor.calls))
+
+    def test_x_center_failure_stops_and_invalidates_position(self):
+        session = self.make_session()
+        self.motor.move_motor_to = lambda axis, target: False
+
+        with self.assertRaisesRegex(ScanPreflightError, "centering was rejected"):
+            session.start()
+
+        self.assertIn(("stop", "x"), self.motor.calls)
+        self.assertIn(("invalidate", "x"), self.motor.calls)
+        self.assertFalse(self.motor.homed["x"])
+
+    def test_rejected_emergency_stop_quarantines_x_until_manual_home(self):
+        session = self.make_session()
+        self.motor.move_motor_to = lambda axis, target: False
+        self.motor.stop_motor = lambda axis="all": (
+            self.motor.calls.append(("stop", axis)) or False
+        )
+
+        with self.assertRaises(ScanPreflightError):
+            session.start()
+        calls_after_failure = list(self.motor.calls)
+        with self.assertRaisesRegex(ScanPreflightError, "emergency stop was rejected"):
+            session.start()
+
+        self.assertEqual(self.motor.calls, calls_after_failure)
+        session.clear_motion_fault("x")
+
+    def test_x_homing_timeout_returns_promptly_and_stays_invalid(self):
+        config = {**SAFE_CONFIG, "x_homing_timeout_s": 0.02}
+        reservation = _FakeReservation()
+        session = self.make_session(
+            config=config,
+            hardware_reservation=reservation,
+        )
+        release_home = threading.Event()
+        home_returned = threading.Event()
+
+        def blocked_home(axis):
+            self.motor.calls.append(("home", axis))
+            release_home.wait(1)
+            self.motor.positions[axis] = self.motor.limits[0]
+            self.motor.homed[axis] = True
+            home_returned.set()
+            return True
+
+        self.motor.home_motor = blocked_home
+        started = time.monotonic()
+        with self.assertRaisesRegex(ScanPreflightError, "timed out"):
+            session.start()
+        elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 0.2)
+        self.assertIn(("stop", "x"), self.motor.calls)
+        self.assertTrue(reservation.locked)
+        release_home.set()
+        self.assertTrue(home_returned.wait(0.5))
+        deadline = time.monotonic() + 0.5
+        while self.motor.homed["x"] and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertFalse(self.motor.homed["x"])
+        deadline = time.monotonic() + 0.5
+        while reservation.locked and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertFalse(reservation.locked)
 
     def test_runtime_move_guard_rejects_target_outside_limits(self):
         session = self.make_session()
@@ -383,7 +517,7 @@ class RealScanSessionTests(unittest.TestCase):
         def fail_first_acquisition_status():
             nonlocal calls
             calls += 1
-            if calls == 2:
+            if calls == 4:
                 raise OSError("motor status read failed")
             return get_status()
 

@@ -4,10 +4,13 @@ Supports simulation mode (no hardware required) for the test suite.
 """
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 _FAN_CHANNELS: dict[str, str] = {
     "creality": "PA0",
@@ -100,7 +103,7 @@ class STM32Driver:
 
     @property
     def connected(self) -> bool:
-        return self._simulation or self._connected
+        return self._simulation or self._port is not None
 
     @property
     def last_error(self) -> Exception | None:
@@ -135,10 +138,6 @@ class STM32Driver:
             self._port = None
             self._connected = False
             return False
-
-    @property
-    def connected(self) -> bool:
-        return self._simulation or self._port is not None
 
     # ------------------------------------------------------------------
     # Internal helpers (can be monkey-patched in tests)
@@ -189,6 +188,24 @@ class STM32Driver:
                 return "error"
             time.sleep(poll_interval_s)
         return "timeout"
+
+    def _invalidate_connection_after_motion_error(
+        self,
+        axes: tuple[str, ...],
+        error: Exception,
+    ) -> None:
+        for axis in axes:
+            self._motor_status["homed"][axis] = False
+            self._motor_status["moving"][axis] = False
+        self._last_error = error
+        port = self._port
+        self._port = None
+        self._connected = False
+        if port is not None:
+            try:
+                port.close()
+            except Exception:
+                logger.exception("Failed to close STM32 serial port after motion I/O error")
 
     # ------------------------------------------------------------------
     # Fan control
@@ -273,6 +290,30 @@ class STM32Driver:
     def _axis_cfg(self, axis: str) -> dict | None:
         return self._motor_cfg.get(axis.lower())
 
+    def get_motor_limits(self, axis: str) -> tuple[float, float] | None:
+        cfg = self._axis_cfg(axis)
+        if cfg is None:
+            return None
+        return (
+            float(cfg.get("position_min", 0.0)),
+            float(cfg.get("position_max", float("inf"))),
+        )
+
+    def move_motor_to(self, axis: str, target_mm: float) -> bool:
+        axis = axis.lower()
+        limits = self.get_motor_limits(axis)
+        if limits is None:
+            return False
+        position_min, position_max = limits
+        if not position_min <= target_mm <= position_max:
+            return False
+        current = self._motor_status["positions"].get(axis)
+        if current is None:
+            return False
+        if abs(target_mm - current) < 1e-9:
+            return bool(self._motor_status["homed"].get(axis, False))
+        return self.move_motor(axis, target_mm - current)
+
     def move_motor(self, axis: str, distance_mm: float) -> bool:
         generation = self._stop_generation
         with self._motion_lock:
@@ -304,32 +345,36 @@ class STM32Driver:
         cmd = f"MOVE {axis.upper()} {steps * direction} {speed_steps}"
         try:
             ok = self._send_motion_command(cmd, generation)
-            if not ok:
-                return False
-            # In non-simulation mode wait for motion completion
-            if not self._simulation and self._port is not None:
-                self._motor_status["moving"][axis] = True
-                serial_cfg = self._hardware_config.get("serial", {})
-                timeout_s = float(serial_cfg.get("motion_timeout_s", 30.0))
-                poll_interval_s = float(serial_cfg.get("motion_poll_interval_s", 0.02))
-                try:
-                    outcome = self._wait_for_motion(timeout_s, poll_interval_s)
-                    if outcome != "done":
-                        if outcome == "timeout":
-                            self._send_command(f"STOP {axis.upper()}")
-                        self._motor_status["homed"][axis] = False
-                        return False
-                finally:
-                    self._motor_status["moving"][axis] = False
-            if generation != self._stop_generation:
-                self._motor_status["homed"][axis] = False
-                return False
-            self._motor_status["positions"][axis] = target
-            return True
-        except Exception:
+        except Exception as exc:
             if not self._simulation:
-                self._motor_status["homed"][axis] = False
+                self._invalidate_connection_after_motion_error((axis,), exc)
             raise
+        if not ok:
+            self._motor_status["homed"][axis] = False
+            return False
+        # In non-simulation mode wait for motion completion
+        if not self._simulation and self._port is not None:
+            self._motor_status["moving"][axis] = True
+            serial_cfg = self._hardware_config.get("serial", {})
+            timeout_s = float(serial_cfg.get("motion_timeout_s", 30.0))
+            poll_interval_s = float(serial_cfg.get("motion_poll_interval_s", 0.02))
+            try:
+                outcome = self._wait_for_motion(timeout_s, poll_interval_s)
+                if outcome != "done":
+                    if outcome == "timeout":
+                        self._send_command(f"STOP {axis.upper()}")
+                    self._motor_status["homed"][axis] = False
+                    return False
+            except Exception as exc:
+                self._invalidate_connection_after_motion_error((axis,), exc)
+                raise
+            finally:
+                self._motor_status["moving"][axis] = False
+        if generation != self._stop_generation:
+            self._motor_status["homed"][axis] = False
+            return False
+        self._motor_status["positions"][axis] = target
+        return True
 
     def home_motor(self, axis: str) -> bool:
         generation = self._stop_generation
@@ -347,7 +392,12 @@ class STM32Driver:
             self._motor_status["homed"][item] = False
 
         command_target = "ALL" if axis == "all" else axis.upper()
-        ok = self._send_motion_command(f"HOME {command_target}", generation)
+        try:
+            ok = self._send_motion_command(f"HOME {command_target}", generation)
+        except Exception as exc:
+            if not self._simulation:
+                self._invalidate_connection_after_motion_error(axes, exc)
+            raise
         if not ok:
             return False
         if not self._simulation and self._port is not None:
@@ -362,15 +412,26 @@ class STM32Driver:
                     if outcome == "timeout":
                         self._send_command("STOP ALL")
                     return False
+            except Exception as exc:
+                self._invalidate_connection_after_motion_error(axes, exc)
+                raise
             finally:
                 for item in axes:
                     self._motor_status["moving"][item] = False
         if generation != self._stop_generation:
             return False
         for item in axes:
-            self._motor_status["positions"][item] = 0.0
+            cfg = self._axis_cfg(item)
+            self._motor_status["positions"][item] = float(
+                cfg.get("position_min", 0.0)
+            )
             self._motor_status["homed"][item] = True
         return True
+
+    def invalidate_motor_position(self, axis: str) -> None:
+        axis = axis.lower()
+        if axis in self._motor_status["homed"]:
+            self._motor_status["homed"][axis] = False
 
     def stop_motor(self, axis: str = "all") -> bool:
         self._stop_generation += 1

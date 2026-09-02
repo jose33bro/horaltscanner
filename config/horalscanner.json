@@ -8,6 +8,7 @@
     "simulation": false,
     "acquisition": {
       "scan_pose_camera": "pi",
+      "center_x_before_scan": true,
       "rotation_axis": "y",
       "rotation_step_mm": 5,
       "rotation_steps": 3,
@@ -33,6 +34,8 @@
       "laser_settle_ms": 100,
       "capture_timeout_s": 5,
       "motion_timeout_s": 30,
+      "x_homing_timeout_s": 135,
+      "position_tolerance_mm": 0.05,
       "lidar_timeout_s": 1,
       "lidar_samples_per_pose": 3,
       "laser_delta_threshold": 35,

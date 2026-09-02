@@ -229,12 +229,33 @@ verify_system_camera_stack() {
 }
 
 ensure_system_site_packages_venv() {
-    if [ -x "$VENV_DIR/bin/python3" ]; then
+    RESOLVED_VENV="$(realpath -m -- "$VENV_DIR")"
+    if [ -z "$RESOLVED_VENV" ] || [ "$RESOLVED_VENV" = "/" ]; then
+        log_error "Refusing unsafe virtual environment path: $VENV_DIR"
+        return 1
+    fi
+    VENV_DIR="$RESOLVED_VENV"
+
+    if [ -d "$VENV_DIR" ] && [ ! -f "$VENV_DIR/pyvenv.cfg" ]; then
+        log_error "Refusing to replace non-venv directory: $VENV_DIR"
+        return 1
+    fi
+
+    if [ -x "$VENV_DIR/bin/python3" ] &&
+       "$VENV_DIR/bin/python3" -c 'import sys' >/dev/null 2>&1; then
         log_info "Upgrading existing virtual environment with Raspberry Pi OS packages..."
         "$SYSTEM_PYTHON" -m venv --upgrade --system-site-packages "$VENV_DIR"
     else
+        if [ -d "$VENV_DIR" ]; then
+            log_warn "Existing virtual environment interpreter is broken; recreating it..."
+            rm -rf -- "$VENV_DIR"
+        fi
         log_info "Creating virtual environment with Raspberry Pi OS packages..."
         "$SYSTEM_PYTHON" -m venv --system-site-packages "$VENV_DIR"
+    fi
+    if ! "$VENV_DIR/bin/python3" -c 'import sys' >/dev/null 2>&1; then
+        log_error "Virtual environment interpreter validation failed"
+        return 1
     fi
     if ! grep -Eq '^[[:space:]]*include-system-site-packages[[:space:]]*=[[:space:]]*true[[:space:]]*$' \
         "$VENV_DIR/pyvenv.cfg"; then

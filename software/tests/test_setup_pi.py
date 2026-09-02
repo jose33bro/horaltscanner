@@ -69,6 +69,10 @@ class RaspberryPiRepairScriptTests(unittest.TestCase):
             '"$SYSTEM_PYTHON" -c "import libcamera; from picamera2 import Picamera2"',
             self.script,
         )
+        self.assertIn(
+            '"$VENV_DIR/bin/python3" -c \'import sys\'',
+            self.script,
+        )
 
 
 @unittest.skipUnless(
@@ -123,6 +127,58 @@ class RaspberryPiRepairShellBehaviorTests(unittest.TestCase):
         self.assertEqual(
             call_log.read_text(encoding="utf-8").strip(),
             f"-m venv --upgrade --system-site-packages {venv}",
+        )
+
+    def test_executable_looking_broken_venv_is_safely_recreated(self):
+        venv = self.scratch / "broken-venv"
+        binary = venv / "bin" / "python3"
+        binary.parent.mkdir(parents=True)
+        binary.write_text("#!/missing/os-python\n", encoding="utf-8")
+        binary.chmod(0o755)
+        (venv / "pyvenv.cfg").write_text(
+            "include-system-site-packages = false\n",
+            encoding="utf-8",
+        )
+        sentinel = venv / "stale-file"
+        sentinel.write_text("stale", encoding="utf-8")
+        call_log = self.scratch / "recreate-call.txt"
+        fake_python = self.scratch / "recreate-python"
+        fake_python.write_text(
+            "#!/bin/bash\n"
+            'printf "%s\\n" "$*" >"$CALL_LOG"\n'
+            'mkdir -p "$FAKE_VENV/bin"\n'
+            "printf '#!/bin/sh\\nexit 0\\n' >\"$FAKE_VENV/bin/python3\"\n"
+            'chmod 755 "$FAKE_VENV/bin/python3"\n'
+            "printf 'include-system-site-packages = true\\n' "
+            '> "$FAKE_VENV/pyvenv.cfg"\n',
+            encoding="utf-8",
+        )
+        fake_python.chmod(0o755)
+        command = (
+            f"source {shlex.quote(str(ROOT / 'setup_pi.sh'))}; "
+            f"VENV_DIR={shlex.quote(str(venv))}; "
+            f"SYSTEM_PYTHON={shlex.quote(str(fake_python))}; "
+            "ensure_system_site_packages_venv"
+        )
+
+        subprocess.run(
+            ["bash", "-c", command],
+            check=True,
+            env={
+                **os.environ,
+                "CALL_LOG": str(call_log),
+                "FAKE_VENV": str(venv),
+            },
+        )
+
+        self.assertFalse(sentinel.exists())
+        self.assertEqual(
+            call_log.read_text(encoding="utf-8").strip(),
+            f"-m venv --system-site-packages {venv}",
+        )
+        self.assertIn(
+            "include-system-site-packages = true",
+            (venv / "pyvenv.cfg").read_text(encoding="utf-8"),
         )
 
     def test_import_failure_does_not_change_or_restart_service(self):

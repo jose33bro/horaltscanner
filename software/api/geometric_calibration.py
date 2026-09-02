@@ -795,6 +795,7 @@ class GeometricCalibrationService:
                         + ")"
                         + "; no multi-pose calibration trajectory was started"
                     )
+        self._check_cancelled()
         minimum = int(self._config.get("minimum_views", 6))
         for name in ("pi", "usb"):
             validate_view_diversity(
@@ -828,6 +829,8 @@ class GeometricCalibrationService:
                         remaining,
                     ),
                 )
+            except CalibrationCancelled:
+                raise
             except CalibrationError:
                 if time.monotonic() >= pose_deadline:
                     return None, timed_out, True

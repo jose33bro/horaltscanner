@@ -112,9 +112,10 @@ This rechecks rpicam/libcamera, Picamera2, OpenCV, Python requirements, groups,
 udev aliases, and systemd. Its health checks do not move an axis or energize a
 laser. Repair first verifies `import libcamera` with `/usr/bin/python3`, then
 creates or upgrades `/home/pi/horaltscanner_env` with
-`--system-site-packages`. It validates all required imports before changing or
-restarting the systemd unit; on validation failure the currently running
-service and unit are left untouched.
+`--system-site-packages`. A venv whose interpreter cannot execute is recreated
+at that resolved venv path only. It validates all required imports before
+changing or restarting the systemd unit; on validation failure the currently
+running service and unit are left untouched.
 
 Back up runtime state before an OS reinstall:
 

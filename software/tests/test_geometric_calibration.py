@@ -426,6 +426,51 @@ class CalibrationServiceTests(unittest.TestCase):
         self.assertLessEqual(attempts, 2)
         self.assertLess(elapsed, 0.15)
 
+    def test_capture_cancellation_near_deadline_is_not_converted_to_timeout(self):
+        def cancel_during_capture(_name, **_kwargs):
+            self.service._cancel.set()
+            time.sleep(0.01)
+            raise CalibrationCancelled("calibration cancelled")
+
+        self.service._capture = cancel_during_capture
+        with self.assertRaises(CalibrationCancelled):
+            self.service._capture_checkerboard_candidate(
+                "usb",
+                {"x": 210, "y": 0, "z": 10},
+                frames_per_pose=1,
+                pose_deadline=time.monotonic() + 0.005,
+            )
+
+    def test_cancel_at_last_camera_last_pose_is_checked_before_diversity(self):
+        pose = {"x": 210.0, "y": 0.0, "z": 10.0}
+        view = {
+            "corners": np.zeros((66, 2), dtype=np.float32),
+            "image_size": (1280, 960),
+            "coverage": 0.2,
+            "pose": pose,
+        }
+        self.service._config.update(
+            fresh_frames_per_pose=1,
+            checkerboard_pose_timeout_s=1,
+        )
+        self.service._move_to = lambda _pose: None
+        self.service._capture = lambda name, **_kwargs: name.encode()
+
+        def cancel_on_last_camera(frame, _pose, **_kwargs):
+            if frame == b"usb":
+                self.service._cancel.set()
+            return view
+
+        self.service._detect_checkerboard = cancel_on_last_camera
+        with (
+            mock.patch(
+                "software.api.geometric_calibration.validate_view_diversity"
+            ) as diversity,
+            self.assertRaises(CalibrationCancelled),
+        ):
+            self.service._capture_checkerboard_views([pose])
+        diversity.assert_not_called()
+
     def test_intrinsic_solver_preserves_distortion_and_rejects_bad_rms(self):
         points = checkerboard_points()[:, :2]
         views = [

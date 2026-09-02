@@ -11,6 +11,8 @@ import threading
 import time
 from pathlib import Path
 
+from software.api.checkerboard_detector import find_checkerboard_bounded
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -478,8 +480,9 @@ def analyze_laser_line(jpeg: bytes) -> dict:
 
 def analyze_camera_frame(
     jpeg: bytes,
-    checkerboard_sizes: tuple[tuple[int, int], ...] = ((12, 7), (11, 6), (9, 6)),
+    checkerboard_sizes: tuple[tuple[int, int], ...] = ((11, 6), (12, 7), (9, 6)),
     max_analysis_width: int = 960,
+    checkerboard_timeout_s: float = 2.0,
 ) -> dict:
     """Measure image quality and detect a calibration checkerboard.
 
@@ -510,16 +513,17 @@ def analyze_camera_frame(
                 interpolation=cv2.INTER_AREA,
             )
         gray = cv2.cvtColor(analysis_image, cv2.COLOR_BGR2GRAY)
-        checkerboard_found = False
-        checkerboard_size = None
-        checkerboard_corners = None
-        for candidate_size in checkerboard_sizes:
-            found, corners = cv2.findChessboardCorners(gray, candidate_size)
-            if found:
-                checkerboard_found = True
-                checkerboard_size = candidate_size
-                checkerboard_corners = corners
-                break
+        detection = find_checkerboard_bounded(
+            cv2,
+            analysis_image,
+            checkerboard_sizes,
+            max_width=0,
+            timeout_s=checkerboard_timeout_s,
+            allow_ir_glare_fallback=True,
+        )
+        checkerboard_found = bool(detection.get("found"))
+        checkerboard_size = detection.get("pattern")
+        checkerboard_corners = detection.get("corners")
 
         analysis_height, analysis_width = gray.shape
         brightness = float(gray.mean())
@@ -546,6 +550,10 @@ def analyze_camera_frame(
             "checkerboard_found": checkerboard_found,
             "checkerboard_columns": checkerboard_size[0] if checkerboard_size else None,
             "checkerboard_rows": checkerboard_size[1] if checkerboard_size else None,
+            "checkerboard_detection_method": detection.get("method"),
+            "checkerboard_glare_masked": bool(detection.get("glare_masked")),
+            "checkerboard_detection_timed_out": bool(detection.get("timed_out")),
+            "checkerboard_detection_error": detection.get("error"),
             "checkerboard_center_x_px": round(center_x, 1) if center_x is not None else None,
             "checkerboard_center_y_px": round(center_y, 1) if center_y is not None else None,
             "center_offset_x_px": round(offset_x, 1) if offset_x is not None else None,

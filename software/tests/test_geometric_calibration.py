@@ -289,6 +289,23 @@ class CalibrationServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(CalibrationError, "outside configured limits"):
             self.service._trajectory({"starting_pose_mm": {"x": 209, "y": 0, "z": 25}})
 
+    def test_failed_starting_framing_blocks_multi_pose_motion(self):
+        moved = []
+        self.service._move_to = lambda pose: moved.append(dict(pose))
+        self.service._capture = lambda name: name.encode()
+        pi_view = {
+            "corners": np.zeros((66, 2), dtype=np.float32),
+            "image_size": (1280, 960),
+            "coverage": 0.2,
+        }
+        self.service._detect_checkerboard = lambda frame, pose: (
+            {**pi_view, "pose": dict(pose)} if frame == b"pi" else None
+        )
+        poses = self.service._trajectory({})
+        with self.assertRaisesRegex(CalibrationError, "starting pose framing rejected"):
+            self.service._capture_checkerboard_views(poses)
+        self.assertEqual(moved, [poses[0]])
+
     def test_intrinsic_solver_preserves_distortion_and_rejects_bad_rms(self):
         points = checkerboard_points()[:, :2]
         views = [
@@ -301,6 +318,47 @@ class CalibrationServiceTests(unittest.TestCase):
         self.service._cv.rms = 2.0
         with self.assertRaisesRegex(CalibrationError, "exceeds"):
             self.service._calibrate_camera_intrinsics(views)
+
+    def test_calibration_detector_accepts_sb_full_frame_corners_and_records_glare(self):
+        image = np.zeros((960, 1280, 3), dtype=np.uint8)
+        corners = np.array(
+            [[[200 + column * 70, 250 + row * 70]]
+             for row in range(6) for column in range(11)],
+            dtype=np.float32,
+        )
+        self.service._cv.IMREAD_COLOR = 1
+        self.service._cv.imdecode = lambda _data, _mode: image
+        with mock.patch(
+            "software.api.geometric_calibration.find_checkerboard_bounded",
+            return_value={
+                "found": True,
+                "pattern": (11, 6),
+                "corners": corners,
+                "method": "sb",
+                "glare_masked": True,
+            },
+        ):
+            view = self.service._detect_checkerboard(
+                b"jpeg", {"x": 185, "y": 0, "z": 25}
+            )
+        self.assertIsNotNone(view)
+        self.assertEqual(view["image_size"], (1280, 960))
+        self.assertEqual(view["detection_method"], "sb")
+        self.assertTrue(view["glare_masked"])
+
+    def test_calibration_detector_surfaces_bounded_detection_timeout(self):
+        self.service._cv.IMREAD_COLOR = 1
+        self.service._cv.imdecode = lambda _data, _mode: np.zeros(
+            (960, 1280, 3), dtype=np.uint8
+        )
+        with mock.patch(
+            "software.api.geometric_calibration.find_checkerboard_bounded",
+            return_value={"found": False, "timed_out": True},
+        ):
+            with self.assertRaisesRegex(CalibrationError, "timed out"):
+                self.service._detect_checkerboard(
+                    b"jpeg", {"x": 185, "y": 0, "z": 25}
+                )
 
     def test_x_scale_is_validated_without_changing_rotation_distance(self):
         views = [

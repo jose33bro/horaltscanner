@@ -13,6 +13,8 @@ from typing import Any, Callable, Mapping
 
 import numpy as np
 
+from software.api.checkerboard_detector import find_checkerboard_bounded
+
 try:
     import cv2 as _cv2
 except ImportError:  # pragma: no cover - Raspberry Pi dependency
@@ -680,6 +682,13 @@ class GeometricCalibrationService:
             if index == 0:
                 with self._lock:
                     self._status["starting_pose_validated"] = all(views[name] for name in views)
+                missing = [name for name in ("pi", "usb") if not views[name]]
+                if missing:
+                    raise CalibrationError(
+                        "starting pose framing rejected for camera(s): "
+                        + ", ".join(missing)
+                        + "; no multi-pose calibration trajectory was started"
+                    )
         minimum = int(self._config.get("minimum_views", 6))
         for name in ("pi", "usb"):
             validate_view_diversity(
@@ -695,29 +704,23 @@ class GeometricCalibrationService:
         image = self._cv.imdecode(np.frombuffer(jpeg, np.uint8), self._cv.IMREAD_COLOR)
         if image is None:
             return None
-        gray = self._cv.cvtColor(image, self._cv.COLOR_BGR2GRAY)
         pattern = (int(self._config.get("columns", 11)), int(self._config.get("rows", 6)))
-        detector = getattr(self._cv, "findChessboardCornersSB", None)
-        if detector:
-            found, corners = detector(gray, pattern)
-        else:
-            found, corners = self._cv.findChessboardCorners(gray, pattern)
-            if found and hasattr(self._cv, "cornerSubPix"):
-                corners = self._cv.cornerSubPix(
-                    gray,
-                    corners,
-                    (7, 7),
-                    (-1, -1),
-                    (
-                        self._cv.TERM_CRITERIA_EPS + self._cv.TERM_CRITERIA_MAX_ITER,
-                        30,
-                        0.001,
-                    ),
-                )
-        if not found:
+        detection = find_checkerboard_bounded(
+            self._cv,
+            image,
+            (pattern,),
+            max_width=int(self._config.get("checkerboard_max_width", 1280)),
+            timeout_s=float(self._config.get("checkerboard_timeout_s", 2.0)),
+            allow_ir_glare_fallback=bool(
+                self._config.get("checkerboard_ir_glare_fallback", True)
+            ),
+        )
+        if detection.get("timed_out"):
+            raise CalibrationError("checkerboard detection timed out")
+        if not detection.get("found"):
             return None
-        corners = np.asarray(corners, dtype=np.float32).reshape(-1, 2)
-        height, width = gray.shape[:2]
+        corners = np.asarray(detection["corners"], dtype=np.float32).reshape(-1, 2)
+        height, width = image.shape[:2]
         minimum_margin = float(self._config.get("minimum_frame_margin", 0.04))
         margins = np.array(
             [
@@ -739,6 +742,8 @@ class GeometricCalibrationService:
             "pose": dict(pose),
             "coverage": coverage,
             "jpeg": jpeg,
+            "detection_method": detection.get("method"),
+            "glare_masked": bool(detection.get("glare_masked")),
         }
 
     def _solve_cameras(self, views: Mapping[str, list[dict]], options: Mapping[str, Any]) -> dict:
@@ -797,6 +802,10 @@ class GeometricCalibrationService:
             "per_view_rms_px": per_view,
             "pattern": "11x6_inner_corners",
             "square_size_mm": float(self._config.get("square_size_mm", 13)),
+            "detection_methods": sorted(
+                {str(view.get("detection_method", "unknown")) for view in views}
+            ),
+            "glare_masked_views": sum(bool(view.get("glare_masked")) for view in views),
         }
         return {
             "intrinsic_matrix": np.asarray(intrinsic).tolist(),

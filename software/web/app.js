@@ -738,9 +738,14 @@ const HoralScannerUI = (() => {
       const title = document.createElement("h2");
       title.textContent = camera === "pi" ? "Pi Camera V3 NoIR" : "Logitech C270";
       const verdict = document.createElement("p");
+      const detector = data.checkerboard_detection_method === "sb"
+        ? "detecteur robuste SB"
+        : "detecteur classique";
       verdict.textContent = data.checkerboard_found
-        ? `Mire ${data.checkerboard_columns} × ${data.checkerboard_rows} detectee.`
-        : "Mire non detectee. Ajustez le cadrage, la nettete ou l'eclairage.";
+        ? `Mire ${data.checkerboard_columns} × ${data.checkerboard_rows} detectee (${detector}${data.checkerboard_glare_masked ? ", reflet IR masque" : ""}).`
+        : data.checkerboard_detection_timed_out
+          ? "Detection de mire interrompue au delai de securite."
+          : data.checkerboard_detection_error || "Mire non detectee. Ajustez le cadrage, la nettete ou l'eclairage.";
       const details = document.createElement("p");
       details.className = "muted";
       details.textContent = data.checkerboard_found

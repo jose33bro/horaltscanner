@@ -18,7 +18,12 @@ quality evidence has been accepted.
 
 The configured X=185, Y=0, Z=25 mm pose is only a starting candidate. The
 workflow rejects it if both cameras do not detect a fresh, well-margined
-checkerboard view. The RGB LED and the unverified infrared spot are not used.
+checkerboard view. Detection tries the classic OpenCV detector and the more
+robust sector-based detector on a bounded image while returning full-frame
+corner coordinates. If both fail, one small saturated/chromatic IR blob may
+be masked and inpainted before a final retry; broad white board regions are
+never masked. This only protects corner detection—the IR spot is not used as
+geometric evidence. The workflow does not require the absent RGB LED.
 
 ## Before supervised motion
 

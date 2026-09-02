@@ -30,6 +30,7 @@ class TestCreateApp(unittest.TestCase):
         self.assertIn("/scan/status", rules)
         self.assertIn("/scan/start", rules)
         self.assertIn("/scan/stop", rules)
+        self.assertIn("/scan/preflight", rules)
 
     def test_runtime_api_routes_registered(self):
         from api import create_app
@@ -73,9 +74,21 @@ class TestScanRoutes(unittest.TestCase):
 
     def test_start_returns_json(self):
         resp = self.client.post("/scan/start")
-        self.assertIn(resp.status_code, (200, 503))
+        self.assertIn(resp.status_code, (200, 409, 503))
         data = resp.get_json()
         self.assertIsInstance(data, dict)
+        if resp.status_code == 409:
+            self.assertIn("blockers", data)
+            self.assertIn("status", data)
+
+    def test_preflight_returns_explicit_mode_and_blockers(self):
+        resp = self.client.get("/scan/preflight")
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertIn(data["mode"], {"real", "simulation"})
+        self.assertIn("ready", data)
+        self.assertIn("blockers", data)
 
     def test_stop_returns_json(self):
         resp = self.client.post("/scan/stop")

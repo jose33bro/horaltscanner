@@ -67,7 +67,7 @@ app = create_app()
 ### 3. Gunicorn Command
 ```bash
 gunicorn \
-  --workers 4 \
+  --workers 1 \
   --worker-class gevent \
   --bind 0.0.0.0:5000 \
   --access-logfile - \
@@ -88,7 +88,7 @@ User=pi
 WorkingDirectory=/home/pi/horaltscanner
 Environment="PATH=/home/pi/horaltscanner_env/bin"
 ExecStart=/home/pi/horaltscanner_env/bin/gunicorn \
-  --workers 4 \
+  --workers 1 \
   --worker-class gevent \
   --bind 0.0.0.0:5000 \
   --access-logfile - \

@@ -4,7 +4,44 @@
     "laser_power": 100,
     "lidar_offset_mm": 0,
     "capture_fps": 30,
-    "simulation": false
+    "mode": "real",
+    "simulation": false,
+    "acquisition": {
+      "scan_pose_camera": "pi",
+      "rotation_axis": "y",
+      "rotation_step_mm": 5,
+      "rotation_steps": 3,
+      "z_axis": "z",
+      "z_step_mm": 5,
+      "z_levels": 2,
+      "axis_limits_mm": {
+        "x": {
+          "min": 0,
+          "max": 210
+        },
+        "y": {
+          "min": 0,
+          "max": 628.32
+        },
+        "z": {
+          "min": 0,
+          "max": 270
+        }
+      },
+      "max_axis_travel_mm": 25,
+      "settle_ms": 200,
+      "laser_settle_ms": 100,
+      "capture_timeout_s": 5,
+      "motion_timeout_s": 30,
+      "lidar_timeout_s": 1,
+      "lidar_samples_per_pose": 3,
+      "laser_delta_threshold": 35,
+      "laser_row_stride": 4,
+      "max_points_per_frame": 300,
+      "target_points": 1000,
+      "restore_start_pose": true,
+      "stop_join_timeout_s": 3
+    }
   },
   "slicer": {
     "layer_height": 0.2,

@@ -13,10 +13,16 @@ logger = logging.getLogger(__name__)
 
 try:
     from api.scanner_engine import ScanSession
-    _session: ScanSession = ScanSession(simulation=True)
+    _session: ScanSession | None = None
 except Exception as exc:  # pragma: no cover
     logger.warning("ScanSession unavailable: %s", exc)
     _session = None  # type: ignore[assignment]
+
+
+def configure(session: ScanSession) -> None:
+    """Attach the application-wide session used by both scan route prefixes."""
+    global _session
+    _session = session
 
 
 def _get_state() -> dict:
@@ -43,7 +49,24 @@ def start_scan() -> dict:
         _session.start()
         return {"started": True, "status": _get_state()}
     except Exception as exc:  # noqa: BLE001
-        return {"started": False, "error": str(exc)}
+        blockers = list(getattr(exc, "blockers", []))
+        return {
+            "started": False,
+            "error": "Real scan preflight failed" if blockers else str(exc),
+            "blockers": blockers,
+            "status": _get_state(),
+        }
+
+
+def preflight(*, probe: bool = False) -> dict:
+    """Return the active acquisition mode and actionable readiness blockers."""
+    if _session is None:
+        return {
+            "ready": False,
+            "mode": "unavailable",
+            "blockers": ["scanner engine not available"],
+        }
+    return _session.readiness(probe=probe)
 
 
 def stop_scan() -> dict:

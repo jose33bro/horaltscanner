@@ -1,11 +1,17 @@
+import threading
+import threading
 import time
 import unittest
 from unittest import mock
 
+import numpy as np
+
 from software.api.scanner_engine import (
     ReconstructionEngine,
     ScanData,
+    ScanPreflightError,
     ScanSession,
+    _CV2_AVAILABLE,
 )
 
 
@@ -62,6 +68,415 @@ class ScanDataBoundedMemoryTests(unittest.TestCase):
             data.add_point(float(i), 0.0, 0.0)
 
         self.assertEqual(data.point_count(), se.MAX_POINTS)
+
+
+class _FakeMotor:
+    def __init__(self, homed=True):
+        self.connected = True
+        self.positions = {"x": 0.0, "y": 0.0, "z": 0.0}
+        self.homed = {axis: homed for axis in self.positions}
+        self.calls = []
+
+    def get_motor_status(self):
+        return {
+            "positions": dict(self.positions),
+            "homed": dict(self.homed),
+            "moving": {axis: False for axis in self.positions},
+        }
+
+    def move_motor(self, axis, distance):
+        self.calls.append(("move", axis, distance))
+        self.positions[axis] += distance
+        return True
+
+    def stop_motor(self, axis="all"):
+        self.calls.append(("stop", axis))
+        return True
+
+
+class _FakeGPIO:
+    simulation = False
+    hardware_available = True
+
+    def __init__(self):
+        self.calls = []
+        self.state = {"left": False, "right": False}
+
+    def laser_on(self, side):
+        self.calls.append(("on", side))
+        self.state[side] = True
+        return True
+
+    def laser_off(self, side):
+        self.calls.append(("off", side))
+        self.state[side] = False
+        return True
+
+
+class _FakeCamera:
+    is_open = True
+    last_error = None
+
+    def __init__(self, block_after=None):
+        self.calls = 0
+        self.block_after = block_after
+
+    def capture_jpeg(self):
+        self.calls += 1
+        if self.block_after is not None and self.calls > self.block_after:
+            time.sleep(0.3)
+        return b"jpeg"
+
+
+class _FakeLidar:
+    connected = True
+
+    def __init__(self, distance=100.0):
+        self.distance = distance
+
+    def connect(self):
+        self.connected = True
+        return True
+
+    def read_distance_mm(self):
+        return self.distance
+
+
+class _BlockingLidar(_FakeLidar):
+    def __init__(self):
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def read_distance_mm(self):
+        self.entered.set()
+        self.release.wait(1)
+        return self.distance
+
+
+VALID_CALIBRATION = {
+    "cameras": {
+        "pi": {
+            "intrinsic_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            "camera_to_scanner": np.eye(4).tolist(),
+        },
+        "usb": {
+            "intrinsic_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            "camera_to_scanner": np.eye(4).tolist(),
+            "carriage_axis": "z",
+            "carriage_direction": [0, 0, 1],
+        },
+    },
+    "laser_planes": {
+        "left": {"normal": [0, 0, 1], "offset_mm": -100},
+        "right": {"normal": [0, 0, 1], "offset_mm": -100},
+    },
+    "turntable": {
+        "center_mm": [0, 0, 0],
+        "axis": [0, 0, 1],
+        "mm_per_revolution": 100,
+    },
+    "lidar": {
+        "lidar_to_scanner": np.eye(4).tolist(),
+        "carriage_axis": "z",
+        "carriage_direction": [0, 0, 1],
+        "min_distance_mm": 20,
+        "max_distance_mm": 1000,
+    },
+}
+
+SAFE_CONFIG = {
+    "scan_pose_camera": "pi",
+    "rotation_steps": 1,
+    "z_levels": 1,
+    "rotation_step_mm": 1,
+    "z_step_mm": 1,
+    "axis_limits_mm": {
+        "x": {"min": 0, "max": 10},
+        "y": {"min": 0, "max": 10},
+        "z": {"min": 0, "max": 10},
+    },
+    "settle_ms": 1,
+    "laser_settle_ms": 1,
+    "lidar_samples_per_pose": 1,
+    "capture_timeout_s": 0.1,
+    "lidar_timeout_s": 0.1,
+    "motion_timeout_s": 0.1,
+}
+
+
+class _SequencingSession(ScanSession):
+    def _extract_points(
+        self,
+        camera_name,
+        laser_side,
+        ambient_jpeg,
+        laser_jpeg,
+        trajectory_origin,
+    ):
+        return [[1.0, 2.0, 3.0]]
+
+
+class RealScanSessionTests(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch("software.api.scanner_engine._CV2_AVAILABLE", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def make_session(
+        self,
+        *,
+        homed=True,
+        calibration=VALID_CALIBRATION,
+        cameras=None,
+        config=None,
+        lidar=None,
+        saved_pose=None,
+        laser_line_analyzer=None,
+    ):
+        self.motor = _FakeMotor(homed=homed)
+        self.gpio = _FakeGPIO()
+        self.cameras = cameras or {"pi": _FakeCamera(), "usb": _FakeCamera()}
+        return _SequencingSession(
+            simulation=False,
+            motor_driver=self.motor,
+            gpio_driver=self.gpio,
+            cameras=self.cameras,
+            lidar_driver=lidar or _FakeLidar(),
+            config=config or SAFE_CONFIG,
+            calibration=calibration,
+            saved_poses_provider=lambda: {
+                "pi": saved_pose or {"x": 0.0, "y": 0.0, "z": 0.0}
+            },
+            laser_line_analyzer=laser_line_analyzer,
+        )
+
+    @staticmethod
+    def wait_for_completion(session):
+        deadline = time.time() + 2
+        while session.status()["scanning"] and time.time() < deadline:
+            time.sleep(0.01)
+        return session.status()
+
+    def test_real_scan_sequences_both_lasers_both_cameras_and_lidar(self):
+        session = self.make_session()
+
+        session.start()
+        status = self.wait_for_completion(session)
+
+        self.assertEqual(status["phase"], "complete")
+        self.assertEqual(status["mode"], "real")
+        self.assertEqual(status["camera_frames"], 6)
+        self.assertGreaterEqual(status["lidar_samples"], 1)
+        self.assertEqual(status["points"], 5)
+        on_calls = [call for call in self.gpio.calls if call[0] == "on"]
+        self.assertEqual(on_calls, [("on", "left"), ("on", "right")])
+        self.assertEqual(self.cameras["pi"].calls, 4)
+        self.assertEqual(self.cameras["usb"].calls, 4)
+        self.assertFalse(any(self.gpio.state.values()))
+
+    def test_real_scan_reuses_shared_laser_line_analysis(self):
+        analyzed = []
+        session = self.make_session(
+            laser_line_analyzer=lambda frame: (
+                analyzed.append(frame)
+                or {"analysis_available": True, "line_detected": True}
+            )
+        )
+
+        session.start()
+        status = self.wait_for_completion(session)
+
+        self.assertEqual(status["phase"], "complete")
+        self.assertEqual(len(analyzed), 4)
+        self.assertEqual(status["laser_detections"], {"left": 2, "right": 2})
+
+    def test_probe_captures_both_cameras_and_rejects_out_of_range_lidar(self):
+        session = self.make_session(lidar=_FakeLidar(distance=1500.0))
+
+        readiness = session.readiness(probe=True)
+
+        self.assertFalse(readiness["ready"])
+        self.assertTrue(any("outside calibrated range" in item for item in readiness["blockers"]))
+        self.assertEqual(self.cameras["pi"].calls, 1)
+        self.assertEqual(self.cameras["usb"].calls, 1)
+
+    def test_missing_homing_is_an_actionable_blocker(self):
+        session = self.make_session(homed=False)
+
+        readiness = session.readiness()
+
+        self.assertFalse(readiness["ready"])
+        self.assertTrue(any("Axis Y must be homed" in item for item in readiness["blockers"]))
+        with self.assertRaises(ScanPreflightError):
+            session.start()
+
+    def test_missing_calibration_never_falls_back_to_simulation(self):
+        session = self.make_session(calibration={})
+
+        with self.assertRaises(ScanPreflightError):
+            session.start()
+
+        status = session.status()
+        self.assertEqual(status["mode"], "real")
+        self.assertFalse(status["simulation"])
+        self.assertEqual(status["points"], 0)
+
+    def test_saved_pose_and_all_axes_are_checked_against_limits(self):
+        session = self.make_session(saved_pose={"x": 11.0, "y": 0.0, "z": 0.0})
+
+        readiness = session.readiness()
+
+        self.assertFalse(readiness["ready"])
+        self.assertTrue(any("Axis X scan path" in item for item in readiness["blockers"]))
+
+    def test_runtime_move_guard_rejects_target_outside_limits(self):
+        session = self.make_session()
+
+        with self.assertRaisesRegex(RuntimeError, "outside configured limits"):
+            session._move_axes({"x": 11.0})
+
+        self.assertFalse(any(call[0] == "move" for call in self.motor.calls))
+
+    def test_invalid_calibration_values_are_blockers(self):
+        calibration = {
+            **VALID_CALIBRATION,
+            "turntable": {
+                "center_mm": [0, 0, 0],
+                "axis": [0, 0, 0],
+                "mm_per_revolution": 0,
+            },
+        }
+        session = self.make_session(calibration=calibration)
+
+        readiness = session.readiness()
+
+        self.assertFalse(readiness["ready"])
+        self.assertTrue(any("Turntable axis" in item for item in readiness["blockers"]))
+        self.assertTrue(any("mm_per_revolution" in item for item in readiness["blockers"]))
+
+    def test_capture_timeout_forces_lasers_off_and_stops_motors(self):
+        cameras = {
+            "pi": _FakeCamera(block_after=1),
+            "usb": _FakeCamera(),
+        }
+        config = {**SAFE_CONFIG, "capture_timeout_s": 0.03}
+        session = self.make_session(cameras=cameras, config=config)
+
+        session.start()
+        status = self.wait_for_completion(session)
+
+        self.assertEqual(status["phase"], "error")
+        self.assertIn("timed out", status["error"])
+        self.assertTrue(
+            any("timed-out hardware operation" in item for item in status["preflight_blockers"])
+        )
+        self.assertFalse(any(self.gpio.state.values()))
+        self.assertIn(("stop", "all"), self.motor.calls)
+
+    def test_initial_motor_status_exception_is_contained_and_cleaned_up(self):
+        session = self.make_session()
+        get_status = self.motor.get_motor_status
+        calls = 0
+
+        def fail_first_acquisition_status():
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("motor status read failed")
+            return get_status()
+
+        self.motor.get_motor_status = fail_first_acquisition_status
+
+        session.start()
+        status = self.wait_for_completion(session)
+
+        self.assertFalse(status["scanning"])
+        self.assertEqual(status["phase"], "error")
+        self.assertIn("motor status read failed", status["error"])
+        self.assertFalse(any(self.gpio.state.values()))
+        self.assertIn(("stop", "all"), self.motor.calls)
+
+    def test_concurrent_start_is_rejected_while_preflight_is_reserved(self):
+        lidar = _BlockingLidar()
+        session = self.make_session(lidar=lidar)
+        outcomes = []
+
+        starter = threading.Thread(
+            target=lambda: outcomes.append(session.start()),
+            daemon=True,
+        )
+        starter.start()
+        self.assertTrue(lidar.entered.wait(1))
+
+        with self.assertRaisesRegex(RuntimeError, "already running"):
+            session.start()
+
+        lidar.release.set()
+        starter.join(1)
+        session.stop()
+
+    def test_probed_preflight_does_not_touch_hardware_during_scan(self):
+        cameras = {
+            "pi": _FakeCamera(block_after=2),
+            "usb": _FakeCamera(),
+        }
+        session = self.make_session(cameras=cameras)
+        session.start()
+        deadline = time.time() + 1
+        while not self.gpio.state["left"] and time.time() < deadline:
+            time.sleep(0.005)
+        calls_before = list(self.gpio.calls)
+
+        readiness = session.readiness(probe=True)
+
+        self.assertFalse(readiness["ready"])
+        self.assertIn("Cannot probe hardware while a scan is active", readiness["blockers"])
+        self.assertEqual(self.gpio.calls, calls_before)
+        self.assertTrue(self.gpio.state["left"])
+        session.stop()
+
+    def test_cancel_immediately_forces_lasers_off_and_stops_motors(self):
+        cameras = {
+            "pi": _FakeCamera(block_after=1),
+            "usb": _FakeCamera(),
+        }
+        config = {**SAFE_CONFIG, "capture_timeout_s": 1.0}
+        session = self.make_session(cameras=cameras, config=config)
+        session.start()
+        deadline = time.time() + 1
+        while not self.gpio.state["left"] and time.time() < deadline:
+            time.sleep(0.005)
+
+        session.stop()
+
+        self.assertFalse(any(self.gpio.state.values()))
+        self.assertIn(("stop", "all"), self.motor.calls)
+        self.assertIn(session.status()["phase"], {"cancelled", "cancelling"})
+
+    @unittest.skipUnless(_CV2_AVAILABLE, "OpenCV required")
+    def test_laser_difference_is_triangulated_with_calibrated_plane(self):
+        import cv2
+
+        session = self.make_session()
+        ambient = np.zeros((8, 8, 3), dtype=np.uint8)
+        laser = ambient.copy()
+        laser[:, 2, 2] = 255
+        ok_ambient, ambient_buffer = cv2.imencode(".jpg", ambient)
+        ok_laser, laser_buffer = cv2.imencode(".jpg", laser)
+        self.assertTrue(ok_ambient and ok_laser)
+
+        points = ScanSession._extract_points(
+            session,
+            "pi",
+            "left",
+            ambient_buffer.tobytes(),
+            laser_buffer.tobytes(),
+            {"x": 0.0, "y": 0.0, "z": 0.0},
+        )
+
+        self.assertGreater(len(points), 0)
+        self.assertTrue(all(abs(point[2] - 100.0) < 1e-6 for point in points))
 
 
 class _FakeVector3dVector(list):

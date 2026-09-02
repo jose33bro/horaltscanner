@@ -31,8 +31,8 @@ class ScannerComponent {
             <div class="card">
               <h3>📍 Axes</h3>
               <div class="axis-row">
-                <label>X (0–210mm)</label>
-                <input type="range" id="axis-x" min="0" max="210" value="0" oninput="document.getElementById('axis-x-val').textContent=this.value+'mm'">
+                <label>X (0–195mm)</label>
+                <input type="range" id="axis-x" min="0" max="195" value="0" oninput="document.getElementById('axis-x-val').textContent=this.value+'mm'">
                 <span id="axis-x-val">0mm</span>
                 <button class="btn btn-sm" onclick="scannerComp.moveAxis('x')">→</button>
               </div>

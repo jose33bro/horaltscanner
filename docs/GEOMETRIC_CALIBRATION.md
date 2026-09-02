@@ -16,17 +16,28 @@ quality evidence has been accepted.
 - +X: radial, positive with commanded X; +Y: turntable tangent at Y=0; +Z:
   turntable axis, upward.
 
-The configured X=210, Y=0, Z=10 mm pose is the measured glare-free starting
-candidate. The
-workflow rejects it if both cameras do not detect a fresh, well-margined
-checkerboard view. Calibration accepts only the configured 11 × 6 pattern;
+The configured X=195, Y=0, Z=10 mm pose keeps a temporary 5 mm margin from the
+first observed mechanical contact at X=200 while preserving the camera framing.
+The calibration service hard-caps every trajectory pose at X=195 mm even if an
+unsafe higher limit is supplied.
+The workflow suspends TF-Luna ranging output once before checkerboard camera
+capture, waits for the optical spot to clear, and restores ranging output in a
+`finally` guard before any LiDAR measurements. Cancellation and failure paths
+also restore output. The workflow rejects the pose if both cameras do not detect
+a fresh checkerboard view with at least the configured 2% inner-corner frame
+margin and 3% image coverage.
+Calibration accepts only the configured 11 × 6 pattern;
 a 10 × 6 subset detection is explicitly rejected.
 Detection first uses the fast classic OpenCV detector, which normally detects
 this board despite the TF-Luna spot. The sector-based detector is only a
-bounded fallback. If both fail, one small saturated/chromatic IR blob may be
-masked and inpainted before a final retry; broad white board regions are never
-masked. This only protects corner detection—the IR spot is not used as
-geometric evidence. The workflow does not require the absent RGB LED.
+bounded fallback. Each bounded attempt also tries histogram equalization before
+the sector-based detector, which recovers the low-contrast Logitech C270 view.
+If these fail, one small saturated blue IR blob may be masked and inpainted
+before a final retry; broad white board regions are never masked. This only
+protects corner detection—the IR spot is not used as geometric evidence. Any
+result whose glare mask overlaps a detected corner remains rejected. Framing
+failures report the measured edge margin or coverage separately from detector
+failures. The workflow does not require the absent RGB LED.
 Calibration allows up to 8 seconds for each ARM checkerboard attempt and
 retries up to three fresh frames, accepting the first exact 11 × 6 result.
 Both cameras share a bounded 35-second framing deadline at each pose; a single
@@ -44,7 +55,8 @@ git fetch origin
 git checkout main
 git pull --ff-only origin main
 python3 -m pip install -r requirements.txt
-python3 -m py_compile software/api/geometric_calibration.py software/api/scanner_engine.py
+python3 -m py_compile software/api/checkerboard_detector.py \
+  software/api/geometric_calibration.py software/api/lidar_driver.py
 sudo systemctl restart horalscanner
 sudo systemctl status --no-pager horalscanner
 ```
@@ -55,7 +67,7 @@ These checks do not command motion or energize a laser:
 curl -fsS http://127.0.0.1:5000/api/status | python3 -m json.tool
 curl -fsS http://127.0.0.1:5000/api/calibration/geometric/status | python3 -m json.tool
 curl -fsS -X POST -H 'Content-Type: application/json' \
-  -d '{"start_pose":{"x":210,"y":0,"z":10},"lidar_measurements":{"origin_mm":[MEASURE_X,MEASURE_Y,MEASURE_Z],"direction":[DIR_X,DIR_Y,DIR_Z]}}' \
+  -d '{"start_pose":{"x":195,"y":0,"z":10},"lidar_measurements":{"origin_mm":[MEASURE_X,MEASURE_Y,MEASURE_Z],"direction":[DIR_X,DIR_Y,DIR_Z]}}' \
   http://127.0.0.1:5000/api/calibration/geometric/preflight | python3 -m json.tool
 ```
 
@@ -72,7 +84,7 @@ is:
 
 ```bash
 curl -fsS -X POST -H 'Content-Type: application/json' \
-  -d '{"start_pose":{"x":210,"y":0,"z":10},"lidar_measurements":{"origin_mm":[MEASURE_X,MEASURE_Y,MEASURE_Z],"direction":[DIR_X,DIR_Y,DIR_Z]}}' \
+  -d '{"start_pose":{"x":195,"y":0,"z":10},"lidar_measurements":{"origin_mm":[MEASURE_X,MEASURE_Y,MEASURE_Z],"direction":[DIR_X,DIR_Y,DIR_Z]}}' \
   http://127.0.0.1:5000/api/calibration/geometric/start | python3 -m json.tool
 watch -n 1 'curl -fsS http://127.0.0.1:5000/api/calibration/geometric/status'
 ```

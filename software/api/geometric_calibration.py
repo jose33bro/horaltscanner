@@ -33,9 +33,14 @@ class CheckerboardDetectionTimeout(CalibrationError):
     """One bounded checkerboard attempt reached its deadline."""
 
 
+class CheckerboardDetectionRejected(CalibrationError):
+    """One checkerboard frame failed detection or framing quality checks."""
+
+
 BOARD_COLUMNS = 11
 BOARD_ROWS = 6
 BOARD_SQUARE_MM = 13.0
+CALIBRATION_MAX_X_MM = 195.0
 
 
 def checkerboard_points(
@@ -450,10 +455,11 @@ class GeometricCalibrationService:
         self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
         self._active = False
+        self._lidar_output_restore_required = False
         self._status = self._new_status()
         self._report: dict[str, Any] = {}
         self._reference_pose = dict(
-            self._config.get("starting_pose_mm", {"x": 210, "y": 0, "z": 10})
+            self._config.get("starting_pose_mm", {"x": 195, "y": 0, "z": 10})
         )
 
     def _new_status(self) -> dict[str, Any]:
@@ -468,11 +474,29 @@ class GeometricCalibrationService:
             "error": None,
             "blockers": [],
             "starting_pose_validated": None,
+            "last_checkerboard_rejection": {"pi": None, "usb": None},
+            "lidar_output_suspended": False,
         }
 
     def status(self) -> dict:
         with self._lock:
             return copy.deepcopy(self._status)
+
+    def _checkerboard_framing_thresholds(self) -> tuple[float, float]:
+        minimum_margin = float(self._config.get("minimum_frame_margin", 0.02))
+        minimum_coverage = float(self._config.get("minimum_board_coverage", 0.03))
+        if (
+            not math.isfinite(minimum_margin)
+            or not 0 <= minimum_margin < 0.5
+            or not math.isfinite(minimum_coverage)
+            or not 0 < minimum_coverage <= 1
+        ):
+            raise CalibrationError(
+                "checkerboard framing thresholds must specify "
+                "0 <= minimum_frame_margin < 0.5 and "
+                "0 < minimum_board_coverage <= 1"
+            )
+        return minimum_margin, minimum_coverage
 
     @property
     def active(self) -> bool:
@@ -497,6 +521,20 @@ class GeometricCalibrationService:
                 "checkerboard configuration must explicitly specify "
                 "board_columns=11, board_rows=6, square_size_mm=13"
             )
+        try:
+            self._checkerboard_framing_thresholds()
+        except CalibrationError as exc:
+            blockers.append(str(exc))
+        try:
+            configured_x_max = float(
+                self._config.get("axis_limits_mm", {}).get("x", {}).get("max")
+            )
+            if not math.isfinite(configured_x_max) or configured_x_max > CALIBRATION_MAX_X_MM:
+                blockers.append(
+                    f"calibration X maximum must not exceed {CALIBRATION_MAX_X_MM:g}mm"
+                )
+        except (TypeError, ValueError):
+            blockers.append("calibration X maximum must be finite")
         if self._motor is None or not getattr(self._motor, "connected", False):
             blockers.append("STM32 motor controller is not connected")
             motor_status = {}
@@ -546,6 +584,8 @@ class GeometricCalibrationService:
                     blockers.append(f"camera '{name}' preflight failed: {exc}")
         if self._lidar is None:
             blockers.append("TF-Luna is unavailable")
+        elif not callable(getattr(self._lidar, "set_output_enabled", None)):
+            blockers.append("TF-Luna driver cannot control ranging output")
         elif probe_devices:
             try:
                 connected = getattr(self._lidar, "connected", None)
@@ -714,6 +754,8 @@ class GeometricCalibrationService:
                 low, high = float(axis_limits.get("min", math.nan)), float(
                     axis_limits.get("max", math.nan)
                 )
+                if axis == "x":
+                    high = min(high, CALIBRATION_MAX_X_MM)
                 if not all(math.isfinite(value) for value in (target, low, high)) or not low <= target <= high:
                     raise CalibrationError(
                         f"calibration pose {axis.upper()}={target:.3f} is outside "
@@ -726,14 +768,50 @@ class GeometricCalibrationService:
         return poses
 
     def _starting_pose(self, options: Mapping[str, Any]) -> dict[str, float]:
-        start = dict(self._config.get("starting_pose_mm", {"x": 210, "y": 0, "z": 10}))
+        start = dict(self._config.get("starting_pose_mm", {"x": 195, "y": 0, "z": 10}))
         start.update(options.get("starting_pose_mm", {}))
         try:
             return {axis: float(start[axis]) for axis in ("x", "y", "z")}
         except (KeyError, TypeError, ValueError) as exc:
             raise CalibrationError("starting_pose_mm must contain finite X/Y/Z values") from exc
 
-    def _capture_checkerboard_views(self, poses: list[dict[str, float]]) -> dict[str, list[dict]]:
+    def _capture_checkerboard_views(
+        self, poses: list[dict[str, float]]
+    ) -> dict[str, list[dict]]:
+        self._check_cancelled()
+        try:
+            self._set_lidar_output_enabled(False)
+            self._sleep_interruptible(
+                float(self._config.get("lidar_output_settle_s", 0.05))
+            )
+            return self._capture_checkerboard_views_output_suspended(poses)
+        finally:
+            self._set_lidar_output_enabled(True)
+
+    def _set_lidar_output_enabled(self, enabled: bool) -> None:
+        setter = getattr(self._lidar, "set_output_enabled", None)
+        if setter is None:
+            raise CalibrationError("TF-Luna driver cannot control ranging output")
+        label = f"TF-Luna output {'enable' if enabled else 'suspend'}"
+        if not enabled:
+            with self._lock:
+                self._lidar_output_restore_required = True
+                self._status["lidar_output_suspended"] = True
+        timeout_s = float(self._config.get("lidar_timeout_s", 2.0))
+        try:
+            succeeded = setter(enabled, timeout_s=timeout_s)
+        except Exception as exc:
+            raise CalibrationError(f"{label} failed: {exc}") from exc
+        if succeeded is not True:
+            raise CalibrationError(f"{label} failed")
+        if enabled:
+            with self._lock:
+                self._lidar_output_restore_required = False
+                self._status["lidar_output_suspended"] = False
+
+    def _capture_checkerboard_views_output_suspended(
+        self, poses: list[dict[str, float]]
+    ) -> dict[str, list[dict]]:
         views: dict[str, list[dict]] = {"pi": [], "usb": []}
         frames_per_pose = int(self._config.get("fresh_frames_per_pose", 3))
         pose_timeout = float(self._config.get("checkerboard_pose_timeout_s", 35.0))
@@ -761,7 +839,7 @@ class GeometricCalibrationService:
             pose_deadline = time.monotonic() + pose_timeout
             failures: dict[str, str] = {}
             for name in ("pi", "usb"):
-                candidate, timed_out, deadline_exhausted = (
+                candidate, timed_out, deadline_exhausted, rejection_reasons = (
                     self._capture_checkerboard_candidate(
                         name,
                         pose,
@@ -777,11 +855,14 @@ class GeometricCalibrationService:
                         self._status["accepted_views"][name] += 1
                 if candidate is None:
                     details = []
+                    details.extend(rejection_reasons)
                     if timed_out:
                         details.append(f"{timed_out} detector timeout(s)")
                     if deadline_exhausted:
                         details.append(f"{pose_timeout:g}s pose deadline exhausted")
                     failures[name] = ", ".join(details) or "no exact 11x6 detection"
+                with self._lock:
+                    self._status["last_checkerboard_rejection"][name] = failures.get(name)
             if index == 0:
                 with self._lock:
                     self._status["starting_pose_validated"] = all(views[name] for name in views)
@@ -814,13 +895,14 @@ class GeometricCalibrationService:
         *,
         frames_per_pose: int,
         pose_deadline: float,
-    ) -> tuple[dict | None, int, bool]:
+    ) -> tuple[dict | None, int, bool, list[str]]:
         timed_out = 0
+        rejection_reasons: list[str] = []
         for _ in range(frames_per_pose):
             self._check_cancelled()
             remaining = pose_deadline - time.monotonic()
             if remaining <= 0:
-                return None, timed_out, True
+                return None, timed_out, True, rejection_reasons
             try:
                 frame = self._capture(
                     name,
@@ -833,11 +915,11 @@ class GeometricCalibrationService:
                 raise
             except CalibrationError:
                 if time.monotonic() >= pose_deadline:
-                    return None, timed_out, True
+                    return None, timed_out, True, rejection_reasons
                 raise
             remaining = pose_deadline - time.monotonic()
             if remaining <= 0:
-                return None, timed_out, True
+                return None, timed_out, True, rejection_reasons
             try:
                 candidate = self._detect_checkerboard(
                     frame,
@@ -850,9 +932,16 @@ class GeometricCalibrationService:
             except CheckerboardDetectionTimeout:
                 timed_out += 1
                 continue
+            except CheckerboardDetectionRejected as exc:
+                reason = str(exc)
+                if reason not in rejection_reasons:
+                    rejection_reasons.append(reason)
+                continue
             if candidate is not None:
-                return candidate, timed_out, False
-        return None, timed_out, time.monotonic() >= pose_deadline
+                return candidate, timed_out, False, rejection_reasons
+        if not rejection_reasons and not timed_out:
+            rejection_reasons.append("no exact 11x6 detection")
+        return None, timed_out, time.monotonic() >= pose_deadline, rejection_reasons
 
     def _detect_checkerboard(
         self,
@@ -863,7 +952,7 @@ class GeometricCalibrationService:
     ) -> dict | None:
         image = self._cv.imdecode(np.frombuffer(jpeg, np.uint8), self._cv.IMREAD_COLOR)
         if image is None:
-            return None
+            raise CheckerboardDetectionRejected("camera frame could not be decoded")
         pattern = (
             int(self._config.get("board_columns", BOARD_COLUMNS)),
             int(self._config.get("board_rows", BOARD_ROWS)),
@@ -888,31 +977,57 @@ class GeometricCalibrationService:
         if detection.get("timed_out"):
             raise CheckerboardDetectionTimeout("checkerboard detection timed out")
         if not detection.get("found"):
-            return None
+            raise CheckerboardDetectionRejected(
+                str(detection.get("error") or "no exact 11x6 checkerboard detected")
+            )
         if tuple(detection.get("pattern", ())) != pattern:
-            return None
+            detected = tuple(detection.get("pattern", ()))
+            raise CheckerboardDetectionRejected(
+                f"detected checkerboard pattern {detected!r}, expected {pattern!r}"
+            )
         corners = np.asarray(detection["corners"], dtype=np.float32).reshape(-1, 2)
+        expected_corners = pattern[0] * pattern[1]
+        if len(corners) != expected_corners or not np.isfinite(corners).all():
+            raise CheckerboardDetectionRejected(
+                f"detector returned {len(corners)} invalid corner(s), "
+                f"expected {expected_corners}"
+            )
         height, width = image.shape[:2]
-        minimum_margin = float(self._config.get("minimum_frame_margin", 0.04))
-        margins = np.array(
-            [
-                corners[:, 0].min() / width,
-                (width - corners[:, 0].max()) / width,
-                corners[:, 1].min() / height,
-                (height - corners[:, 1].max()) / height,
-            ]
-        )
+        minimum_margin, minimum_coverage = self._checkerboard_framing_thresholds()
+        margins = {
+            "left": float(corners[:, 0].min() / width),
+            "right": float((width - corners[:, 0].max()) / width),
+            "top": float(corners[:, 1].min() / height),
+            "bottom": float((height - corners[:, 1].max()) / height),
+        }
         span = np.ptp(corners, axis=0)
         coverage = float(span[0] * span[1] / (width * height))
-        if margins.min() < minimum_margin or coverage < float(
-            self._config.get("minimum_board_coverage", 0.03)
-        ):
-            return None
+        minimum_observed_margin = min(margins.values())
+        rejection_reasons = []
+        if minimum_observed_margin < minimum_margin:
+            edge = min(margins, key=margins.get)
+            rejection_reasons.append(
+                f"{edge} corner margin {minimum_observed_margin:.4f} is below "
+                f"minimum_frame_margin {minimum_margin:.4f}"
+            )
+        if coverage < minimum_coverage:
+            rejection_reasons.append(
+                f"board coverage {coverage:.4f} is below "
+                f"minimum_board_coverage {minimum_coverage:.4f}"
+            )
+        if rejection_reasons:
+            rejection_reasons.append(
+                "margins "
+                + ", ".join(f"{edge}={value:.4f}" for edge, value in margins.items())
+            )
+            raise CheckerboardDetectionRejected("; ".join(rejection_reasons))
         return {
             "corners": corners,
             "image_size": (width, height),
             "pose": dict(pose),
             "coverage": coverage,
+            "frame_margins": margins,
+            "minimum_frame_margin": minimum_observed_margin,
             "jpeg": jpeg,
             "detection_method": detection.get("method"),
             "glare_masked": bool(detection.get("glare_masked")),
@@ -1409,6 +1524,15 @@ class GeometricCalibrationService:
             raise CalibrationError(f"failed to force lasers off: {', '.join(failures)}")
 
     def _safe_outputs(self) -> None:
+        if self._lidar_output_restore_required:
+            try:
+                self._set_lidar_output_enabled(True)
+            except Exception as exc:
+                message = f"failed to restore TF-Luna ranging output: {exc}"
+                with self._lock:
+                    current = self._status.get("error")
+                    error = f"{current}; {message}" if current else message
+                    self._status.update(phase="error", step=message, error=error)
         try:
             self._lasers_off()
         except Exception:

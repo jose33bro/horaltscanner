@@ -335,13 +335,13 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
                         "rotation_distance": 40,
                         "microsteps": 16,
                         "position_min": 0,
-                        "position_max": 210,
+                        "position_max": 195,
                     }
                 }
             }
         )
         driver._motor_status["homed"]["x"] = True
-        driver._motor_status["positions"]["x"] = 190.0
+        driver._motor_status["positions"]["x"] = 180.0
         driver._send_command = lambda _cmd: time.sleep(0.02) or True
         results = []
         workers = [
@@ -355,7 +355,7 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
             worker.join()
 
         self.assertEqual(sorted(results), [False, True])
-        self.assertEqual(driver.get_motor_status()["positions"]["x"], 205.0)
+        self.assertEqual(driver.get_motor_status()["positions"]["x"], 195.0)
 
     def test_emergency_stop_rejects_motion_already_queued(self):
         driver = STM32Driver()
@@ -505,9 +505,14 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
 
         self.assertFalse(driver.move_motor("x", 10))
         self.assertTrue(driver.home_motor("x"))
+        self.assertEqual(driver.get_motor_limits("x"), (0.0, 195.0))
         self.assertFalse(driver.move_motor("x", -1))
-        self.assertFalse(driver.move_motor("x", 211))
-        self.assertTrue(driver.move_motor("x", 210))
+        self.assertFalse(driver.move_motor("x", 195.001))
+        self.assertFalse(driver.move_motor_to("x", 200))
+        self.assertFalse(driver.move_motor_to("x", 195.001))
+        self.assertFalse(driver.move_motor("x", 196))
+        self.assertTrue(driver.move_motor("x", 195))
+        self.assertTrue(driver.move_motor_to("x", 195))
 
 
 if __name__ == "__main__":

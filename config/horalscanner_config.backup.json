@@ -10,7 +10,7 @@
       "enable_pin": "PC3",
       "rotation_distance": 40,
       "endstop_pin": "PA5",
-      "position_max": 210,
+      "position_max": 195,
       "microsteps": 16
     },
     "y": {

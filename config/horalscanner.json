@@ -18,7 +18,7 @@
       "axis_limits_mm": {
         "x": {
           "min": 0,
-          "max": 210
+          "max": 195
         },
         "y": {
           "min": 0,
@@ -52,7 +52,7 @@
       "square_size_mm": 13,
       "turntable_diameter_mm": 200,
       "starting_pose_mm": {
-        "x": 210,
+        "x": 195,
         "y": 0,
         "z": 10
       },
@@ -66,7 +66,7 @@
         {"x": -10, "y": 62.8318531, "z": 5}
       ],
       "axis_limits_mm": {
-        "x": {"min": 0, "max": 210},
+        "x": {"min": 0, "max": 195},
         "y": {"min": 0, "max": 628.32},
         "z": {"min": 0, "max": 270}
       },
@@ -81,8 +81,9 @@
       "capture_timeout_s": 5,
       "motion_timeout_s": 30,
       "lidar_timeout_s": 2,
+      "lidar_output_settle_s": 0.05,
       "lidar_samples_per_pose": 3,
-      "minimum_frame_margin": 0.04,
+      "minimum_frame_margin": 0.02,
       "minimum_board_coverage": 0.03,
       "minimum_center_span": 0.025,
       "minimum_scale_span": 0.01,

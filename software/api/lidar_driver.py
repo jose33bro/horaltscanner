@@ -3,7 +3,9 @@ LIDAR Driver - TF-Luna serial communication
 """
 
 import logging
+import math
 import struct
+import threading
 import time
 
 logger = logging.getLogger(__name__)
@@ -11,6 +13,8 @@ logger = logging.getLogger(__name__)
 TFLUNA_BAUD = 115200
 TFLUNA_FRAME_LEN = 9
 TFLUNA_HEADER = b"\x59\x59"
+TFLUNA_OUTPUT_DISABLE = b"\x5A\x05\x07\x00\x66"
+TFLUNA_OUTPUT_ENABLE = b"\x5A\x05\x07\x01\x67"
 
 
 class LidarDriver:
@@ -21,26 +25,34 @@ class LidarDriver:
         self.baud = baud
         self._ser = None
         self._offset_mm: float = 0.0
+        self._io_lock = threading.RLock()
 
     # ------------------------------------------------------------------
     # Connection
     # ------------------------------------------------------------------
 
     def connect(self) -> bool:
-        try:
-            import serial
-            self._ser = serial.Serial(self.port, self.baud, timeout=0.5)
-            logger.info("LIDAR connected on %s", self.port)
-            return True
-        except Exception as exc:
-            logger.error("LIDAR connect failed: %s", exc)
-            self._ser = None
-            return False
+        with self._io_lock:
+            try:
+                import serial
+                self._ser = serial.Serial(
+                    self.port,
+                    self.baud,
+                    timeout=0.5,
+                    write_timeout=0.5,
+                )
+                logger.info("LIDAR connected on %s", self.port)
+                return True
+            except Exception as exc:
+                logger.error("LIDAR connect failed: %s", exc)
+                self._ser = None
+                return False
 
     def disconnect(self) -> None:
-        if self._ser and self._ser.is_open:
-            self._ser.close()
-        self._ser = None
+        with self._io_lock:
+            if self._ser and self._ser.is_open:
+                self._ser.close()
+            self._ser = None
 
     @property
     def connected(self) -> bool:
@@ -52,29 +64,61 @@ class LidarDriver:
 
     def read_distance_mm(self) -> float | None:
         """Read one distance measurement.  Returns None on error."""
-        if not self.connected:
-            return None
-        try:
-            # TF-Luna outputs frames at up to 250 Hz; flush buffer first
-            self._ser.reset_input_buffer()
-            # Read until we find the 0x59 0x59 header
-            for _ in range(50):
-                byte = self._ser.read(1)
-                if byte == b"\x59":
-                    if self._ser.read(1) == b"\x59":
-                        break
-            else:
+        with self._io_lock:
+            if not self.connected:
                 return None
-            rest = self._ser.read(TFLUNA_FRAME_LEN - 2)
-            if len(rest) < TFLUNA_FRAME_LEN - 2:
+            try:
+                # TF-Luna outputs frames at up to 250 Hz; flush buffer first
+                self._ser.reset_input_buffer()
+                # Read until we find the 0x59 0x59 header
+                for _ in range(50):
+                    byte = self._ser.read(1)
+                    if byte == b"\x59":
+                        if self._ser.read(1) == b"\x59":
+                            break
+                else:
+                    return None
+                rest = self._ser.read(TFLUNA_FRAME_LEN - 2)
+                if len(rest) < TFLUNA_FRAME_LEN - 2:
+                    return None
+                dist_low, dist_high = rest[0], rest[1]
+                distance_cm = dist_low + (dist_high << 8)
+                raw_mm = distance_cm * 10.0
+                return raw_mm + self._offset_mm
+            except Exception as exc:
+                logger.error("LIDAR read error: %s", exc)
                 return None
-            dist_low, dist_high = rest[0], rest[1]
-            distance_cm = dist_low + (dist_high << 8)
-            raw_mm = distance_cm * 10.0
-            return raw_mm + self._offset_mm
-        except Exception as exc:
-            logger.error("LIDAR read error: %s", exc)
-            return None
+
+    def set_output_enabled(self, enabled: bool, *, timeout_s: float = 0.5) -> bool:
+        """Enable or suspend TF-Luna ranging output using its checksummed command."""
+        if not math.isfinite(timeout_s) or timeout_s <= 0:
+            logger.error("LIDAR output command timeout must be positive")
+            return False
+        command = TFLUNA_OUTPUT_ENABLE if enabled else TFLUNA_OUTPUT_DISABLE
+        with self._io_lock:
+            if not self.connected:
+                logger.error("LIDAR output command failed: device is disconnected")
+                return False
+            previous_write_timeout = getattr(self._ser, "write_timeout", None)
+            try:
+                if hasattr(self._ser, "write_timeout"):
+                    self._ser.write_timeout = timeout_s
+                written = self._ser.write(command)
+                if written is not None and written != len(command):
+                    raise IOError(
+                        f"short TF-Luna command write: {written}/{len(command)} bytes"
+                    )
+                logger.info(
+                    "LIDAR ranging output %s",
+                    "enabled" if enabled else "suspended",
+                )
+                return True
+            except Exception as exc:
+                logger.error("LIDAR output command failed: %s", exc)
+                return False
+            finally:
+                if hasattr(self._ser, "write_timeout"):
+                    self._ser.write_timeout = previous_write_timeout
 
     # ------------------------------------------------------------------
     # Calibration

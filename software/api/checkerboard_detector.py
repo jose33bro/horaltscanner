@@ -22,9 +22,9 @@ def _limited_ir_glare_mask(cv: Any, image: np.ndarray) -> np.ndarray | None:
         return None
     height, width = image.shape[:2]
     channels = image[:, :, :3].astype(np.int16)
-    peak = channels.max(axis=2)
-    chroma = peak - channels.min(axis=2)
-    candidate = ((peak >= 235) & (chroma >= 28)).astype(np.uint8)
+    blue = channels[:, :, 0]
+    other_peak = channels[:, :, 1:3].max(axis=2)
+    candidate = ((blue >= 235) & (blue - other_peak >= 28)).astype(np.uint8)
     if not candidate.any():
         return None
 
@@ -100,6 +100,7 @@ def _detect(
 
     def attempts(candidate: np.ndarray, *, glare_masked: bool) -> dict | None:
         gray = cv.cvtColor(candidate, cv.COLOR_BGR2GRAY)
+        equalized = cv.equalizeHist(gray) if hasattr(cv, "equalizeHist") else None
         for pattern in patterns:
             try:
                 found, corners = cv.findChessboardCorners(gray, pattern, classic_flags)
@@ -135,28 +136,63 @@ def _detect(
                         "method": "sb",
                         "glare_masked": glare_masked,
                     }
+                if equalized is not None:
+                    try:
+                        found, corners = sb(equalized, pattern, sb_flags)
+                    except TypeError:
+                        found, corners = sb(equalized, pattern)
+                    if found:
+                        return {
+                            "found": True,
+                            "pattern": pattern,
+                            "corners": np.asarray(corners, dtype=np.float32) / scale,
+                            "method": "sb-equalized",
+                            "glare_masked": glare_masked,
+                        }
         return None
 
+    def reject_corner_glare(result: dict, mask: np.ndarray | None) -> dict:
+        if mask is None:
+            return result
+        analysis_points = np.asarray(result["corners"]).reshape(-1, 2) * scale
+        for x, y in np.rint(analysis_points).astype(int):
+            if 0 <= y < mask.shape[0] and 0 <= x < mask.shape[1] and mask[y, x]:
+                return {
+                    "found": False,
+                    "error": "IR glare mask overlaps a detected checkerboard corner",
+                    "glare_mask_area_px": int(np.count_nonzero(mask)),
+                }
+        result["glare_mask_area_px"] = int(np.count_nonzero(mask))
+        return result
+
     result = attempts(analysis, glare_masked=False)
-    if result is not None or not allow_ir_glare_fallback or not hasattr(cv, "inpaint"):
-        return result or {"found": False}
+    if result is not None:
+        return reject_corner_glare(result, _limited_ir_glare_mask(cv, analysis))
+    if not allow_ir_glare_fallback or not hasattr(cv, "inpaint"):
+        return {
+            "found": False,
+            "error": "no exact checkerboard pattern detected",
+        }
     mask = _limited_ir_glare_mask(cv, analysis)
     if mask is None:
-        return {"found": False}
+        return {
+            "found": False,
+            "error": "no exact checkerboard pattern detected",
+        }
     inpaint_method = int(getattr(cv, "INPAINT_TELEA", 1))
     corrected = cv.inpaint(analysis, mask, 3, inpaint_method)
     result = attempts(corrected, glare_masked=True)
     if result is None:
-        return {"found": False}
-    analysis_points = np.asarray(result["corners"]).reshape(-1, 2) * scale
-    for x, y in np.rint(analysis_points).astype(int):
-        if 0 <= y < mask.shape[0] and 0 <= x < mask.shape[1] and mask[y, x]:
-            return {
-                "found": False,
-                "error": "IR glare mask overlaps a detected checkerboard corner",
-            }
-    result["glare_mask_area_px"] = int(np.count_nonzero(mask))
-    return result
+        return {
+            "found": False,
+            "error": (
+                "no exact checkerboard pattern detected after "
+                "localized IR glare fallback"
+            ),
+            "glare_masked": True,
+            "glare_mask_area_px": int(np.count_nonzero(mask)),
+        }
+    return reject_corner_glare(result, mask)
 
 
 def find_checkerboard_bounded(

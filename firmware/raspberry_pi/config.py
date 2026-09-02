@@ -43,7 +43,7 @@ MOTORS = {
         'max_velocity': 300,  # mm/s
         'max_accel': 3000,  # mm/s²
         'position_min': 0,
-        'position_max': 210,  # mm
+        'position_max': 195,  # mm
         'homing_speed': 50,  # mm/s
     },
     'Y': {

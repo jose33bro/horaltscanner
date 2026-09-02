@@ -8,8 +8,9 @@ import logging
 import math
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Deque, List, Optional
 
 import numpy as np
 
@@ -27,13 +28,29 @@ except ImportError:
 # Point Cloud Store (accumulated during a scan)
 # ---------------------------------------------------------------------------
 
+#: Maximum number of points retained in memory. Once the buffer is full,
+#: the oldest points are silently dropped (FIFO) so long-running scans on
+#: memory-constrained devices (e.g. Raspberry Pi 4, 4GB RAM) never grow
+#: without bound. ~200k points keeps the point cloud well under ~500MB.
+MAX_POINTS = 200_000
+
+
 @dataclass
 class ScanData:
-    points: List[List[float]] = field(default_factory=list)   # [[x,y,z], ...]
-    colors: List[List[float]] = field(default_factory=list)   # [[r,g,b], ...]  0–1
+    max_points: int = MAX_POINTS
+    points: Deque[List[float]] = field(default_factory=lambda: deque(maxlen=MAX_POINTS))
+    colors: Deque[List[float]] = field(default_factory=lambda: deque(maxlen=MAX_POINTS))
+
+    def __post_init__(self) -> None:
+        if self.points.maxlen != self.max_points:
+            self.points = deque(self.points, maxlen=self.max_points)
+        if self.colors.maxlen != self.max_points:
+            self.colors = deque(self.colors, maxlen=self.max_points)
 
     def add_point(self, x: float, y: float, z: float,
                   r: float = 0.5, g: float = 0.5, b: float = 0.5) -> None:
+        # deque with maxlen automatically discards the oldest entry once
+        # full, bounding memory usage during long scans.
         self.points.append([x, y, z])
         self.colors.append([r, g, b])
 
@@ -46,8 +63,8 @@ class ScanData:
 
     def as_dict(self) -> dict:
         return {
-            "points": self.points,
-            "colors": self.colors,
+            "points": list(self.points),
+            "colors": list(self.colors),
             "count": len(self.points),
         }
 
@@ -147,33 +164,98 @@ class ScanSession:
 # ---------------------------------------------------------------------------
 
 class ReconstructionEngine:
-    """Converts a ScanData point cloud into a mesh and exports STL/AMF."""
+    """Converts a ScanData point cloud into a mesh and exports STL/AMF.
+
+    Reconstruction (Poisson surface fitting) is expensive and, on a
+    Raspberry Pi 4, can take tens of seconds. To keep the HTTP API
+    responsive, the heavy work runs on a background thread; ``reconstruct``
+    returns almost immediately and callers poll ``status()`` for progress.
+    """
+
+    #: Default Poisson octree depth. Lower depth = coarser mesh but much
+    #: faster reconstruction; depth=8 (the Open3D default) is unsuitable
+    #: for a Raspberry Pi 4 where it can block for 30-60s.
+    DEFAULT_DEPTH = 6
 
     def __init__(self, scan_session: ScanSession):
         self._session = scan_session
         self._last_stl: Optional[bytes] = None
         self._last_amf: Optional[bytes] = None
+        self._lock = threading.Lock()
+        self._thread: Optional[threading.Thread] = None
+        self._in_progress = False
+        self._cancel_event = threading.Event()
+        self._last_result: dict = {"ok": False, "stl_size": 0, "amf_size": 0, "error": ""}
 
-    def reconstruct(self) -> dict:
-        """Run Poisson surface reconstruction.  Returns {ok, stl_size, amf_size, error}."""
+    def reconstruct(self, depth: int = DEFAULT_DEPTH, wait: bool = False) -> dict:
+        """Kick off (or wait for) reconstruction.
+
+        Returns immediately with ``{"ok": True, "in_progress": True, ...}``
+        once the background job has started, unless ``wait`` is True (used
+        by tests) or Open3D is unavailable / there are not enough points,
+        in which case the fast synchronous paths are used.
+        """
+        with self._lock:
+            if self._in_progress:
+                return {"ok": True, "in_progress": True, "started": False,
+                         "stl_size": 0, "amf_size": 0, "error": "Reconstruction already in progress"}
+
         pc_dict = self._session.get_pointcloud()
         points = pc_dict.get("points", [])
 
         if len(points) < 100:
-            return {"ok": False, "stl_size": 0, "amf_size": 0,
+            return {"ok": False, "in_progress": False, "stl_size": 0, "amf_size": 0,
                     "error": f"Not enough points ({len(points)} < 100)"}
 
         if not _O3D_AVAILABLE:
             self._last_stl = self._points_to_ascii_stl(points)
             self._last_amf = b'<?xml version="1.0"?><amf></amf>'
-            return {
+            result = {
                 "ok": True,
+                "in_progress": False,
                 "stl_size": len(self._last_stl),
                 "amf_size": len(self._last_amf),
                 "error": "Open3D unavailable - grid triangulation used",
             }
+            with self._lock:
+                self._last_result = result
+            return result
 
+        with self._lock:
+            self._in_progress = True
+            self._cancel_event = threading.Event()
+        cancel_event = self._cancel_event
+        thread = threading.Thread(
+            target=self._reconstruct_worker,
+            args=(pc_dict, depth, cancel_event),
+            daemon=True,
+        )
+        self._thread = thread
+        thread.start()
+
+        if wait:
+            thread.join()
+            with self._lock:
+                return dict(self._last_result)
+
+        return {"ok": True, "in_progress": True, "started": True,
+                "stl_size": 0, "amf_size": 0, "error": ""}
+
+    def cancel(self) -> None:
+        """Request cancellation of an in-progress reconstruction."""
+        with self._lock:
+            self._cancel_event.set()
+
+    def status(self) -> dict:
+        """Return the current reconstruction progress/result."""
+        with self._lock:
+            return {"in_progress": self._in_progress, "result": dict(self._last_result)}
+
+    def _reconstruct_worker(self, pc_dict: dict, depth: int, cancel_event: threading.Event) -> None:
         try:
+            if cancel_event.is_set():
+                return
+            points = pc_dict.get("points", [])
             pts = np.array(points, dtype=np.float64)
             colors_list = pc_dict.get("colors", [])
             has_colors = len(colors_list) == len(points)
@@ -185,17 +267,23 @@ class ReconstructionEngine:
 
             # Voxel downsample for performance
             pcd = pcd.voxel_down_sample(voxel_size=2.0)
+            if cancel_event.is_set():
+                return
 
             # Normal estimation
             pcd.estimate_normals(
                 o3d.geometry.KDTreeSearchParamHybrid(radius=10.0, max_nn=30)
             )
             pcd.orient_normals_consistent_tangent_plane(100)
+            if cancel_event.is_set():
+                return
 
-            # Poisson reconstruction
+            # Poisson reconstruction (reduced depth keeps this fast on RPi4)
             mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-                pcd, depth=8
+                pcd, depth=depth
             )
+            if cancel_event.is_set():
+                return
 
             # Remove low-density vertices
             densities_arr = np.asarray(densities)
@@ -204,25 +292,30 @@ class ReconstructionEngine:
             mesh.remove_vertices_by_mask(vertices_to_remove)
             mesh.compute_vertex_normals()
 
-            # Export STL
-            stl_path = "/tmp/horalscanner_model.stl"
-            o3d.io.write_triangle_mesh(stl_path, mesh, write_ascii=True)
-            with open(stl_path, "rb") as f:
-                self._last_stl = f.read()
+            # Export STL/AMF directly to memory buffers (no disk I/O)
+            last_stl = self._mesh_to_stl_bytes(mesh)
+            last_amf = self._stl_to_amf(mesh)
 
-            # Export AMF (as XML wrapping STL geometry)
-            self._last_amf = self._stl_to_amf(mesh)
-
-            return {
+            result = {
                 "ok": True,
-                "stl_size": len(self._last_stl),
-                "amf_size": len(self._last_amf),
+                "in_progress": False,
+                "stl_size": len(last_stl),
+                "amf_size": len(last_amf),
                 "error": "",
             }
+            with self._lock:
+                self._last_stl = last_stl
+                self._last_amf = last_amf
+                self._last_result = result
 
-        except Exception as exc:
+        except Exception:
             logger.exception("Reconstruction failed")
-            return {"ok": False, "stl_size": 0, "amf_size": 0, "error": "Reconstruction failed"}
+            with self._lock:
+                self._last_result = {"ok": False, "in_progress": False, "stl_size": 0,
+                                      "amf_size": 0, "error": "Reconstruction failed"}
+        finally:
+            with self._lock:
+                self._in_progress = False
 
     # ------------------------------------------------------------------
     # Helpers
@@ -234,6 +327,35 @@ class ReconstructionEngine:
         if fmt == "amf":
             return self._last_amf
         return None
+
+    @staticmethod
+    def _mesh_to_stl_bytes(mesh) -> bytes:
+        """Serialize an Open3D mesh directly to an in-memory ASCII STL.
+
+        Avoids writing to a temporary file and reading it back (double
+        disk I/O), which blocks the main thread unnecessarily.
+        """
+        vertices = np.asarray(mesh.vertices)
+        triangles = np.asarray(mesh.triangles)
+
+        buf = io.BytesIO()
+        buf.write(b"solid horalscanner\n")
+        for tri in triangles:
+            v0, v1, v2 = vertices[tri[0]], vertices[tri[1]], vertices[tri[2]]
+            normal = np.cross(v1 - v0, v2 - v0)
+            norm_len = np.linalg.norm(normal)
+            if norm_len > 1e-12:
+                normal = normal / norm_len
+            else:
+                normal = np.zeros(3)
+            buf.write(f" facet normal {normal[0]:.6f} {normal[1]:.6f} {normal[2]:.6f}\n".encode("ascii"))
+            buf.write(b"  outer loop\n")
+            for v in (v0, v1, v2):
+                buf.write(f"   vertex {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n".encode("ascii"))
+            buf.write(b"  endloop\n")
+            buf.write(b" endfacet\n")
+        buf.write(b"endsolid horalscanner\n")
+        return buf.getvalue()
 
     @staticmethod
     def _stl_to_amf(mesh) -> bytes:

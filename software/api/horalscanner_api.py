@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from io import BytesIO
@@ -332,6 +333,71 @@ def _parse_pwm_speed(data: dict[str, Any]) -> float:
         return percent / 100.0
 
     raise ValueError("Missing speed value")
+
+
+# Files written/read by the standalone systemd fan-auto-pwm service (see docs).
+_PI4_FAN_STATE_FILE = Path("/run/fan_state.json")
+_PI4_FAN_CONFIG_FILE = Path("/etc/horaltscanner/fan_config.json")
+_PI4_FAN_THERMAL_FILE = Path("/sys/class/thermal/thermal_zone0/temp")
+
+
+def _read_pi4_cpu_temperature() -> float | None:
+    try:
+        raw = _PI4_FAN_THERMAL_FILE.read_text().strip()
+        return float(raw) / 1000.0
+    except (OSError, ValueError):
+        return None
+
+
+def _read_pi4_fan_auto_status() -> dict[str, Any]:
+    """Build the read-only status payload for the automatic Pi4 fan.
+
+    The fan itself is fully managed by an independent system service
+    (fan-auto-pwm.service) driving hardware PWM based on CPU temperature.
+    This endpoint only reports telemetry; it exposes no control knobs.
+    """
+    temp_c = _read_pi4_cpu_temperature()
+    fan_percent: int | None = None
+    t_min = 30
+    t_max = 50
+
+    if _PI4_FAN_CONFIG_FILE.exists():
+        try:
+            cfg = json.loads(_PI4_FAN_CONFIG_FILE.read_text())
+            if isinstance(cfg, dict):
+                t_min = cfg.get("t_min", t_min)
+                t_max = cfg.get("t_max", t_max)
+        except (OSError, ValueError):
+            pass
+
+    if _PI4_FAN_STATE_FILE.exists():
+        try:
+            state = json.loads(_PI4_FAN_STATE_FILE.read_text())
+            if isinstance(state, dict):
+                if "fan_percent" in state:
+                    fan_percent = int(state.get("fan_percent"))
+                if state.get("temp_c") is not None:
+                    temp_c = state.get("temp_c")
+        except (OSError, ValueError, TypeError):
+            pass
+
+    return {
+        "mode": "auto",
+        "temp_c": temp_c,
+        "fan_percent": fan_percent,
+        "t_min": t_min,
+        "t_max": t_max,
+    }
+
+
+@api_bp.route("/api/fan/pi4/status", methods=["GET"])
+def fan_pi4_status():
+    """Read-only telemetry for the automatic Pi4 fan (no manual control)."""
+    try:
+        return jsonify(_read_pi4_fan_auto_status())
+    except Exception:
+        logger.exception("Pi4 fan status route failed")
+        return _json_error("Internal server error", 500)
 
 
 @api_bp.route("/api/laser/<side>", methods=["POST"])

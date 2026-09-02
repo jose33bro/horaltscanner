@@ -57,6 +57,15 @@ class STM32Driver:
         self._port = None  # serial port object once connected
         self._connected = False
         self._last_error: Exception | None = None
+        temperature_cfg = self._hardware_config.get("temperature", {})
+        fan_cfg = temperature_cfg.get("board_fan_control", {})
+        self._board_fan_auto = bool(fan_cfg.get("auto_control", True))
+        self._board_fan_on_temp = float(fan_cfg.get("on_temp_c", fan_cfg.get("target_temp", 37) + 2))
+        self._board_fan_off_temp = float(fan_cfg.get("off_temp_c", fan_cfg.get("target_temp", 37) - 2))
+        if self._board_fan_on_temp <= self._board_fan_off_temp:
+            raise ValueError("board fan on temperature must be greater than off temperature")
+        self._board_fan_error: str | None = None
+        self._board_fan_on = False
 
         # Fan status
         self._fan_status: dict[str, float] = {name: 0.0 for name in _FAN_CHANNELS}
@@ -182,6 +191,43 @@ class STM32Driver:
 
     def read_temperature(self) -> float | None:
         return self.read_board_temperature()
+
+    def update_board_fan_auto_control(self) -> bool:
+        """Apply hysteresis control to the PA8 fan from the PC5 thermistor."""
+        if not self._board_fan_auto:
+            return True
+        temperature = self.read_board_temperature()
+        if temperature is None:
+            self._board_fan_error = "Temperature probe PC5 unavailable"
+            # Fail safe: keep the board fan running if the probe is disconnected.
+            self._board_fan_on = True
+            return self.set_fan_speed("temperature", 1.0)
+
+        self._board_fan_error = None
+        if self._board_fan_on:
+            if temperature <= self._board_fan_off_temp:
+                self._board_fan_on = False
+        elif temperature >= self._board_fan_on_temp:
+            self._board_fan_on = True
+        return self.set_fan_speed("temperature", 1.0 if self._board_fan_on else 0.0)
+
+    def get_temperature_status(self) -> dict:
+        """Return the read-only Creality probe and automatic fan state."""
+        temperature = self.read_board_temperature()
+        if temperature is None:
+            self._board_fan_error = "Temperature probe PC5 unavailable"
+        return {
+            "sensor": "PC5",
+            "sensor_type": "EPCOS 100K B57560G104F",
+            "temperature_c": temperature,
+            "connected": temperature is not None,
+            "error": self._board_fan_error,
+            "fan": "PA8",
+            "fan_auto": self._board_fan_auto,
+            "fan_on": self._board_fan_on,
+            "on_temp_c": self._board_fan_on_temp,
+            "off_temp_c": self._board_fan_off_temp,
+        }
 
     # ------------------------------------------------------------------
     # Motor control

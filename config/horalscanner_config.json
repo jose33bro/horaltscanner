@@ -88,6 +88,9 @@
     "board_fan_control": {
       "pin": "PA8",
       "target_temp": 37,
+      "auto_control": true,
+      "on_temp_c": 39,
+      "off_temp_c": 35,
       "min_temp": 0,
       "max_temp": 70
     }

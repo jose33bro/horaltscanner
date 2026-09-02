@@ -186,6 +186,11 @@ class _FakeReservation:
 
 
 VALID_CALIBRATION = {
+    "checkerboard": {
+        "board_columns": 10,
+        "board_rows": 6,
+        "square_size_mm": 13,
+    },
     "cameras": {
         "pi": {
             "intrinsic_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],

@@ -6,7 +6,7 @@ quality evidence has been accepted.
 
 ## Measured fixture and scanner frame
 
-- Checkerboard: **11 × 6 inner corners**, **13 mm** square size.
+- Checkerboard: **10 × 6 inner corners** (11 × 7 squares), **13 mm** square size.
 - The checkerboard center is placed on the center of the measured **200 mm
   diameter** turntable.
 - The circumference is derived and recorded as `pi * 200 =
@@ -18,11 +18,12 @@ quality evidence has been accepted.
 
 The configured X=185, Y=0, Z=25 mm pose is only a starting candidate. The
 workflow rejects it if both cameras do not detect a fresh, well-margined
-checkerboard view. Detection tries the classic OpenCV detector and the more
-robust sector-based detector on a bounded image while returning full-frame
-corner coordinates. If both fail, one small saturated/chromatic IR blob may
-be masked and inpainted before a final retry; broad white board regions are
-never masked. This only protects corner detection—the IR spot is not used as
+checkerboard view. Calibration accepts only the configured 10 × 6 pattern.
+Detection first uses the fast classic OpenCV detector, which normally detects
+this board despite the TF-Luna spot. The sector-based detector is only a
+bounded fallback. If both fail, one small saturated/chromatic IR blob may be
+masked and inpainted before a final retry; broad white board regions are never
+masked. This only protects corner detection—the IR spot is not used as
 geometric evidence. The workflow does not require the absent RGB LED.
 
 ## Before supervised motion

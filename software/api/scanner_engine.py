@@ -496,6 +496,24 @@ class ScanSession:
         blockers: list[str] = []
         if not _CV2_AVAILABLE:
             blockers.append("OpenCV is required for physical laser-line extraction")
+        board = self._calibration.get("checkerboard", {})
+        try:
+            board_valid = (
+                board.get("board_columns") == 10
+                and board.get("board_rows") == 6
+                and math.isclose(
+                    float(board.get("square_size_mm")),
+                    13.0,
+                    rel_tol=0,
+                    abs_tol=1e-9,
+                )
+            )
+        except (AttributeError, TypeError, ValueError):
+            board_valid = False
+        if not board_valid:
+            blockers.append(
+                "Calibration checkerboard metadata must be 10x6 inner corners with 13mm squares"
+            )
         cameras = self._calibration.get("cameras", {})
         for name in self._REQUIRED_CAMERAS:
             camera = cameras.get(name, {}) if isinstance(cameras, Mapping) else {}

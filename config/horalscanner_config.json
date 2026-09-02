@@ -111,6 +111,11 @@
     "usb_device_id": "auto"
   },
   "scan_calibration": {
+    "checkerboard": {
+      "board_columns": 10,
+      "board_rows": 6,
+      "square_size_mm": 13
+    },
     "cameras": {
       "pi": {
         "intrinsic_matrix": null,

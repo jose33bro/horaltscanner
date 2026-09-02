@@ -44,6 +44,20 @@ class _ScaleCV(_BaseCV):
         return True, corners
 
 
+class _ClassicCV(_BaseCV):
+    @staticmethod
+    def findChessboardCorners(_gray, pattern, _flags=0):
+        corners = np.tile(
+            np.array([[[20.0, 30.0]]], dtype=np.float32),
+            (pattern[0] * pattern[1], 1, 1),
+        )
+        return True, corners
+
+    @staticmethod
+    def findChessboardCornersSB(*_args):
+        raise AssertionError("SB must not run after classic detection succeeds")
+
+
 class _GlareCV(_BaseCV):
     @staticmethod
     def connectedComponentsWithStats(candidate, _connectivity):
@@ -106,11 +120,21 @@ class _CornerOccludedCV(_GlareCV):
 
 
 class CheckerboardDetectorTests(unittest.TestCase):
+    def test_exact_pattern_classic_success_skips_sb_and_glare_processing(self):
+        image = np.zeros((100, 100, 3), dtype=np.uint8)
+        result = find_checkerboard_bounded(
+            _ClassicCV(), image, ((10, 6),), timeout_s=0.5
+        )
+        self.assertTrue(result["found"])
+        self.assertEqual(result["pattern"], (10, 6))
+        self.assertEqual(result["method"], "classic")
+        self.assertFalse(result["glare_masked"])
+
     def test_sb_fallback_returns_full_resolution_coordinates_after_scaling(self):
         image = np.zeros((1920, 2560, 3), dtype=np.uint8)
         cv = _ScaleCV()
         result = find_checkerboard_bounded(
-            cv, image, ((11, 6),), max_width=1280, timeout_s=0.5
+            cv, image, ((10, 6),), max_width=1280, timeout_s=0.5
         )
         self.assertTrue(result["found"])
         self.assertEqual(result["method"], "sb")
@@ -121,7 +145,7 @@ class CheckerboardDetectorTests(unittest.TestCase):
         image = np.zeros((100, 100, 3), dtype=np.uint8)
         image[45:49, 45:49] = [255, 40, 250]
         result = find_checkerboard_bounded(
-            _GlareCV(), image, ((11, 6),), max_width=1280, timeout_s=0.5
+            _GlareCV(), image, ((10, 6),), max_width=1280, timeout_s=0.5
         )
         self.assertTrue(result["found"])
         self.assertEqual(result["method"], "sb")
@@ -132,7 +156,7 @@ class CheckerboardDetectorTests(unittest.TestCase):
         image = np.zeros((100, 100, 3), dtype=np.uint8)
         image[45:49, 45:49] = [255, 40, 250]
         result = find_checkerboard_bounded(
-            _CornerOccludedCV(), image, ((11, 6),), timeout_s=0.5
+            _CornerOccludedCV(), image, ((10, 6),), timeout_s=0.5
         )
         self.assertFalse(result["found"])
         self.assertIn("overlaps", result["error"])
@@ -141,7 +165,7 @@ class CheckerboardDetectorTests(unittest.TestCase):
         image = np.zeros((100, 100, 3), dtype=np.uint8)
         image[10:90, 10:90] = [255, 40, 250]
         result = find_checkerboard_bounded(
-            _GlareCV(), image, ((11, 6),), max_width=1280, timeout_s=0.5
+            _GlareCV(), image, ((10, 6),), max_width=1280, timeout_s=0.5
         )
         self.assertFalse(result["found"])
         self.assertFalse(result.get("glare_masked", False))
@@ -150,7 +174,7 @@ class CheckerboardDetectorTests(unittest.TestCase):
         image = np.zeros((100, 100, 3), dtype=np.uint8)
         started = time.monotonic()
         result = find_checkerboard_bounded(
-            _SlowCV(), image, ((11, 6),), timeout_s=0.03
+            _SlowCV(), image, ((10, 6),), timeout_s=0.03
         )
         self.assertTrue(result["timed_out"])
         self.assertLess(time.monotonic() - started, 0.2)

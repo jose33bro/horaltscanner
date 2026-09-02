@@ -689,7 +689,7 @@ const HoralScannerUI = (() => {
   function renderCameraMetrics(camera, result) {
     const target = byId(`camera-${camera}-metrics`);
     const checkerboard = result.checkerboard_found
-      ? `${result.checkerboard_columns} × ${result.checkerboard_rows}`
+      ? `${result.checkerboard_columns} × ${result.checkerboard_rows}${result.checkerboard_matches_expected === false ? " (non conforme)" : ""}`
       : "Non detectee";
     const rows = [
       ["Resolution", `${result.width} × ${result.height}`],
@@ -741,7 +741,9 @@ const HoralScannerUI = (() => {
       const detector = data.checkerboard_detection_method === "sb"
         ? "detecteur robuste SB"
         : "detecteur classique";
-      verdict.textContent = data.checkerboard_found
+      verdict.textContent = data.checkerboard_found && !data.checkerboard_matches_expected
+        ? `Mire ${data.checkerboard_columns} × ${data.checkerboard_rows} detectee, mais refusee: la calibration exige exactement 10 × 6 coins.`
+        : data.checkerboard_found
         ? `Mire ${data.checkerboard_columns} × ${data.checkerboard_rows} detectee (${detector}${data.checkerboard_glare_masked ? ", reflet IR masque" : ""}).`
         : data.checkerboard_detection_timed_out
           ? "Detection de mire interrompue au delai de securite."

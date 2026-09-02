@@ -47,6 +47,11 @@ def valid_calibration():
         "quality": {"accepted": True, "rms_mm": 0.2, "maximum_rms_mm": 2.0},
     }
     return {
+        "checkerboard": {
+            "board_columns": 10,
+            "board_rows": 6,
+            "square_size_mm": 13,
+        },
         "cameras": {"pi": copy.deepcopy(camera), "usb": copy.deepcopy(camera)},
         "laser_planes": {"left": copy.deepcopy(plane), "right": copy.deepcopy(plane)},
         "turntable": {
@@ -77,9 +82,9 @@ def valid_calibration():
 class CalibrationMathTests(unittest.TestCase):
     def test_checkerboard_is_centered_and_uses_exact_measured_geometry(self):
         points = checkerboard_points()
-        self.assertEqual(points.shape, (66, 3))
+        self.assertEqual(points.shape, (60, 3))
         np.testing.assert_allclose(points.mean(axis=0), [0, 0, 0], atol=1e-7)
-        np.testing.assert_allclose(np.ptp(points, axis=0), [130, 65, 0])
+        np.testing.assert_allclose(np.ptp(points, axis=0), [117, 65, 0])
 
     def test_repeated_views_are_rejected_for_insufficient_diversity(self):
         corners = np.array([[10, 10], [20, 10], [10, 20], [20, 20]], dtype=float)
@@ -113,6 +118,12 @@ class CalibrationMathTests(unittest.TestCase):
         validate_calibration_payload(payload)
         payload["cameras"]["pi"]["intrinsic_matrix"] = np.zeros((3, 3)).tolist()
         with self.assertRaisesRegex(CalibrationError, "singular"):
+            validate_calibration_payload(payload)
+
+    def test_payload_rejects_false_checkerboard_pattern_metadata(self):
+        payload = valid_calibration()
+        payload["checkerboard"]["board_columns"] = 11
+        with self.assertRaisesRegex(CalibrationError, "exactly 10x6"):
             validate_calibration_payload(payload)
 
 
@@ -210,8 +221,8 @@ class _Lidar:
 
 def service_config():
     return {
-        "columns": 11,
-        "rows": 6,
+        "board_columns": 10,
+        "board_rows": 6,
         "square_size_mm": 13,
         "minimum_views": 3,
         "starting_pose_mm": {"x": 185, "y": 0, "z": 25},
@@ -294,7 +305,7 @@ class CalibrationServiceTests(unittest.TestCase):
         self.service._move_to = lambda pose: moved.append(dict(pose))
         self.service._capture = lambda name: name.encode()
         pi_view = {
-            "corners": np.zeros((66, 2), dtype=np.float32),
+            "corners": np.zeros((60, 2), dtype=np.float32),
             "image_size": (1280, 960),
             "coverage": 0.2,
         }
@@ -323,7 +334,7 @@ class CalibrationServiceTests(unittest.TestCase):
         image = np.zeros((960, 1280, 3), dtype=np.uint8)
         corners = np.array(
             [[[200 + column * 70, 250 + row * 70]]
-             for row in range(6) for column in range(11)],
+             for row in range(6) for column in range(10)],
             dtype=np.float32,
         )
         self.service._cv.IMREAD_COLOR = 1
@@ -332,7 +343,7 @@ class CalibrationServiceTests(unittest.TestCase):
             "software.api.geometric_calibration.find_checkerboard_bounded",
             return_value={
                 "found": True,
-                "pattern": (11, 6),
+                "pattern": (10, 6),
                 "corners": corners,
                 "method": "sb",
                 "glare_masked": True,
@@ -359,6 +370,26 @@ class CalibrationServiceTests(unittest.TestCase):
                 self.service._detect_checkerboard(
                     b"jpeg", {"x": 185, "y": 0, "z": 25}
                 )
+
+    def test_calibration_rejects_detector_result_for_different_pattern(self):
+        self.service._cv.IMREAD_COLOR = 1
+        self.service._cv.imdecode = lambda _data, _mode: np.zeros(
+            (960, 1280, 3), dtype=np.uint8
+        )
+        false_corners = np.zeros((66, 1, 2), dtype=np.float32)
+        with mock.patch(
+            "software.api.geometric_calibration.find_checkerboard_bounded",
+            return_value={
+                "found": True,
+                "pattern": (11, 6),
+                "corners": false_corners,
+                "method": "sb",
+            },
+        ):
+            view = self.service._detect_checkerboard(
+                b"jpeg", {"x": 185, "y": 0, "z": 25}
+            )
+        self.assertIsNone(view)
 
     def test_x_scale_is_validated_without_changing_rotation_distance(self):
         views = [

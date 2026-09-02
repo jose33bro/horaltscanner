@@ -29,7 +29,16 @@ class CalibrationCancelled(CalibrationError):
     """The operator cancelled calibration."""
 
 
-def checkerboard_points(columns: int = 11, rows: int = 6, square_mm: float = 13.0) -> np.ndarray:
+BOARD_COLUMNS = 10
+BOARD_ROWS = 6
+BOARD_SQUARE_MM = 13.0
+
+
+def checkerboard_points(
+    columns: int = BOARD_COLUMNS,
+    rows: int = BOARD_ROWS,
+    square_mm: float = BOARD_SQUARE_MM,
+) -> np.ndarray:
     """Return centered checkerboard inner corners in its physical board frame."""
     if columns < 2 or rows < 2 or not math.isfinite(square_mm) or square_mm <= 0:
         raise ValueError("checkerboard dimensions and square size must be positive")
@@ -157,6 +166,22 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
         if shape[0] == shape[1] and abs(float(np.linalg.det(result))) <= 1e-12:
             raise CalibrationError(f"{label} is singular")
         return result
+
+    board = calibration.get("checkerboard", {})
+    if (
+        not isinstance(board, Mapping)
+        or board.get("board_columns") != BOARD_COLUMNS
+        or board.get("board_rows") != BOARD_ROWS
+        or not math.isclose(
+            float(board.get("square_size_mm", math.nan)),
+            BOARD_SQUARE_MM,
+            rel_tol=0,
+            abs_tol=1e-9,
+        )
+    ):
+        raise CalibrationError(
+            "calibration checkerboard must be exactly 10x6 inner corners with 13mm squares"
+        )
 
     cameras = calibration.get("cameras", {})
     for name in ("pi", "usb"):
@@ -418,6 +443,15 @@ class GeometricCalibrationService:
         blockers: list[str] = []
         if self._cv is None:
             blockers.append("OpenCV is required for geometric calibration")
+        if (
+            self._config.get("board_columns") != BOARD_COLUMNS
+            or self._config.get("board_rows") != BOARD_ROWS
+            or self._config.get("square_size_mm") != BOARD_SQUARE_MM
+        ):
+            blockers.append(
+                "checkerboard configuration must explicitly specify "
+                "board_columns=10, board_rows=6, square_size_mm=13"
+            )
         if self._motor is None or not getattr(self._motor, "connected", False):
             blockers.append("STM32 motor controller is not connected")
             motor_status = {}
@@ -576,6 +610,7 @@ class GeometricCalibrationService:
             self._reference_pose = self._starting_pose(options)
             views = self._capture_checkerboard_views(poses)
             calibration = self._solve_cameras(views, options)
+            calibration["checkerboard"] = self._board_contract()
             calibration["x_scale_validation"] = self._validate_x_scale(views["pi"], calibration)
             calibration["turntable"] = self._turntable_calibration()
             calibration["laser_planes"] = self._calibrate_lasers(poses, calibration)
@@ -704,7 +739,10 @@ class GeometricCalibrationService:
         image = self._cv.imdecode(np.frombuffer(jpeg, np.uint8), self._cv.IMREAD_COLOR)
         if image is None:
             return None
-        pattern = (int(self._config.get("columns", 11)), int(self._config.get("rows", 6)))
+        pattern = (
+            int(self._config.get("board_columns", BOARD_COLUMNS)),
+            int(self._config.get("board_rows", BOARD_ROWS)),
+        )
         detection = find_checkerboard_bounded(
             self._cv,
             image,
@@ -718,6 +756,8 @@ class GeometricCalibrationService:
         if detection.get("timed_out"):
             raise CalibrationError("checkerboard detection timed out")
         if not detection.get("found"):
+            return None
+        if tuple(detection.get("pattern", ())) != pattern:
             return None
         corners = np.asarray(detection["corners"], dtype=np.float32).reshape(-1, 2)
         height, width = image.shape[:2]
@@ -770,9 +810,9 @@ class GeometricCalibrationService:
 
     def _calibrate_camera_intrinsics(self, views: list[dict]) -> dict:
         object_points = checkerboard_points(
-            int(self._config.get("columns", 11)),
-            int(self._config.get("rows", 6)),
-            float(self._config.get("square_size_mm", 13)),
+            int(self._config.get("board_columns", BOARD_COLUMNS)),
+            int(self._config.get("board_rows", BOARD_ROWS)),
+            float(self._config.get("square_size_mm", BOARD_SQUARE_MM)),
         )
         rms, intrinsic, distortion, rvecs, tvecs = self._cv.calibrateCamera(
             [object_points for _ in views],
@@ -800,8 +840,10 @@ class GeometricCalibrationService:
             "maximum_rms_px": maximum_rms,
             "views": len(views),
             "per_view_rms_px": per_view,
-            "pattern": "11x6_inner_corners",
-            "square_size_mm": float(self._config.get("square_size_mm", 13)),
+            "pattern": "10x6_inner_corners",
+            "square_size_mm": float(
+                self._config.get("square_size_mm", BOARD_SQUARE_MM)
+            ),
             "detection_methods": sorted(
                 {str(view.get("detection_method", "unknown")) for view in views}
             ),
@@ -823,9 +865,9 @@ class GeometricCalibrationService:
         intrinsic = np.asarray(camera["intrinsic_matrix"], dtype=float)
         distortion = np.asarray(camera["distortion_coefficients"], dtype=float)
         board_points = checkerboard_points(
-            int(self._config.get("columns", 11)),
-            int(self._config.get("rows", 6)),
-            float(self._config.get("square_size_mm", 13)),
+            int(self._config.get("board_columns", BOARD_COLUMNS)),
+            int(self._config.get("board_rows", BOARD_ROWS)),
+            float(self._config.get("square_size_mm", BOARD_SQUARE_MM)),
         )
         candidates = []
         for view in views:
@@ -1150,11 +1192,17 @@ class GeometricCalibrationService:
 
     def _board_contract(self) -> dict:
         return {
+            "board_columns": int(
+                self._config.get("board_columns", BOARD_COLUMNS)
+            ),
+            "board_rows": int(self._config.get("board_rows", BOARD_ROWS)),
             "inner_corners": [
-                int(self._config.get("columns", 11)),
-                int(self._config.get("rows", 6)),
+                int(self._config.get("board_columns", BOARD_COLUMNS)),
+                int(self._config.get("board_rows", BOARD_ROWS)),
             ],
-            "square_size_mm": float(self._config.get("square_size_mm", 13)),
+            "square_size_mm": float(
+                self._config.get("square_size_mm", BOARD_SQUARE_MM)
+            ),
             "centered_on_turntable": True,
             "scanner_frame": {
                 "origin": "checkerboard/turntable center at calibration reference pose",

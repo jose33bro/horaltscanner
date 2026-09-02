@@ -47,8 +47,8 @@
       "stop_join_timeout_s": 3
     },
     "geometric_calibration": {
-      "columns": 11,
-      "rows": 6,
+      "board_columns": 10,
+      "board_rows": 6,
       "square_size_mm": 13,
       "turntable_diameter_mm": 200,
       "starting_pose_mm": {

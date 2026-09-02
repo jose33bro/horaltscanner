@@ -268,6 +268,7 @@ def _board_temperature_status(driver: Any) -> dict[str, Any]:
         "sensor": "PC5",
         "sensor_type": "EPCOS 100K B57560G104F",
         "temperature_c": temperature,
+        "board_c": temperature,
         "connected": temperature is not None,
         "error": None if temperature is not None else "Temperature probe PC5 unavailable",
         "fan": "PA8",

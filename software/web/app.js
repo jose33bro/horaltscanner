@@ -8,9 +8,13 @@ const HoralScannerUI = (() => {
     cameraRequests: { pi: null, usb: null },
     cameraPollTimers: { pi: null, usb: null },
     cameraObjectUrls: { pi: null, usb: null },
+    geometryCalibrationTimer: null,
   };
 
   const byId = id => document.getElementById(id);
+  const escapeHtml = value => String(value).replace(/[&<>"']/g, character => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",
+  })[character]);
 
   function toast(message, error = false) {
     const element = byId("toast");
@@ -685,7 +689,7 @@ const HoralScannerUI = (() => {
   function renderCameraMetrics(camera, result) {
     const target = byId(`camera-${camera}-metrics`);
     const checkerboard = result.checkerboard_found
-      ? `${result.checkerboard_columns} × ${result.checkerboard_rows}`
+      ? `${result.checkerboard_columns} × ${result.checkerboard_rows}${result.checkerboard_matches_expected === false ? " (non conforme)" : ""}`
       : "Non detectee";
     const rows = [
       ["Resolution", `${result.width} × ${result.height}`],
@@ -734,9 +738,16 @@ const HoralScannerUI = (() => {
       const title = document.createElement("h2");
       title.textContent = camera === "pi" ? "Pi Camera V3 NoIR" : "Logitech C270";
       const verdict = document.createElement("p");
-      verdict.textContent = data.checkerboard_found
-        ? `Mire ${data.checkerboard_columns} × ${data.checkerboard_rows} detectee.`
-        : "Mire non detectee. Ajustez le cadrage, la nettete ou l'eclairage.";
+      const detector = data.checkerboard_detection_method === "sb"
+        ? "detecteur robuste SB"
+        : "detecteur classique";
+      verdict.textContent = data.checkerboard_found && !data.checkerboard_matches_expected
+        ? `Mire ${data.checkerboard_columns} × ${data.checkerboard_rows} detectee, mais refusee: la calibration exige exactement 11 × 6 coins.`
+        : data.checkerboard_found
+        ? `Mire ${data.checkerboard_columns} × ${data.checkerboard_rows} detectee (${detector}${data.checkerboard_glare_masked ? ", reflet IR masque" : ""}).`
+        : data.checkerboard_detection_timed_out
+          ? "Detection de mire interrompue au delai de securite."
+          : data.checkerboard_detection_error || "Mire non detectee. Ajustez le cadrage, la nettete ou l'eclairage.";
       const details = document.createElement("p");
       details.className = "muted";
       details.textContent = data.checkerboard_found
@@ -912,11 +923,128 @@ const HoralScannerUI = (() => {
     return `TF-Luna ${distance} mm`;
   }
 
+  function geometryCalibrationPayload() {
+    const number = id => {
+      const value = byId(id).value.trim();
+      return value === "" ? null : Number(value);
+    };
+    const payload = {
+      start_pose: {
+        x: number("geometry-start-x"),
+        y: number("geometry-start-y"),
+        z: number("geometry-start-z"),
+      },
+    };
+    const origin = ["lidar-origin-x", "lidar-origin-y", "lidar-origin-z"].map(number);
+    const direction = ["lidar-direction-x", "lidar-direction-y", "lidar-direction-z"].map(number);
+    if (origin.every(Number.isFinite) && direction.every(Number.isFinite)) {
+      payload.lidar_measurements = { origin_mm: origin, direction };
+    }
+    return payload;
+  }
+
+  function renderGeometryCalibration(status) {
+    const active = Boolean(status.active);
+    const phase = status.phase || "idle";
+    const progress = Math.max(0, Math.min(100, Number(status.progress) || 0));
+    byId("geometry-calibration-progress").style.width = `${progress}%`;
+    byId("geometry-calibration-phase").textContent = phase;
+    byId("geometry-calibration-step").textContent = status.step || status.error || "Pret";
+    const views = status.accepted_views || {};
+    byId("geometry-calibration-views").textContent = `Pi ${views.pi || 0} vues · USB ${views.usb || 0} vues`;
+    const badge = byId("geometry-calibration-badge");
+    badge.textContent = active ? "Calibration active" : phase === "complete" ? "Validee" : phase === "error" ? "Erreur" : "Inactive";
+    badge.className = `badge ${active ? "active" : phase === "complete" ? "ready" : phase === "error" ? "error" : "idle"}`;
+    byId("geometry-calibration-start").disabled = active;
+    byId("geometry-calibration-preflight").disabled = active;
+    byId("geometry-calibration-cancel").disabled = !active;
+
+    const blockers = status.blockers || (status.error ? [status.error] : []);
+    const box = byId("geometry-calibration-blockers");
+    box.textContent = blockers.length ? blockers.join(" · ") : "Preflight valide. Le mouvement reste soumis au lancement supervise.";
+    box.className = `scan-message ${blockers.length ? "warning" : "success"}`;
+
+    const metrics = status.metrics || {};
+    byId("geometry-calibration-metrics").innerHTML = Object.entries(metrics).map(([key, value]) =>
+      `<div><span>${escapeHtml(key.replaceAll("_", " "))}</span><b>${escapeHtml(typeof value === "object" ? JSON.stringify(value) : value)}</b></div>`
+    ).join("");
+
+    const phases = ["preflight", "framing", "camera-views", "intrinsics", "extrinsics", "x-scale", "laser-planes", "lidar", "validation", "persisting", "complete"];
+    const current = phases.indexOf(phase);
+    document.querySelectorAll("#geometry-calibration-steps li").forEach(item => {
+      const index = phases.indexOf(item.dataset.phase);
+      item.classList.toggle("active", item.dataset.phase === phase);
+      item.classList.toggle("done", current > index);
+    });
+    if (!active && state.geometryCalibrationTimer) {
+      clearInterval(state.geometryCalibrationTimer);
+      state.geometryCalibrationTimer = null;
+    }
+  }
+
+  async function refreshGeometryCalibration() {
+    try {
+      renderGeometryCalibration(await api("/api/calibration/geometric/status"));
+    } catch (error) { toast(formatUserError(error), true); }
+  }
+
+  async function preflightGeometryCalibration() {
+    try {
+      const result = await api("/api/calibration/geometric/preflight", {
+        method: "POST",
+        body: JSON.stringify(geometryCalibrationPayload()),
+      });
+      renderGeometryCalibration({ ...result, phase: "preflight", step: result.ready ? "Preflight valide" : "Preflight bloque" });
+    } catch (error) {
+      renderGeometryCalibration({ phase: "preflight", blockers: error.blockers || [formatUserError(error)] });
+    }
+  }
+
+  async function startGeometryCalibration() {
+    if (!window.confirm("Confirmer la supervision physique: zone libre, damier centre et arret d'urgence accessible ?")) return;
+    try {
+      renderGeometryCalibration(await api("/api/calibration/geometric/start", {
+        method: "POST",
+        body: JSON.stringify(geometryCalibrationPayload()),
+      }));
+      clearInterval(state.geometryCalibrationTimer);
+      state.geometryCalibrationTimer = setInterval(refreshGeometryCalibration, 750);
+    } catch (error) {
+      renderGeometryCalibration({ phase: "error", blockers: error.blockers || [formatUserError(error)] });
+      toast(formatUserError(error), true);
+    }
+  }
+
+  async function cancelGeometryCalibration() {
+    try {
+      renderGeometryCalibration(await api("/api/calibration/geometric/cancel", { method: "POST", body: "{}" }));
+      toast("Annulation demandee; lasers coupes et moteurs arretes.");
+    } catch (error) { toast(formatUserError(error), true); }
+  }
+
+  async function rollbackGeometryCalibration() {
+    if (!window.confirm("Restaurer la sauvegarde de calibration precedente ?")) return;
+    try {
+      await api("/api/calibration/geometric/rollback", { method: "POST", body: "{}" });
+      toast("Calibration precedente restauree.");
+      refreshGeometryCalibration();
+    } catch (error) { toast(formatUserError(error), true); }
+  }
+
+  function initializeGeometryCalibration() {
+    byId("geometry-calibration-preflight")?.addEventListener("click", preflightGeometryCalibration);
+    byId("geometry-calibration-start")?.addEventListener("click", startGeometryCalibration);
+    byId("geometry-calibration-cancel")?.addEventListener("click", cancelGeometryCalibration);
+    byId("geometry-calibration-rollback")?.addEventListener("click", rollbackGeometryCalibration);
+    refreshGeometryCalibration();
+  }
+
   function initialize() {
     initializeTabs();
     initializeScan();
     initializeWorkshop();
     initializeCameras();
+    initializeGeometryCalibration();
     byId("refresh-button").addEventListener("click", async () => {
       await Promise.all([refreshSystemStatus(), refreshWorkshop(), refreshScanStatus()]);
       toast("Donnees actualisees");

@@ -111,39 +111,58 @@
     "usb_device_id": "auto"
   },
   "scan_calibration": {
+    "checkerboard": {
+      "board_columns": 11,
+      "board_rows": 6,
+      "square_size_mm": 13
+    },
     "cameras": {
       "pi": {
         "intrinsic_matrix": null,
-        "camera_to_scanner": null
+        "distortion_coefficients": null,
+        "camera_to_scanner": null,
+        "quality": null
       },
       "usb": {
         "intrinsic_matrix": null,
+        "distortion_coefficients": null,
         "camera_to_scanner": null,
         "carriage_axis": "z",
-        "carriage_direction": [0, 0, 1]
+        "carriage_direction": [0, 0, 1],
+        "reference_axis_position_mm": null,
+        "quality": null
       }
     },
     "laser_planes": {
       "left": {
         "normal": null,
-        "offset_mm": null
+        "offset_mm": null,
+        "quality": null
       },
       "right": {
         "normal": null,
-        "offset_mm": null
+        "offset_mm": null,
+        "quality": null
       }
     },
     "turntable": {
       "center_mm": null,
       "axis": null,
-      "mm_per_revolution": null
+      "diameter_mm": null,
+      "mm_per_revolution": null,
+      "source": null,
+      "quality": null
     },
     "lidar": {
       "lidar_to_scanner": null,
       "carriage_axis": "z",
       "carriage_direction": [0, 0, 1],
+      "reference_axis_position_mm": null,
       "min_distance_mm": 20,
-      "max_distance_mm": 8000
-    }
+      "max_distance_mm": 8000,
+      "source": null,
+      "quality": null
+    },
+    "x_scale_validation": null
   }
 }

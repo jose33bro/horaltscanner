@@ -32,7 +32,7 @@ class ScannerApp:
         lasers: LaserController | None = None,
         sensors: SensorArray | None = None,
         *,
-        use_gpio: bool = True,
+        use_gpio: bool = False,
     ):
         # Newer scan-sequence mode used by the binary-protocol tests.
         self._controller = controller

@@ -166,22 +166,19 @@ class USBDriver(USBScannerDriver):
         self.connected = False
         return True
 
-    def home(self, axis: str) -> bool:
+    def home(self, axis: str) -> "ScannerStatus | bool":
         if self._transport is None:
             return True
-        self.home_axis(axis)
-        return True
+        return self.home_axis(axis)
 
-    def move(self, axis: str, steps: int, speed: int = 0) -> bool:
+    def move(self, axis: str, steps: int, speed: int = 0) -> "ScannerStatus | bool":
         if self._transport is None:
             return True
-        axis = axis.upper()
-        if axis == "X":
-            self.move_x(steps, speed=speed)
-        elif axis == "Y":
-            self.move_y(steps, speed=speed)
-        elif axis == "Z":
-            self.move_z(steps, speed=speed)
-        else:
-            raise ValueError(f"Unsupported axis: {axis}")
-        return True
+        axis_upper = axis.upper()
+        if axis_upper == "X":
+            return self.move_x(steps, speed=speed)
+        if axis_upper == "Y":
+            return self.move_y(steps, speed=speed)
+        if axis_upper == "Z":
+            return self.move_z(steps, speed=speed)
+        raise ValueError(f"Unsupported axis: {axis}")

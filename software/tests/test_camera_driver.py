@@ -416,12 +416,12 @@ class FakeCv2SB(FakeCv2):
             np.array([[[480.0, 360.0]]], dtype=np.float32),
             (size[0] * size[1], 1, 1),
         )
-        return size == (10, 6), corners
+        return size == (11, 6), corners
 
 
 class AnalyzeCameraFrameTests(unittest.TestCase):
-    def test_detects_10_by_6_board_and_reports_center_offset(self):
-        fake_cv2 = FakeCv2(detected_size=(10, 6))
+    def test_detects_11_by_6_board_and_reports_center_offset(self):
+        fake_cv2 = FakeCv2(detected_size=(11, 6))
 
         with (
             mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
@@ -430,7 +430,7 @@ class AnalyzeCameraFrameTests(unittest.TestCase):
             result = camera_driver.analyze_camera_frame(b"jpeg")
 
         self.assertTrue(result["checkerboard_found"])
-        self.assertEqual(result["checkerboard_columns"], 10)
+        self.assertEqual(result["checkerboard_columns"], 11)
         self.assertEqual(result["checkerboard_rows"], 6)
         self.assertTrue(result["checkerboard_matches_expected"])
         self.assertEqual(result["center_offset_x_px"], 60.5)
@@ -438,7 +438,7 @@ class AnalyzeCameraFrameTests(unittest.TestCase):
         self.assertEqual(result["analysis_width"], 960)
         self.assertEqual(result["analysis_height"], 720)
         self.assertEqual(fake_cv2.resize_calls, [((960, 720), fake_cv2.INTER_AREA)])
-        self.assertEqual(fake_cv2.checked_sizes, [(10, 6)])
+        self.assertEqual(fake_cv2.checked_sizes, [(11, 6)])
 
     def test_reports_no_center_when_supported_boards_are_absent(self):
         fake_cv2 = FakeCv2()
@@ -454,18 +454,18 @@ class AnalyzeCameraFrameTests(unittest.TestCase):
         self.assertIsNone(result["center_offset_x_px"])
         self.assertEqual(
             fake_cv2.checked_sizes,
-            [(10, 6), (11, 6), (12, 7), (9, 6)],
+            [(11, 6), (10, 6), (12, 7), (9, 6)],
         )
 
     def test_diagnostic_labels_secondary_pattern_as_not_calibration_board(self):
-        fake_cv2 = FakeCv2(detected_size=(11, 6))
+        fake_cv2 = FakeCv2(detected_size=(10, 6))
         with (
             mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
             mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
         ):
             result = camera_driver.analyze_camera_frame(b"jpeg")
         self.assertTrue(result["checkerboard_found"])
-        self.assertEqual(result["checkerboard_columns"], 11)
+        self.assertEqual(result["checkerboard_columns"], 10)
         self.assertFalse(result["checkerboard_matches_expected"])
 
     def test_diagnostic_uses_sb_when_classic_fails_for_exact_board(self):
@@ -477,10 +477,10 @@ class AnalyzeCameraFrameTests(unittest.TestCase):
             result = camera_driver.analyze_camera_frame(b"jpeg")
         self.assertTrue(result["checkerboard_found"])
         self.assertEqual(result["checkerboard_detection_method"], "sb")
-        self.assertEqual(result["checkerboard_columns"], 10)
+        self.assertEqual(result["checkerboard_columns"], 11)
         self.assertEqual(
             fake_cv2.checked_sizes,
-            [("classic", (10, 6)), ("sb", (10, 6))],
+            [("classic", (11, 6)), ("sb", (11, 6))],
         )
 
 

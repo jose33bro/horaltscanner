@@ -187,7 +187,7 @@ class _FakeReservation:
 
 VALID_CALIBRATION = {
     "checkerboard": {
-        "board_columns": 10,
+        "board_columns": 11,
         "board_rows": 6,
         "square_size_mm": 13,
     },

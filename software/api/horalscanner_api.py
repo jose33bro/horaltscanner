@@ -1381,7 +1381,7 @@ def _geometric_calibration_options(data):
             "reference_z_mm": float(
                 lidar.get(
                     "reference_z_mm",
-                    result.get("starting_pose_mm", {}).get("z", 25.0),
+                    result.get("starting_pose_mm", {}).get("z", 10.0),
                 )
             ),
         }

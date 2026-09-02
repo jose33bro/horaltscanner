@@ -480,10 +480,10 @@ def analyze_laser_line(jpeg: bytes) -> dict:
 
 def analyze_camera_frame(
     jpeg: bytes,
-    checkerboard_sizes: tuple[tuple[int, int], ...] = ((10, 6), (11, 6), (12, 7), (9, 6)),
+    checkerboard_sizes: tuple[tuple[int, int], ...] = ((11, 6), (10, 6), (12, 7), (9, 6)),
     max_analysis_width: int = 960,
     checkerboard_timeout_s: float = 2.0,
-    expected_checkerboard_size: tuple[int, int] = (10, 6),
+    expected_checkerboard_size: tuple[int, int] = (11, 6),
 ) -> dict:
     """Measure image quality and detect a calibration checkerboard.
 

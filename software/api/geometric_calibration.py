@@ -29,7 +29,7 @@ class CalibrationCancelled(CalibrationError):
     """The operator cancelled calibration."""
 
 
-BOARD_COLUMNS = 10
+BOARD_COLUMNS = 11
 BOARD_ROWS = 6
 BOARD_SQUARE_MM = 13.0
 
@@ -180,7 +180,7 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
         )
     ):
         raise CalibrationError(
-            "calibration checkerboard must be exactly 10x6 inner corners with 13mm squares"
+            "calibration checkerboard must be exactly 11x6 inner corners with 13mm squares"
         )
 
     cameras = calibration.get("cameras", {})
@@ -408,7 +408,7 @@ class GeometricCalibrationService:
         self._status = self._new_status()
         self._report: dict[str, Any] = {}
         self._reference_pose = dict(
-            self._config.get("starting_pose_mm", {"x": 185, "y": 0, "z": 25})
+            self._config.get("starting_pose_mm", {"x": 210, "y": 0, "z": 10})
         )
 
     def _new_status(self) -> dict[str, Any]:
@@ -450,7 +450,7 @@ class GeometricCalibrationService:
         ):
             blockers.append(
                 "checkerboard configuration must explicitly specify "
-                "board_columns=10, board_rows=6, square_size_mm=13"
+                "board_columns=11, board_rows=6, square_size_mm=13"
             )
         if self._motor is None or not getattr(self._motor, "connected", False):
             blockers.append("STM32 motor controller is not connected")
@@ -649,13 +649,13 @@ class GeometricCalibrationService:
         offsets = self._config.get("pose_offsets_mm", [])
         if not offsets:
             offsets = [
-                {"x": -10, "y": 0, "z": -5},
-                {"x": 0, "y": 10.4719755, "z": 0},
-                {"x": 10, "y": 20.943951, "z": 5},
-                {"x": -10, "y": 31.4159265, "z": 0},
-                {"x": 0, "y": 41.887902, "z": -5},
-                {"x": 10, "y": 52.3598776, "z": 0},
-                {"x": 0, "y": 62.8318531, "z": 5},
+                {"x": 0, "y": 0, "z": 0},
+                {"x": -10, "y": 10.4719755, "z": 0},
+                {"x": -20, "y": 20.943951, "z": 5},
+                {"x": -10, "y": 31.4159265, "z": 5},
+                {"x": 0, "y": 41.887902, "z": 0},
+                {"x": -20, "y": 52.3598776, "z": 0},
+                {"x": -10, "y": 62.8318531, "z": 5},
             ]
         limits = self._config.get("axis_limits_mm", {})
         poses: list[dict[str, float]] = []
@@ -681,7 +681,7 @@ class GeometricCalibrationService:
         return poses
 
     def _starting_pose(self, options: Mapping[str, Any]) -> dict[str, float]:
-        start = dict(self._config.get("starting_pose_mm", {"x": 185, "y": 0, "z": 25}))
+        start = dict(self._config.get("starting_pose_mm", {"x": 210, "y": 0, "z": 10}))
         start.update(options.get("starting_pose_mm", {}))
         try:
             return {axis: float(start[axis]) for axis in ("x", "y", "z")}
@@ -799,7 +799,7 @@ class GeometricCalibrationService:
                     carriage_direction=[0.0, 0.0, 1.0],
                     reference_axis_position_mm=float(
                         options.get("starting_pose_mm", {}).get(
-                            "z", self._config.get("starting_pose_mm", {}).get("z", 25)
+                            "z", self._config.get("starting_pose_mm", {}).get("z", 10)
                         )
                     ),
                 )
@@ -840,7 +840,7 @@ class GeometricCalibrationService:
             "maximum_rms_px": maximum_rms,
             "views": len(views),
             "per_view_rms_px": per_view,
-            "pattern": "10x6_inner_corners",
+            "pattern": "11x6_inner_corners",
             "square_size_mm": float(
                 self._config.get("square_size_mm", BOARD_SQUARE_MM)
             ),
@@ -888,7 +888,7 @@ class GeometricCalibrationService:
             if name == "usb":
                 reference_z = float(
                     options.get("starting_pose_mm", {}).get(
-                        "z", self._config.get("starting_pose_mm", {}).get("z", 25)
+                        "z", self._config.get("starting_pose_mm", {}).get("z", 10)
                     )
                 )
                 candidate[:3, 3] -= np.array([0.0, 0.0, view["pose"]["z"] - reference_z])
@@ -1084,7 +1084,7 @@ class GeometricCalibrationService:
         self._set_phase("lidar", "Validating measured TF-Luna beam transform", 84)
         transform = transform_from_beam(inputs.get("origin_mm"), inputs.get("direction"))
         reference_z = float(
-            inputs.get("reference_z_mm", self._config.get("starting_pose_mm", {}).get("z", 25))
+            inputs.get("reference_z_mm", self._config.get("starting_pose_mm", {}).get("z", 10))
         )
         residuals = []
         readings = []

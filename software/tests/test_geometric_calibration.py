@@ -48,7 +48,7 @@ def valid_calibration():
     }
     return {
         "checkerboard": {
-            "board_columns": 10,
+            "board_columns": 11,
             "board_rows": 6,
             "square_size_mm": 13,
         },
@@ -82,9 +82,9 @@ def valid_calibration():
 class CalibrationMathTests(unittest.TestCase):
     def test_checkerboard_is_centered_and_uses_exact_measured_geometry(self):
         points = checkerboard_points()
-        self.assertEqual(points.shape, (60, 3))
+        self.assertEqual(points.shape, (66, 3))
         np.testing.assert_allclose(points.mean(axis=0), [0, 0, 0], atol=1e-7)
-        np.testing.assert_allclose(np.ptp(points, axis=0), [117, 65, 0])
+        np.testing.assert_allclose(np.ptp(points, axis=0), [130, 65, 0])
 
     def test_repeated_views_are_rejected_for_insufficient_diversity(self):
         corners = np.array([[10, 10], [20, 10], [10, 20], [20, 20]], dtype=float)
@@ -122,8 +122,8 @@ class CalibrationMathTests(unittest.TestCase):
 
     def test_payload_rejects_false_checkerboard_pattern_metadata(self):
         payload = valid_calibration()
-        payload["checkerboard"]["board_columns"] = 11
-        with self.assertRaisesRegex(CalibrationError, "exactly 10x6"):
+        payload["checkerboard"]["board_columns"] = 10
+        with self.assertRaisesRegex(CalibrationError, "exactly 11x6"):
             validate_calibration_payload(payload)
 
 
@@ -166,7 +166,7 @@ class _Motor:
     connected = True
 
     def __init__(self):
-        self.positions = {"x": 185.0, "y": 0.0, "z": 25.0}
+        self.positions = {"x": 210.0, "y": 0.0, "z": 10.0}
         self.calls = []
 
     def get_motor_status(self):
@@ -221,15 +221,15 @@ class _Lidar:
 
 def service_config():
     return {
-        "board_columns": 10,
+        "board_columns": 11,
         "board_rows": 6,
         "square_size_mm": 13,
         "minimum_views": 3,
-        "starting_pose_mm": {"x": 185, "y": 0, "z": 25},
+        "starting_pose_mm": {"x": 210, "y": 0, "z": 10},
         "pose_offsets_mm": [
-            {"x": -10, "y": 0, "z": 0},
-            {"x": 0, "y": 10, "z": 0},
-            {"x": 10, "y": 20, "z": 0},
+            {"x": 0, "y": 0, "z": 0},
+            {"x": -10, "y": 10, "z": 0},
+            {"x": -20, "y": 20, "z": 5},
         ],
         "axis_limits_mm": {
             "x": {"min": 0, "max": 210},
@@ -296,16 +296,17 @@ class CalibrationServiceTests(unittest.TestCase):
 
     def test_trajectory_is_bounded_and_configurable(self):
         poses = self.service._trajectory({"starting_pose_mm": {"x": 190, "y": 5, "z": 30}})
-        self.assertEqual(poses[0], {"x": 180.0, "y": 5.0, "z": 30.0})
+        self.assertEqual(poses[0], {"x": 190.0, "y": 5.0, "z": 30.0})
+        self.assertTrue(all(pose["x"] <= 210 for pose in self.service._trajectory({})))
         with self.assertRaisesRegex(CalibrationError, "outside configured limits"):
-            self.service._trajectory({"starting_pose_mm": {"x": 209, "y": 0, "z": 25}})
+            self.service._trajectory({"starting_pose_mm": {"x": 211, "y": 0, "z": 10}})
 
     def test_failed_starting_framing_blocks_multi_pose_motion(self):
         moved = []
         self.service._move_to = lambda pose: moved.append(dict(pose))
         self.service._capture = lambda name: name.encode()
         pi_view = {
-            "corners": np.zeros((60, 2), dtype=np.float32),
+            "corners": np.zeros((66, 2), dtype=np.float32),
             "image_size": (1280, 960),
             "coverage": 0.2,
         }
@@ -334,7 +335,7 @@ class CalibrationServiceTests(unittest.TestCase):
         image = np.zeros((960, 1280, 3), dtype=np.uint8)
         corners = np.array(
             [[[200 + column * 70, 250 + row * 70]]
-             for row in range(6) for column in range(10)],
+             for row in range(6) for column in range(11)],
             dtype=np.float32,
         )
         self.service._cv.IMREAD_COLOR = 1
@@ -343,14 +344,14 @@ class CalibrationServiceTests(unittest.TestCase):
             "software.api.geometric_calibration.find_checkerboard_bounded",
             return_value={
                 "found": True,
-                "pattern": (10, 6),
+                "pattern": (11, 6),
                 "corners": corners,
                 "method": "sb",
                 "glare_masked": True,
             },
         ):
             view = self.service._detect_checkerboard(
-                b"jpeg", {"x": 185, "y": 0, "z": 25}
+                b"jpeg", {"x": 210, "y": 0, "z": 10}
             )
         self.assertIsNotNone(view)
         self.assertEqual(view["image_size"], (1280, 960))
@@ -368,7 +369,7 @@ class CalibrationServiceTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(CalibrationError, "timed out"):
                 self.service._detect_checkerboard(
-                    b"jpeg", {"x": 185, "y": 0, "z": 25}
+                    b"jpeg", {"x": 210, "y": 0, "z": 10}
                 )
 
     def test_calibration_rejects_detector_result_for_different_pattern(self):
@@ -376,18 +377,18 @@ class CalibrationServiceTests(unittest.TestCase):
         self.service._cv.imdecode = lambda _data, _mode: np.zeros(
             (960, 1280, 3), dtype=np.uint8
         )
-        false_corners = np.zeros((66, 1, 2), dtype=np.float32)
+        false_corners = np.zeros((60, 1, 2), dtype=np.float32)
         with mock.patch(
             "software.api.geometric_calibration.find_checkerboard_bounded",
             return_value={
                 "found": True,
-                "pattern": (11, 6),
+                "pattern": (10, 6),
                 "corners": false_corners,
                 "method": "sb",
             },
         ):
             view = self.service._detect_checkerboard(
-                b"jpeg", {"x": 185, "y": 0, "z": 25}
+                b"jpeg", {"x": 210, "y": 0, "z": 10}
             )
         self.assertIsNone(view)
 
@@ -404,16 +405,16 @@ class CalibrationServiceTests(unittest.TestCase):
             self.service._validate_x_scale(views, {})
 
     def test_scanner_frame_pose_math_and_extrinsic_average_are_consistent(self):
-        self.service._reference_pose = {"x": 185, "y": 0, "z": 25}
-        transform = self.service._board_to_scanner({"x": 195, "y": 0, "z": 25})
-        np.testing.assert_allclose(transform[:3, 3], [10, 0, 0])
+        self.service._reference_pose = {"x": 210, "y": 0, "z": 10}
+        transform = self.service._board_to_scanner({"x": 200, "y": 0, "z": 10})
+        np.testing.assert_allclose(transform[:3, 3], [-10, 0, 0])
         np.testing.assert_allclose(transform[:3, :3], [[0, 0, 1], [1, 0, 0], [0, 1, 0]])
         shifted = transform.copy()
         shifted[:3, 3] += [0, 2, 0]
         average, translation_rms, rotation_rms = self.service._average_transforms(
             [transform, shifted]
         )
-        np.testing.assert_allclose(average[:3, 3], [10, 1, 0])
+        np.testing.assert_allclose(average[:3, 3], [-10, 1, 0])
         self.assertAlmostEqual(translation_rms, 1.0)
         self.assertAlmostEqual(rotation_rms, 0.0)
 
@@ -433,7 +434,7 @@ class CalibrationServiceTests(unittest.TestCase):
         self.service._laser_board_points = mock.Mock(side_effect=CalibrationError("bad line"))
         with self.assertRaisesRegex(CalibrationError, "bad line"):
             self.service._calibrate_lasers(
-                [{"x": 185, "y": 0, "z": 25}],
+                [{"x": 210, "y": 0, "z": 10}],
                 {"cameras": {}},
             )
         self.assertFalse(any(self.gpio.state.values()))

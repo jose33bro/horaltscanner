@@ -6,7 +6,7 @@ quality evidence has been accepted.
 
 ## Measured fixture and scanner frame
 
-- Checkerboard: **10 × 6 inner corners** (11 × 7 squares), **13 mm** square size.
+- Checkerboard: **11 × 6 inner corners** (12 × 7 squares), **13 mm** square size.
 - The checkerboard center is placed on the center of the measured **200 mm
   diameter** turntable.
 - The circumference is derived and recorded as `pi * 200 =
@@ -16,9 +16,11 @@ quality evidence has been accepted.
 - +X: radial, positive with commanded X; +Y: turntable tangent at Y=0; +Z:
   turntable axis, upward.
 
-The configured X=185, Y=0, Z=25 mm pose is only a starting candidate. The
+The configured X=210, Y=0, Z=10 mm pose is the measured glare-free starting
+candidate. The
 workflow rejects it if both cameras do not detect a fresh, well-margined
-checkerboard view. Calibration accepts only the configured 10 × 6 pattern.
+checkerboard view. Calibration accepts only the configured 11 × 6 pattern;
+a 10 × 6 subset detection is explicitly rejected.
 Detection first uses the fast classic OpenCV detector, which normally detects
 this board despite the TF-Luna spot. The sector-based detector is only a
 bounded fallback. If both fail, one small saturated/chromatic IR blob may be
@@ -48,7 +50,7 @@ These checks do not command motion or energize a laser:
 curl -fsS http://127.0.0.1:5000/api/status | python3 -m json.tool
 curl -fsS http://127.0.0.1:5000/api/calibration/geometric/status | python3 -m json.tool
 curl -fsS -X POST -H 'Content-Type: application/json' \
-  -d '{"start_pose":{"x":185,"y":0,"z":25},"lidar_measurements":{"origin_mm":[MEASURE_X,MEASURE_Y,MEASURE_Z],"direction":[DIR_X,DIR_Y,DIR_Z]}}' \
+  -d '{"start_pose":{"x":210,"y":0,"z":10},"lidar_measurements":{"origin_mm":[MEASURE_X,MEASURE_Y,MEASURE_Z],"direction":[DIR_X,DIR_Y,DIR_Z]}}' \
   http://127.0.0.1:5000/api/calibration/geometric/preflight | python3 -m json.tool
 ```
 
@@ -65,7 +67,7 @@ is:
 
 ```bash
 curl -fsS -X POST -H 'Content-Type: application/json' \
-  -d '{"start_pose":{"x":185,"y":0,"z":25},"lidar_measurements":{"origin_mm":[MEASURE_X,MEASURE_Y,MEASURE_Z],"direction":[DIR_X,DIR_Y,DIR_Z]}}' \
+  -d '{"start_pose":{"x":210,"y":0,"z":10},"lidar_measurements":{"origin_mm":[MEASURE_X,MEASURE_Y,MEASURE_Z],"direction":[DIR_X,DIR_Y,DIR_Z]}}' \
   http://127.0.0.1:5000/api/calibration/geometric/start | python3 -m json.tool
 watch -n 1 'curl -fsS http://127.0.0.1:5000/api/calibration/geometric/status'
 ```

@@ -1079,7 +1079,7 @@ class HoralScannerAPITests(unittest.TestCase):
         response = self.client.post(
             "/api/calibration/geometric/preflight",
             json={
-                "start_pose": {"x": 185, "y": 0, "z": 25},
+                "start_pose": {"x": 210, "y": 0, "z": 10},
                 "lidar_measurements": {
                     "origin_mm": [1, 2, 3],
                     "direction": [1, 0, 0],
@@ -1089,11 +1089,11 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         service.preflight.assert_called_once_with(
             {
-                "starting_pose_mm": {"x": 185.0, "y": 0.0, "z": 25.0},
+                "starting_pose_mm": {"x": 210.0, "y": 0.0, "z": 10.0},
                 "lidar": {
                     "origin_mm": [1.0, 2.0, 3.0],
                     "direction": [1.0, 0.0, 0.0],
-                    "reference_z_mm": 25.0,
+                    "reference_z_mm": 10.0,
                 },
             }
         )
@@ -1101,7 +1101,7 @@ class HoralScannerAPITests(unittest.TestCase):
     def test_geometric_calibration_lifecycle_routes_surface_state(self):
         service = self._install_geometric_service()
         payload = {
-            "starting_pose_mm": {"x": 185, "y": 0, "z": 25},
+            "starting_pose_mm": {"x": 210, "y": 0, "z": 10},
             "lidar": {"origin_mm": [1, 2, 3], "direction": [1, 0, 0]},
         }
         start = self.client.post("/api/calibration/geometric/start", json=payload)
@@ -1123,7 +1123,7 @@ class HoralScannerAPITests(unittest.TestCase):
         service = self._install_geometric_service()
         response = self.client.post(
             "/api/calibration/geometric/preflight",
-            json={"start_pose": {"x": 185, "y": 0, "z": 25}, "lidar_measurements": {"origin_mm": [1, 2]}},
+            json={"start_pose": {"x": 210, "y": 0, "z": 10}, "lidar_measurements": {"origin_mm": [1, 2]}},
         )
         self.assertEqual(response.status_code, 400)
         service.preflight.assert_not_called()

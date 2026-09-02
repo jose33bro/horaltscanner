@@ -499,7 +499,7 @@ class ScanSession:
         board = self._calibration.get("checkerboard", {})
         try:
             board_valid = (
-                board.get("board_columns") == 10
+                board.get("board_columns") == 11
                 and board.get("board_rows") == 6
                 and math.isclose(
                     float(board.get("square_size_mm")),
@@ -512,7 +512,7 @@ class ScanSession:
             board_valid = False
         if not board_valid:
             blockers.append(
-                "Calibration checkerboard metadata must be 10x6 inner corners with 13mm squares"
+                "Calibration checkerboard metadata must be 11x6 inner corners with 13mm squares"
             )
         cameras = self._calibration.get("cameras", {})
         for name in self._REQUIRED_CAMERAS:

@@ -742,7 +742,7 @@ const HoralScannerUI = (() => {
         ? "detecteur robuste SB"
         : "detecteur classique";
       verdict.textContent = data.checkerboard_found && !data.checkerboard_matches_expected
-        ? `Mire ${data.checkerboard_columns} × ${data.checkerboard_rows} detectee, mais refusee: la calibration exige exactement 10 × 6 coins.`
+        ? `Mire ${data.checkerboard_columns} × ${data.checkerboard_rows} detectee, mais refusee: la calibration exige exactement 11 × 6 coins.`
         : data.checkerboard_found
         ? `Mire ${data.checkerboard_columns} × ${data.checkerboard_rows} detectee (${detector}${data.checkerboard_glare_masked ? ", reflet IR masque" : ""}).`
         : data.checkerboard_detection_timed_out

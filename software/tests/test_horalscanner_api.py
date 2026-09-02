@@ -248,6 +248,37 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertFalse(data["success"])
         self.assertIn("hint", data)
 
+    def test_reconstruct_returns_in_progress_and_status_endpoint_polls_result(self):
+        session = self.api_module.scan_session
+        for i in range(150):
+            session._data.add_point(float(i), 0.0, 0.0)
+        self.addCleanup(session._data.clear)
+
+        response = self.client.post("/api/model/reconstruct")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertTrue(data["ok"])
+        # Without Open3D installed, reconstruction runs synchronously via
+        # the grid-triangulation fallback; with Open3D it starts in the
+        # background. Either way, the route must not raise and must report
+        # its progress state.
+        self.assertIn("in_progress", data)
+
+        status_response = self.client.get("/api/model/status")
+        self.assertEqual(status_response.status_code, 200)
+        status_data = status_response.get_json()
+        self.assertTrue(status_data["success"])
+        self.assertIn("in_progress", status_data)
+        self.assertIn("result", status_data)
+
+    def test_cancel_endpoint_requests_stop_and_reports_status(self):
+        response = self.client.post("/api/model/cancel")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertIn("in_progress", data)
+
     def test_health_endpoints_return_ok(self):
         for route in ("/health", "/api/health"):
             with self.subTest(route=route):

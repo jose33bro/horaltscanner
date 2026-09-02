@@ -19,6 +19,8 @@ BACKUP_DIR="/home/pi/backups"
 IMAGE_BUILD_MODE="${HORALSCANNER_IMAGE_BUILD:-0}"
 STATE_DIR="/var/lib/horalscanner"
 CALIBRATION_FILE="$STATE_DIR/calibration.json"
+SYSTEM_PYTHON="${HORALSCANNER_SYSTEM_PYTHON:-/usr/bin/python3}"
+SERVICE_FILE="/etc/systemd/system/horalscanner.service"
 
 # Functions
 log_info() {
@@ -118,8 +120,11 @@ install_system_deps() {
     # Try to install optional packages (may not exist on all systems)
     apt-get install -y libharfbuzz0b || log_warn "libharfbuzz0b not available (optional)"
     apt-get install -y libopenjp2-7 || log_warn "libopenjp2-7 not available (optional)"
-    apt-get install -y libopencv-core4.5 || log_warn "libopencv-core not available (optional)"
-    apt-get install -y python3-opencv || apt-get install -y python3-cv2 || log_warn "OpenCV Python not available (will install via pip)"
+    if apt-cache show python3-opencv >/dev/null 2>&1; then
+        apt-get install -y python3-opencv
+    else
+        log_warn "Distro python3-opencv package is unavailable; requirements install will provide OpenCV"
+    fi
     if apt-cache show rpicam-apps >/dev/null 2>&1; then
         apt-get install -y rpicam-apps
     else
@@ -213,18 +218,34 @@ configure_serial_devices() {
 }
 
 # Step 5: Create virtual environment and install Python deps
+verify_system_camera_stack() {
+    log_info "Verifying Raspberry Pi OS camera bindings..."
+    "$SYSTEM_PYTHON" -c "import libcamera; from picamera2 import Picamera2" \
+        || {
+            log_error "System libcamera/Picamera2 imports failed; service was not changed"
+            return 1
+        }
+    log_success "System camera bindings verified"
+}
+
+ensure_system_site_packages_venv() {
+    if [ -x "$VENV_DIR/bin/python3" ]; then
+        log_info "Upgrading existing virtual environment with Raspberry Pi OS packages..."
+        "$SYSTEM_PYTHON" -m venv --upgrade --system-site-packages "$VENV_DIR"
+    else
+        log_info "Creating virtual environment with Raspberry Pi OS packages..."
+        "$SYSTEM_PYTHON" -m venv --system-site-packages "$VENV_DIR"
+    fi
+    if ! grep -Eq '^[[:space:]]*include-system-site-packages[[:space:]]*=[[:space:]]*true[[:space:]]*$' \
+        "$VENV_DIR/pyvenv.cfg"; then
+        log_error "Virtual environment did not enable system site packages"
+        return 1
+    fi
+}
+
 setup_python() {
     log_info "Setting up Python virtual environment..."
-
-    if [ -x "$VENV_DIR/bin/python3" ] &&
-       ! "$VENV_DIR/bin/python3" -c "import sys" >/dev/null 2>&1; then
-        log_warn "Existing virtual environment is broken; recreating it..."
-        rm -rf "$VENV_DIR"
-    fi
-    if [ ! -x "$VENV_DIR/bin/python3" ]; then
-        log_info "Creating virtual environment..."
-        python3 -m venv --system-site-packages "$VENV_DIR"
-    fi
+    ensure_system_site_packages_venv
 
     source "$VENV_DIR/bin/activate"
     
@@ -260,7 +281,8 @@ install_service() {
         API_SCRIPT="$INSTALL_DIR/horalscanner_api.py"
     fi
     
-    cat > /etc/systemd/system/horalscanner.service <<EOF
+    SERVICE_TEMP="${SERVICE_FILE}.new"
+    cat > "$SERVICE_TEMP" <<EOF
 [Unit]
 Description=HoralScanner 3D Scanner API
 After=network.target
@@ -286,10 +308,11 @@ SyslogIdentifier=horalscanner
 [Install]
 WantedBy=multi-user.target
 EOF
+    mv "$SERVICE_TEMP" "$SERVICE_FILE"
 
     if is_image_build; then
         mkdir -p /etc/systemd/system/multi-user.target.wants
-        ln -sf /etc/systemd/system/horalscanner.service /etc/systemd/system/multi-user.target.wants/horalscanner.service
+        ln -sf "$SERVICE_FILE" /etc/systemd/system/multi-user.target.wants/horalscanner.service
     else
         systemctl daemon-reload
         systemctl enable horalscanner
@@ -325,8 +348,8 @@ test_installation() {
     
     python3 -c "import flask, cv2, serial, PIL, numpy; print('✓ Core Python imports')" \
         || { log_error "Required Python import check failed"; deactivate; return 1; }
-    python3 -c "from picamera2 import Picamera2; print('✓ Picamera2')" \
-        || { log_error "Picamera2 import check failed"; deactivate; return 1; }
+    python3 -c "import libcamera; from picamera2 import Picamera2; print('✓ Picamera2/libcamera')" \
+        || { log_error "Picamera2/libcamera import check failed"; deactivate; return 1; }
     if ! command -v rpicam-still >/dev/null 2>&1 &&
        ! command -v libcamera-still >/dev/null 2>&1; then
         log_error "Neither rpicam-still nor libcamera-still is installed"
@@ -420,23 +443,26 @@ main() {
             ensure_pi_user
             update_system
             install_system_deps
+            verify_system_camera_stack
             configure_gpio
             clone_repo
             configure_persistent_state
-            configure_serial_devices
             setup_python
+            test_installation
+            configure_serial_devices
             install_service
             backup_system
-            test_installation
             quick_start
             ;;
         --update)
             log_info "Running UPDATE ONLY"
             cd "$INSTALL_DIR"
+            verify_system_camera_stack
             git pull origin main
             configure_persistent_state
-            configure_serial_devices
             setup_python
+            test_installation
+            configure_serial_devices
             install_service
             systemctl restart horalscanner
             non_motion_health_check
@@ -447,11 +473,13 @@ main() {
             preflight_check
             ensure_pi_user
             install_system_deps
+            verify_system_camera_stack
             configure_gpio
             clone_repo
             configure_persistent_state
-            configure_serial_devices
             setup_python
+            test_installation
+            configure_serial_devices
             install_service
             quick_start
             ;;
@@ -461,16 +489,17 @@ main() {
             ensure_pi_user
             update_system
             install_system_deps
+            verify_system_camera_stack
             configure_gpio
             if [ ! -d "$INSTALL_DIR/.git" ]; then
                 clone_repo
             fi
             configure_persistent_state
-            configure_serial_devices
             setup_python
+            test_installation
+            configure_serial_devices
             install_service
             systemctl restart horalscanner
-            test_installation
             non_motion_health_check
             log_success "Post-upgrade repair complete"
             ;;
@@ -497,5 +526,7 @@ main() {
     echo ""
 }
 
-# Run
-main "$@"
+# Run only when executed, allowing isolated function tests when sourced.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

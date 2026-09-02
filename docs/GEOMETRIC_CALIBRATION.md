@@ -105,7 +105,11 @@ curl -fsS http://127.0.0.1:5000/api/status | python3 -m json.tool
 
 This rechecks rpicam/libcamera, Picamera2, OpenCV, Python requirements, groups,
 udev aliases, and systemd. Its health checks do not move an axis or energize a
-laser.
+laser. Repair first verifies `import libcamera` with `/usr/bin/python3`, then
+creates or upgrades `/home/pi/horaltscanner_env` with
+`--system-site-packages`. It validates all required imports before changing or
+restarting the systemd unit; on validation failure the currently running
+service and unit are left untouched.
 
 Back up runtime state before an OS reinstall:
 

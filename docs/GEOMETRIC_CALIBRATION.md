@@ -116,6 +116,9 @@ creates or upgrades `/home/pi/horaltscanner_env` with
 at that resolved venv path only. It validates all required imports before
 changing or restarting the systemd unit; on validation failure the currently
 running service and unit are left untouched.
+After restart, the non-motion health check polls systemd and `GET /api/status`
+every two seconds for up to 45 seconds, allowing Flask and the camera stack to
+finish startup before reporting a real timeout.
 
 Back up runtime state before an OS reinstall:
 

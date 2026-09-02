@@ -383,6 +383,51 @@ test_installation() {
     log_success "Installation tests complete"
 }
 
+wait_for_service_ready() {
+    local timeout="${HORALSCANNER_HEALTH_TIMEOUT_S:-45}"
+    local interval="${HORALSCANNER_HEALTH_INTERVAL_S:-2}"
+    case "$timeout:$interval" in
+        *[!0-9:]*|0:*|*:0)
+            log_error "Health timeout and interval must be positive whole seconds"
+            return 1
+            ;;
+    esac
+
+    local deadline=$(( $(date +%s) + timeout ))
+    local last_service_state="unknown"
+    local last_http_state="not attempted"
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        last_service_state="$(systemctl is-active horalscanner 2>/dev/null || true)"
+        if [ "$last_service_state" = "active" ]; then
+            local remaining=$(( deadline - $(date +%s) ))
+            [ "$remaining" -gt 0 ] || break
+            local curl_timeout=2
+            [ "$remaining" -lt "$curl_timeout" ] && curl_timeout="$remaining"
+            if curl --fail --silent --max-time "$curl_timeout" \
+                http://127.0.0.1:5000/api/status >/dev/null 2>&1; then
+                log_success "HoralScanner service is active and /api/status is ready"
+                return 0
+            fi
+            last_http_state="not ready"
+        else
+            last_http_state="waiting for active service"
+        fi
+
+        local remaining=$(( deadline - $(date +%s) ))
+        [ "$remaining" -gt 0 ] || break
+        local sleep_time="$interval"
+        [ "$remaining" -lt "$sleep_time" ] && sleep_time="$remaining"
+        sleep "$sleep_time"
+    done
+
+    log_error "Service readiness timed out after ${timeout}s (systemd=${last_service_state}, HTTP=${last_http_state})"
+    log_error "Inspect: sudo systemctl status --no-pager horalscanner"
+    log_error "Journal: sudo journalctl -u horalscanner -n 50 --no-pager"
+    systemctl status --no-pager horalscanner || true
+    journalctl -u horalscanner -n 20 --no-pager || true
+    return 1
+}
+
 non_motion_health_check() {
     log_info "Running non-motion health checks..."
     test -d "$STATE_DIR" || {
@@ -393,13 +438,7 @@ non_motion_health_check() {
         log_error "HoralScanner service is not enabled"
         return 1
     }
-    if systemctl is-active --quiet horalscanner; then
-        curl --fail --silent --max-time 5 http://127.0.0.1:5000/api/status >/dev/null \
-            || { log_error "Service /api/status is not responding"; return 1; }
-    else
-        log_error "Service is not active; inspect journalctl -u horalscanner"
-        return 1
-    fi
+    wait_for_service_ready
     for alias in /dev/horalscanner_mcu /dev/horalscanner_lidar; do
         [ -e "$alias" ] || log_warn "Stable serial alias is not currently present: $alias"
     done

@@ -325,14 +325,30 @@ class HoralScannerAPITests(unittest.TestCase):
             {"pi": False, "usb": False},
         )
 
-    def test_scan_start_falls_back_to_simulation(self):
+    def test_scan_start_never_falls_back_to_simulation(self):
+        original = self.api_module.scan_session
+        self.addCleanup(setattr, self.api_module, "scan_session", original)
         self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
         response = self.client.post("/api/scan/start")
+        self.assertEqual(response.status_code, 409)
+        data = response.get_json()
+        self.assertFalse(data["success"])
+        self.assertEqual(data["status"]["mode"], "real")
+        self.assertFalse(data["status"]["simulation"])
+        self.assertTrue(data["blockers"])
+
+    def test_scan_preflight_exposes_blockers(self):
+        original = self.api_module.scan_session
+        self.addCleanup(setattr, self.api_module, "scan_session", original)
+        self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
+
+        response = self.client.get("/api/scan/preflight")
+
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
-        self.assertTrue(data["success"])
-        self.assertTrue(data["status"]["simulation"])
-        self.assertEqual(data["mode"], "simulation")
+        self.assertEqual(data["mode"], "real")
+        self.assertFalse(data["ready"])
+        self.assertTrue(data["blockers"])
 
     def test_reconstruct_without_points_returns_structured_error(self):
         response = self.client.post("/api/model/reconstruct")

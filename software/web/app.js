@@ -38,6 +38,7 @@ const HoralScannerUI = (() => {
       const error = new Error(payload?.error || `Erreur HTTP ${response.status}`);
       error.detail = payload?.detail || null;
       error.hint = payload?.hint || null;
+      error.blockers = payload?.blockers || [];
       error.status = response.status;
       throw error;
     }
@@ -92,6 +93,7 @@ const HoralScannerUI = (() => {
     });
     byId("scan-start").addEventListener("click", startScan);
     byId("scan-stop").addEventListener("click", stopScan);
+    byId("scan-preflight").addEventListener("click", runScanPreflight);
     byId("scan-reconstruct").addEventListener("click", reconstruct);
     document.querySelectorAll(".export-button").forEach(button => {
       button.addEventListener("click", async () => {
@@ -120,13 +122,43 @@ const HoralScannerUI = (() => {
       byId("scan-start").disabled = true;
       byId("scan-stop").disabled = false;
       byId("scan-state-badge").className = "badge running";
-      byId("scan-state-badge").textContent = result?.status?.simulation ? "Simulation" : "Acquisition";
+      byId("scan-state-badge").textContent = result?.status?.simulation ? "Simulation explicite" : "Acquisition reelle";
       state.scanTimer = setInterval(refreshScanStatus, 800);
       state.pointTimer = setInterval(refreshPointCloud, 1200);
       toast(result?.hint || "Acquisition 3D demarree");
     } catch (error) {
+      if (error.blockers?.length) renderScanBlockers(error.blockers);
       toast(formatUserError(error), true);
     }
+  }
+
+  async function runScanPreflight() {
+    const button = byId("scan-preflight");
+    button.disabled = true;
+    try {
+      const result = await api("/api/scan/preflight", { method: "POST" });
+      renderScanBlockers(result.blockers || [], result.mode);
+      byId("scan-mode").textContent = result.mode === "real" ? "Reel" : "Simulation explicite";
+      toast(result.ready ? "Preflight valide" : "Preflight bloque: corrigez les elements affiches", !result.ready);
+    } catch (error) {
+      toast(formatUserError(error), true);
+    } finally {
+      button.disabled = false;
+      await refreshScanStatus();
+    }
+  }
+
+  function renderScanBlockers(blockers, mode = "real") {
+    const element = byId("scan-blockers");
+    if (!blockers.length) {
+      element.textContent = mode === "simulation"
+        ? "Simulation explicite: les points produits seront synthetiques."
+        : "Preflight valide: acquisition physique autorisee.";
+      element.className = "scan-message";
+      return;
+    }
+    element.textContent = `Preflight bloque (${blockers.length})\n${blockers.map(item => `• ${item}`).join("\n")}`;
+    element.className = "scan-message warning";
   }
 
   async function stopScan() {
@@ -159,6 +191,40 @@ const HoralScannerUI = (() => {
       byId("stat-points").textContent = status.points.toLocaleString("fr-FR");
       byId("stat-time").textContent = formatTime(status.elapsed_s);
       byId("stat-quality").textContent = `${Math.round(status.quality)}%`;
+      byId("stat-samples").textContent = status.samples || 0;
+      byId("stat-lidar").textContent = status.lidar_samples || 0;
+      byId("stat-laser").textContent = status.laser_side || "Aucun";
+      byId("scan-progress-fill").style.width = `${Math.max(0, Math.min(100, status.progress || 0))}%`;
+      byId("scan-mode").textContent = status.mode === "real" ? "Reel · donnees physiques" : "Simulation · donnees synthetiques";
+      byId("scan-phase").textContent = status.phase || "idle";
+      const position = status.axis_position || {};
+      byId("scan-position").textContent = `X ${Number(position.x || 0).toFixed(1)} · Y ${Number(position.y || 0).toFixed(1)} · Z ${Number(position.z || 0).toFixed(1)}`;
+      renderScanBlockers(status.preflight_blockers || [], status.mode);
+      const errorElement = byId("scan-error");
+      errorElement.hidden = !status.error;
+      errorElement.textContent = status.error || "";
+      if (status.scanning) {
+        byId("scan-state-badge").className = "badge running";
+        byId("scan-state-badge").textContent = status.mode === "real" ? "Acquisition reelle" : "Simulation explicite";
+        byId("scan-preflight").disabled = true;
+      } else if (status.error) {
+        byId("scan-state-badge").className = "badge warning";
+        byId("scan-state-badge").textContent = "Erreur";
+        byId("scan-start").disabled = false;
+        byId("scan-stop").disabled = true;
+        byId("scan-preflight").disabled = false;
+        stopScanTimers();
+      } else {
+        byId("scan-state-badge").className = status.ready ? "badge idle" : "badge warning";
+        byId("scan-state-badge").textContent = status.ready ? "Pret" : "Preflight requis";
+        byId("scan-start").disabled = false;
+        byId("scan-stop").disabled = true;
+        byId("scan-preflight").disabled = false;
+        if (state.scanTimer || state.pointTimer) {
+          await refreshPointCloud();
+          stopScanTimers();
+        }
+      }
     } catch (_) {}
   }
 

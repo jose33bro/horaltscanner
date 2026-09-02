@@ -98,9 +98,9 @@ WorkingDirectory=/home/pi/horaltscanner
 Environment="PATH=/home/pi/horaltscanner_env/bin"
 Environment="PYTHONUNBUFFERED=1"
 
-# Gunicorn avec 4 workers, gevent worker class
+# Un seul processus doit posseder le GPIO, les ports serie et les cameras.
 ExecStart=/home/pi/horaltscanner_env/bin/gunicorn \
-  --workers 4 \
+  --workers 1 \
   --worker-class gevent \
   --bind 0.0.0.0:5000 \
   --access-logfile - \

@@ -5,6 +5,8 @@ Supports simulation mode (no hardware required) for the test suite.
 from __future__ import annotations
 
 import re
+import threading
+import time
 from typing import Callable
 
 _FAN_CHANNELS: dict[str, str] = {
@@ -55,6 +57,7 @@ class STM32Driver:
         self._hardware_config = hardware_config or {}
         self._serial_factory = serial_factory
         self._port = None  # serial port object once connected
+        self._io_lock = threading.Lock()
         self._connected = False
         self._last_error: Exception | None = None
         temperature_cfg = self._hardware_config.get("temperature", {})
@@ -125,8 +128,10 @@ class STM32Driver:
             self._port.reset_input_buffer()
             self._connected = True
             return True
-        except Exception:
+        except Exception as exc:
+            self._last_error = exc
             self._port = None
+            self._connected = False
             return False
 
     @property
@@ -142,16 +147,31 @@ class STM32Driver:
             return True
         if self._port is None:
             return False
-        self._port.write((cmd + "\n").encode())
-        response = self._port.readline().decode("ascii", errors="replace").strip()
+        with self._io_lock:
+            self._port.write((cmd + "\n").encode())
+            response = self._port.readline().decode("ascii", errors="replace").strip()
         return response.startswith("OK")
 
     def _send_and_read(self, cmd: str) -> str:
         """Send command and return raw response line."""
         if self._port is None:
             return ""
-        self._port.write((cmd + "\n").encode())
-        return self._port.readline().decode("ascii", errors="replace").strip()
+        with self._io_lock:
+            self._port.write((cmd + "\n").encode())
+            return self._port.readline().decode("ascii", errors="replace").strip()
+
+    def _wait_for_motion(self, timeout_s: float, poll_interval_s: float) -> str:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            response = self._send_and_read("MOTION_STATUS")
+            if "DONE" in response:
+                return "done"
+            if "STOPPED" in response:
+                return "stopped"
+            if "ERROR" in response:
+                return "error"
+            time.sleep(poll_interval_s)
+        return "timeout"
 
     # ------------------------------------------------------------------
     # Fan control
@@ -258,29 +278,53 @@ class STM32Driver:
             return False
         # In non-simulation mode wait for motion completion
         if not self._simulation and self._port is not None:
-            while True:
-                resp = self._send_and_read("MOTION_STATUS")
-                if "DONE" in resp:
-                    break
-                if "STOPPED" in resp:
+            self._motor_status["moving"][axis] = True
+            serial_cfg = self._hardware_config.get("serial", {})
+            timeout_s = float(serial_cfg.get("motion_timeout_s", 30.0))
+            poll_interval_s = float(serial_cfg.get("motion_poll_interval_s", 0.02))
+            try:
+                outcome = self._wait_for_motion(timeout_s, poll_interval_s)
+                if outcome != "done":
+                    if outcome == "timeout":
+                        self._send_command(f"STOP {axis.upper()}")
                     self._motor_status["homed"][axis] = False
                     return False
+            finally:
+                self._motor_status["moving"][axis] = False
         self._motor_status["positions"][axis] = target
         return True
 
     def home_motor(self, axis: str) -> bool:
         axis = axis.lower()
-        if axis == "all":
-            ok = all(self.home_motor(a) for a in ("x", "y", "z"))
-            return ok
-        cfg = self._axis_cfg(axis)
-        if cfg is None:
+        axes = ("x", "y", "z") if axis == "all" else (axis,)
+        if any(self._axis_cfg(item) is None for item in axes):
             return False
-        ok = self._send_command(f"HOME {axis.upper()}")
-        if ok:
-            self._motor_status["positions"][axis] = 0.0
-            self._motor_status["homed"][axis] = True
-        return ok
+        for item in axes:
+            self._motor_status["homed"][item] = False
+
+        command_target = "ALL" if axis == "all" else axis.upper()
+        ok = self._send_command(f"HOME {command_target}")
+        if not ok:
+            return False
+        if not self._simulation and self._port is not None:
+            for item in axes:
+                self._motor_status["moving"][item] = True
+            serial_cfg = self._hardware_config.get("serial", {})
+            timeout_s = float(serial_cfg.get("homing_timeout_s", 130.0))
+            poll_interval_s = float(serial_cfg.get("motion_poll_interval_s", 0.02))
+            try:
+                outcome = self._wait_for_motion(timeout_s, poll_interval_s)
+                if outcome != "done":
+                    if outcome == "timeout":
+                        self._send_command("STOP ALL")
+                    return False
+            finally:
+                for item in axes:
+                    self._motor_status["moving"][item] = False
+        for item in axes:
+            self._motor_status["positions"][item] = 0.0
+            self._motor_status["homed"][item] = True
+        return True
 
     def stop_motor(self, axis: str = "all") -> bool:
         axis = axis.lower()

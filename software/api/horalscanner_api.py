@@ -58,7 +58,12 @@ from software.api.calibration_pose import (
     read_lidar_distance,
 )
 from software.api.lidar_driver import LidarDriver
-from software.api.scanner_engine import ReconstructionEngine, ScanSession, _O3D_AVAILABLE
+from software.api.scanner_engine import (
+    ReconstructionEngine,
+    ScanPreflightError,
+    ScanSession,
+    _O3D_AVAILABLE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +188,21 @@ serial_config = hardware_config.get("serial", {})
 camera_config = hardware_config.get("cameras", {})
 scanner_config = application_config.get("scanner", {})
 
+
+def _simulation_enabled(config: dict[str, Any]) -> bool:
+    """Resolve the configured acquisition mode without an implicit fallback."""
+    configured_mode = config.get("mode")
+    if configured_mode is None:
+        return bool(config.get("simulation", False))
+    mode = str(configured_mode).strip().lower()
+    if mode not in {"real", "simulation"}:
+        raise ValueError("scanner.mode must be either 'real' or 'simulation'")
+    legacy_mode = "simulation" if bool(config.get("simulation", False)) else "real"
+    if "simulation" in config and legacy_mode != mode:
+        raise ValueError("scanner.mode and scanner.simulation configure conflicting modes")
+    return mode == "simulation"
+
+
 stm32_driver = (
     STM32Driver(simulation=not stm32_enabled, hardware_config=hardware_config)
     if STM32Driver
@@ -197,7 +217,17 @@ lidar_driver = LidarDriver(
 )
 pi_camera = PiCamera()
 usb_camera = LogitechCamera(device_id=camera_config.get("usb_device_id", "auto"))
-scan_session = ScanSession(simulation=bool(scanner_config.get("simulation", False)))
+scan_session = ScanSession(
+    simulation=_simulation_enabled(scanner_config),
+    motor_driver=stm32_driver,
+    gpio_driver=gpio_driver,
+    cameras={"pi": pi_camera, "usb": usb_camera},
+    lidar_driver=lidar_driver,
+    config=scanner_config.get("acquisition", {}),
+    calibration=hardware_config.get("scan_calibration", {}),
+    saved_poses_provider=get_all_saved_poses,
+    laser_line_analyzer=analyze_laser_line,
+)
 reconstruction_engine = ReconstructionEngine(scan_session)
 pose_memory = PoseMemory()
 _CALIBRATION_LIDAR_TARGET_MM = {"pi": 300.0, "usb": 300.0}
@@ -397,17 +427,28 @@ def _runtime_capabilities() -> dict[str, Any]:
         "pi": bool(pi_camera and pi_camera.is_open),
         "usb": bool(usb_camera and usb_camera.is_open),
     }
-    simulation_mode = bool(getattr(scan_session, "_simulation", False))
-    acquisition_backend_ready = bool(
-        simulation_mode or _stm32_ready() or _gpio_ready()
-    )
+    _configure_scan_session_hardware()
+    acquisition = scan_session.readiness(probe=False)
+    simulation_mode = acquisition["mode"] == "simulation"
     return {
         "camera_available": camera_status,
         "gpio_available": _gpio_ready(),
         "open3d_available": bool(_O3D_AVAILABLE),
-        "acquisition_backend_ready": acquisition_backend_ready,
+        "acquisition_backend_ready": acquisition["ready"],
+        "acquisition_blockers": acquisition["blockers"],
+        "acquisition_mode": acquisition["mode"],
         "simulation_mode": simulation_mode,
     }
+
+
+def _configure_scan_session_hardware() -> None:
+    """Keep the acquisition session attached to the shared runtime drivers."""
+    scan_session.configure_hardware(
+        motor_driver=stm32_driver,
+        gpio_driver=gpio_driver,
+        cameras={"pi": pi_camera, "usb": usb_camera},
+        lidar_driver=lidar_driver,
+    )
 
 
 def _lidar_validation(camera_name: str, lidar_distance_mm: float | None) -> dict[str, Any]:
@@ -1226,21 +1267,44 @@ def scan_pose_restore():
 
 @api_bp.route("/api/scan/start", methods=["POST"])
 def scan_start():
+    _configure_scan_session_hardware()
     try:
         scan_session.start()
+    except ScanPreflightError as exc:
+        return jsonify({
+            "success": False,
+            "error": "Real scan preflight failed",
+            "detail": "; ".join(exc.blockers),
+            "hint": "Resolve every preflight blocker; physical scans never fall back to simulation.",
+            "blockers": exc.blockers,
+            "status": scan_session.status(),
+        }), 409
     except RuntimeError as exc:
         return _json_error(
             str(exc),
-            503,
-            detail="Real scanner acquisition backend is not configured.",
-            hint="The scanner is running in simulation mode until hardware backend support is available.",
+            409,
+            detail="The requested scan could not be started.",
+            hint="Check /api/scan/preflight and resolve its blockers.",
         )
     status = scan_session.status()
-    payload = {"success": True, "status": status}
-    if status.get("simulation"):
-        payload["mode"] = "simulation"
-        payload["hint"] = "Real acquisition backend unavailable; running in simulation mode."
-    return jsonify(payload)
+    return jsonify({
+        "success": True,
+        "mode": status["mode"],
+        "status": status,
+        "hint": (
+            "Explicit synthetic scan started."
+            if status["simulation"]
+            else "Physical acquisition started with calibrated hardware."
+        ),
+    })
+
+
+@api_bp.route("/api/scan/preflight", methods=["GET", "POST"])
+def scan_preflight():
+    """Report blockers; POST deliberately probes cameras, LiDAR, and laser-off control."""
+    _configure_scan_session_hardware()
+    result = scan_session.readiness(probe=request.method == "POST")
+    return jsonify({"success": True, **result}), 200
 
 
 @api_bp.route("/api/scan/stop", methods=["POST"])
@@ -1251,6 +1315,7 @@ def scan_stop():
 
 @api_bp.route("/api/scan/status", methods=["GET"])
 def scan_status():
+    _configure_scan_session_hardware()
     return jsonify({"success": True, "status": scan_session.status()})
 
 

@@ -37,7 +37,7 @@
         <div>
           <span class="eyebrow">Workflow de numerisation</span>
           <h1>Creer un modele 3D</h1>
-          <p>Preparez la piece, controlez l'aperçu, lancez le scan puis exportez le modele.</p>
+          <p>Validez le materiel et la calibration, puis lancez une acquisition reelle ou une simulation explicitement configuree.</p>
         </div>
         <button id="scan-primary" class="button primary large">Demarrer un nouveau scan</button>
       </div>
@@ -60,11 +60,15 @@
             <span id="scan-state-badge" class="badge idle">Pret</span>
           </div>
           <canvas id="pointcloud-canvas" width="960" height="560"></canvas>
-          <div class="preview-overlay">
+          <div class="preview-overlay scan-metrics">
             <span><b id="stat-points">0</b> points</span>
             <span><b id="stat-time">0:00</b> duree</span>
             <span><b id="stat-quality">0%</b> qualite</span>
+            <span><b id="stat-samples">0</b> poses</span>
+            <span><b id="stat-lidar">0</b> LiDAR</span>
+            <span><b id="stat-laser">Aucun</b> laser</span>
           </div>
+          <div class="scan-progress-track"><div id="scan-progress-fill"></div></div>
         </article>
 
         <aside class="scan-sidebar">
@@ -87,7 +91,15 @@
               <div><span id="check-gpio" class="check">•</span> GPIO Raspberry Pi</div>
               <div><span id="check-stm32" class="check">•</span> Carte Creality</div>
             </div>
+            <div class="scan-live-state">
+              <div><span>Mode</span><b id="scan-mode">Verification...</b></div>
+              <div><span>Phase</span><b id="scan-phase">idle</b></div>
+              <div><span>Position</span><b id="scan-position">X 0 · Y 0 · Z 0</b></div>
+            </div>
+            <div id="scan-error" class="scan-message error" hidden></div>
+            <div id="scan-blockers" class="scan-message warning">Chargement du preflight...</div>
             <div class="button-stack">
+              <button id="scan-preflight" class="button ghost">Tester le preflight materiel</button>
               <button id="scan-start" class="button primary">Lancer l'acquisition</button>
               <button id="scan-stop" class="button danger" disabled>Arreter le scan</button>
               <button id="scan-reconstruct" class="button secondary">Reconstruire le modele</button>

@@ -58,6 +58,8 @@ class STM32Driver:
         self._serial_factory = serial_factory
         self._port = None  # serial port object once connected
         self._io_lock = threading.Lock()
+        self._motion_lock = threading.Lock()
+        self._stop_generation = 0
         self._connected = False
         self._last_error: Exception | None = None
         temperature_cfg = self._hardware_config.get("temperature", {})
@@ -160,6 +162,21 @@ class STM32Driver:
             self._port.write((cmd + "\n").encode())
             return self._port.readline().decode("ascii", errors="replace").strip()
 
+    def _send_motion_command(self, cmd: str, generation: int) -> bool:
+        """Order motion against STOP without making STOP wait on a whole move."""
+        if self._simulation:
+            if generation != self._stop_generation:
+                return False
+            return self._send_command(cmd)
+        if self._port is None:
+            return False
+        with self._io_lock:
+            if generation != self._stop_generation:
+                return False
+            self._port.write((cmd + "\n").encode())
+            response = self._port.readline().decode("ascii", errors="replace").strip()
+            return response.startswith("OK")
+
     def _wait_for_motion(self, timeout_s: float, poll_interval_s: float) -> str:
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
@@ -257,6 +274,18 @@ class STM32Driver:
         return self._motor_cfg.get(axis.lower())
 
     def move_motor(self, axis: str, distance_mm: float) -> bool:
+        generation = self._stop_generation
+        with self._motion_lock:
+            if generation != self._stop_generation:
+                return False
+            return self._move_motor_locked(axis, distance_mm, generation)
+
+    def _move_motor_locked(
+        self,
+        axis: str,
+        distance_mm: float,
+        generation: int,
+    ) -> bool:
         axis = axis.lower()
         cfg = self._axis_cfg(axis)
         if cfg is None:
@@ -273,28 +302,43 @@ class STM32Driver:
         speed_steps = _mm_s_to_steps_s(cfg, cfg.get("default_speed_mm_s", 20))
         direction = 1 if distance_mm >= 0 else -1
         cmd = f"MOVE {axis.upper()} {steps * direction} {speed_steps}"
-        ok = self._send_command(cmd)
-        if not ok:
-            return False
-        # In non-simulation mode wait for motion completion
-        if not self._simulation and self._port is not None:
-            self._motor_status["moving"][axis] = True
-            serial_cfg = self._hardware_config.get("serial", {})
-            timeout_s = float(serial_cfg.get("motion_timeout_s", 30.0))
-            poll_interval_s = float(serial_cfg.get("motion_poll_interval_s", 0.02))
-            try:
-                outcome = self._wait_for_motion(timeout_s, poll_interval_s)
-                if outcome != "done":
-                    if outcome == "timeout":
-                        self._send_command(f"STOP {axis.upper()}")
-                    self._motor_status["homed"][axis] = False
-                    return False
-            finally:
-                self._motor_status["moving"][axis] = False
-        self._motor_status["positions"][axis] = target
-        return True
+        try:
+            ok = self._send_motion_command(cmd, generation)
+            if not ok:
+                return False
+            # In non-simulation mode wait for motion completion
+            if not self._simulation and self._port is not None:
+                self._motor_status["moving"][axis] = True
+                serial_cfg = self._hardware_config.get("serial", {})
+                timeout_s = float(serial_cfg.get("motion_timeout_s", 30.0))
+                poll_interval_s = float(serial_cfg.get("motion_poll_interval_s", 0.02))
+                try:
+                    outcome = self._wait_for_motion(timeout_s, poll_interval_s)
+                    if outcome != "done":
+                        if outcome == "timeout":
+                            self._send_command(f"STOP {axis.upper()}")
+                        self._motor_status["homed"][axis] = False
+                        return False
+                finally:
+                    self._motor_status["moving"][axis] = False
+            if generation != self._stop_generation:
+                self._motor_status["homed"][axis] = False
+                return False
+            self._motor_status["positions"][axis] = target
+            return True
+        except Exception:
+            if not self._simulation:
+                self._motor_status["homed"][axis] = False
+            raise
 
     def home_motor(self, axis: str) -> bool:
+        generation = self._stop_generation
+        with self._motion_lock:
+            if generation != self._stop_generation:
+                return False
+            return self._home_motor_locked(axis, generation)
+
+    def _home_motor_locked(self, axis: str, generation: int) -> bool:
         axis = axis.lower()
         axes = ("x", "y", "z") if axis == "all" else (axis,)
         if any(self._axis_cfg(item) is None for item in axes):
@@ -303,7 +347,7 @@ class STM32Driver:
             self._motor_status["homed"][item] = False
 
         command_target = "ALL" if axis == "all" else axis.upper()
-        ok = self._send_command(f"HOME {command_target}")
+        ok = self._send_motion_command(f"HOME {command_target}", generation)
         if not ok:
             return False
         if not self._simulation and self._port is not None:
@@ -321,12 +365,15 @@ class STM32Driver:
             finally:
                 for item in axes:
                     self._motor_status["moving"][item] = False
+        if generation != self._stop_generation:
+            return False
         for item in axes:
             self._motor_status["positions"][item] = 0.0
             self._motor_status["homed"][item] = True
         return True
 
     def stop_motor(self, axis: str = "all") -> bool:
+        self._stop_generation += 1
         axis = axis.lower()
         if axis == "all":
             ok = self._send_command("STOP ALL")

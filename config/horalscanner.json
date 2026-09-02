@@ -38,6 +38,7 @@
       "laser_delta_threshold": 35,
       "laser_row_stride": 4,
       "max_points_per_frame": 300,
+      "max_triangulation_distance_mm": 2000,
       "target_points": 1000,
       "restore_start_pose": true,
       "stop_join_timeout_s": 3

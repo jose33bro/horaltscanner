@@ -113,6 +113,7 @@ class ScanSession:
         calibration: Mapping[str, Any] | None = None,
         saved_poses_provider: Callable[[], Mapping[str, Mapping[str, float]]] | None = None,
         laser_line_analyzer: Callable[[bytes], Mapping[str, Any]] | None = None,
+        hardware_reservation: Any = None,
         sleep: Callable[[float], None] = time.sleep,
     ):
         self._data = ScanData()
@@ -134,6 +135,9 @@ class ScanSession:
         self._calibration = dict(calibration or {})
         self._saved_poses_provider = saved_poses_provider or (lambda: {})
         self._laser_line_analyzer = laser_line_analyzer
+        self._hardware_reservation = hardware_reservation
+        self._hardware_reserved = False
+        self._reservation_release_thread: threading.Thread | None = None
         self._sleep = sleep
         self._phase = "idle"
         self._progress = 0.0
@@ -381,6 +385,13 @@ class ScanSession:
                 blockers.append(f"Camera '{name}' intrinsic_matrix calibration is missing")
             if not self._matrix_valid(camera.get("camera_to_scanner"), (4, 4), transform=True):
                 blockers.append(f"Camera '{name}' camera_to_scanner calibration is missing")
+            if camera.get("carriage_axis") and not self._vector_valid(
+                camera.get("carriage_direction"),
+                nonzero=True,
+            ):
+                blockers.append(f"Camera '{name}' carriage_direction calibration is invalid")
+            if camera.get("carriage_axis") not in (None, "x", "y", "z"):
+                blockers.append(f"Camera '{name}' carriage_axis calibration is invalid")
         planes = self._calibration.get("laser_planes", {})
         for side in self._LASER_SIDES:
             plane = planes.get(side, {}) if isinstance(planes, Mapping) else {}
@@ -399,9 +410,16 @@ class ScanSession:
         lidar = self._calibration.get("lidar", {})
         if not self._matrix_valid(lidar.get("lidar_to_scanner"), (4, 4), transform=True):
             blockers.append("TF-Luna lidar_to_scanner calibration is missing")
+        if lidar.get("carriage_axis") and not self._vector_valid(
+            lidar.get("carriage_direction"),
+            nonzero=True,
+        ):
+            blockers.append("TF-Luna carriage_direction calibration is invalid")
+        if lidar.get("carriage_axis") not in (None, "x", "y", "z"):
+            blockers.append("TF-Luna carriage_axis calibration is invalid")
         try:
             low, high = self._lidar_limits()
-            if low < 0 or high <= low:
+            if not all(math.isfinite(value) for value in (low, high)) or low < 0 or high <= low:
                 blockers.append("TF-Luna calibrated distance range must satisfy 0 <= min < max")
         except (TypeError, ValueError):
             blockers.append("TF-Luna calibrated distance range is invalid")
@@ -461,6 +479,13 @@ class ScanSession:
         with self._lock:
             if self._scanning or self._starting:
                 raise RuntimeError("A scan is already running")
+            if (
+                not self._simulation
+                and self._hardware_reservation is not None
+                and not self._hardware_reservation.acquire(blocking=False)
+            ):
+                raise RuntimeError("Scanner hardware is busy with another operation")
+            self._hardware_reserved = not self._simulation
             self._starting = True
             self._cancel_event = threading.Event()
             self._phase = "preflight"
@@ -492,15 +517,25 @@ class ScanSession:
                     if self._simulation
                     else self._physical_capture_loop
                 )
-                self._thread = threading.Thread(
+                thread = threading.Thread(
                     target=target,
                     name="scan-acquisition",
                     daemon=True,
                 )
-                self._thread.start()
+                self._thread = thread
+                try:
+                    thread.start()
+                except Exception:
+                    self._thread = None
+                    self._scanning = False
+                    self._phase = "error"
+                    raise
         finally:
             with self._lock:
                 self._starting = False
+                release_reservation = not self._scanning and self._hardware_reserved
+            if release_reservation:
+                self._release_hardware_reservation()
         logger.info("Scan started in explicit mode=%s", self.mode)
 
     def stop(self) -> None:
@@ -530,6 +565,11 @@ class ScanSession:
     @property
     def mode(self) -> str:
         return "simulation" if self._simulation else "real"
+
+    @property
+    def hardware_reserved(self) -> bool:
+        with self._lock:
+            return self._hardware_reserved
 
     def _simulation_capture_loop(self) -> None:
         angle = 0.0
@@ -664,6 +704,7 @@ class ScanSession:
                     self._phase = "complete"
                     self._progress = 100.0
                 self._end_time = time.time()
+            self._release_hardware_reservation()
 
     def _trajectory(self, origin: Mapping[str, float]) -> list[dict[str, float]]:
         rotation_axis = str(self._config.get("rotation_axis", "y")).lower()
@@ -878,7 +919,10 @@ class ScanSession:
             if abs(denominator) < 1e-9:
                 continue
             ray_distance = -(float(np.dot(normal, translated_origin)) + offset) / denominator
-            if ray_distance <= 0:
+            if (
+                ray_distance <= 0
+                or ray_distance > self._positive_float("max_triangulation_distance_mm", 2000.0)
+            ):
                 continue
             point = translated_origin + direction * ray_distance
             point = self._normalize_turntable_point(point, trajectory_origin)
@@ -970,6 +1014,42 @@ class ScanSession:
         except Exception:
             logger.exception("Emergency laser shutdown failed")
         self._stop_motors()
+
+    def _release_hardware_reservation(self) -> None:
+        with self._lock:
+            if not self._hardware_reserved:
+                return
+            outstanding = [
+                thread for thread in self._operation_threads if thread.is_alive()
+            ]
+            self._operation_threads = set(outstanding)
+            if outstanding:
+                if (
+                    self._reservation_release_thread is None
+                    or not self._reservation_release_thread.is_alive()
+                ):
+                    release_thread = threading.Thread(
+                        target=self._wait_and_release_hardware,
+                        args=(outstanding,),
+                        name="scan-hardware-quarantine",
+                        daemon=True,
+                    )
+                    self._reservation_release_thread = release_thread
+                    release_thread.start()
+                return
+            self._hardware_reserved = False
+        if self._hardware_reservation is not None:
+            self._hardware_reservation.release()
+
+    def _wait_and_release_hardware(
+        self,
+        operations: list[threading.Thread],
+    ) -> None:
+        for operation in operations:
+            operation.join()
+        with self._lock:
+            self._reservation_release_thread = None
+        self._release_hardware_reservation()
 
     def _check_cancelled(self) -> None:
         if self._cancel_event.is_set():

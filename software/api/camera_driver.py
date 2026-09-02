@@ -1,5 +1,5 @@
 """
-Camera Driver - PiCam (DSI) + Logitech (USB) capture
+Camera Driver - PiCam (CSI) + Logitech (USB) capture
 """
 
 import base64
@@ -92,9 +92,14 @@ class LogitechCamera:
         self.device_id = device_id
         self._cap = None
         self._lock = threading.Lock()
+        self.last_error: str | None = None
 
     def open(self) -> bool:
         if not _CV2_AVAILABLE:
+            self.last_error = (
+                "OpenCV (cv2) n'est pas installe. "
+                "Installez-le avec: pip install opencv-python"
+            )
             return False
         with self._lock:
             candidates = [self.device_id, *self.FALLBACK_DEVICE_IDS]
@@ -127,6 +132,7 @@ class LogitechCamera:
                     else:
                         logger.info("USB camera: opened on device_id=%s", idx)
                     self.device_id = idx
+                    self.last_error = None
                     LogitechCamera._last_working_device_id = idx
                     return True
 
@@ -137,6 +143,11 @@ class LogitechCamera:
                 cap.release()
 
             self._cap = None
+            self.last_error = (
+                f"Aucune camera USB fonctionnelle trouvee parmi les index {tried}. "
+                "Verifiez le branchement, les permissions /dev/video*, "
+                "et qu'aucun autre processus n'utilise la camera."
+            )
             logger.error(
                 "USB camera: no working device found among candidates %s",
                 tried,
@@ -183,7 +194,7 @@ class LogitechCamera:
 
 
 # ---------------------------------------------------------------------------
-# PiCam (DSI / CSI via libcamera / picamera2)
+# PiCam (CSI via libcamera / picamera2)
 # ---------------------------------------------------------------------------
 
 class PiCamera:
@@ -191,9 +202,14 @@ class PiCamera:
 
     def __init__(self):
         self._cam = None
+        self.last_error: str | None = None
 
     def open(self) -> bool:
         if not _PICAM_AVAILABLE:
+            self.last_error = (
+                "picamera2 n'est pas installe ou le module libcamera est indisponible. "
+                "Installez-le avec: sudo apt install -y python3-picamera2"
+            )
             return False
         try:
             self._cam = Picamera2()
@@ -202,9 +218,15 @@ class PiCamera:
             )
             self._cam.configure(config)
             self._cam.start()
+            self.last_error = None
             return True
         except Exception as exc:
             logger.error("PiCam open failed: %s", exc)
+            self.last_error = (
+                f"Ouverture de la Pi Camera impossible: {exc}. "
+                "Verifiez le cable CSI, que la camera est activee "
+                "(raspi-config) et qu'aucun autre processus ne l'utilise."
+            )
             self._cam = None
             return False
 
@@ -225,9 +247,15 @@ class PiCamera:
         if not self.is_open:
             return None
         try:
-            import numpy as np
             from PIL import Image
             array = self._cam.capture_array()
+            # picamera2's "RGB888" configuration actually delivers pixels in
+            # BGR memory order (a well-known libcamera/DRM naming quirk: see
+            # https://github.com/raspberrypi/picamera2/issues/848). Reverse
+            # the channel axis so the array is true RGB before handing it to
+            # PIL, otherwise captured frames (and downstream red-channel
+            # laser-line detection) have red/blue swapped.
+            array = array[:, :, ::-1]
             img = Image.fromarray(array)
             buf = io.BytesIO()
             img.save(buf, format="JPEG")

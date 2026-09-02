@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import threading
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
@@ -205,6 +207,19 @@ _initialize_driver(stm32_driver, "STM32Driver")
 _initialize_driver(gpio_driver, "GPIODriver")
 
 
+def _board_temperature_control_loop() -> None:
+    while True:
+        if stm32_driver is not None:
+            try:
+                stm32_driver.update_board_fan_auto_control()
+            except Exception:
+                logger.exception("Creality temperature control failed")
+        time.sleep(float(serial_config.get("temperature_poll_interval_s", 5)))
+
+
+threading.Thread(target=_board_temperature_control_loop, name="board-temperature-control", daemon=True).start()
+
+
 def _get_camera(camera_name: str):
     cameras = {
         "pi": pi_camera,
@@ -242,6 +257,25 @@ def _stm32_driver_ready() -> bool:
     if stm32_driver is None:
         return False
     return bool(getattr(stm32_driver, "connected", False))
+
+
+def _board_temperature_status(driver: Any) -> dict[str, Any]:
+    """Return the extended status while retaining compatibility with test drivers."""
+    status_fn = getattr(driver, "get_temperature_status", None)
+    if callable(status_fn):
+        return status_fn()
+    temperature = driver.read_board_temperature()
+    return {
+        "sensor": "PC5",
+        "sensor_type": "EPCOS 100K B57560G104F",
+        "temperature_c": temperature,
+        "board_c": temperature,
+        "connected": temperature is not None,
+        "error": None if temperature is not None else "Temperature probe PC5 unavailable",
+        "fan": "PA8",
+        "fan_auto": False,
+        "fan_on": False,
+    }
 
 
 def _json_error(
@@ -593,15 +627,16 @@ def fan_status():
 
 
 @api_bp.route("/api/temperature/board", methods=["GET"])
+@api_bp.route("/api/temperature/creality", methods=["GET"])
 def temperature_board():
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
 
     try:
-        temperature = stm32_driver.read_board_temperature()
-        if temperature is None:
-            return _json_error("Failed to read board temperature", 502)
-        return jsonify({"success": True, "status": {"board_c": temperature}})
+        status = _board_temperature_status(stm32_driver)
+        if not status["connected"]:
+            return jsonify({"success": False, "status": status}), 502
+        return jsonify({"success": True, "status": status})
     except Exception:
         logger.exception("Board temperature route failed")
         return _json_error("Internal server error", 500)
@@ -618,7 +653,9 @@ def temperature_all():
             "sensor_type": "EPCOS 100K B57560G104F",
         }
         if stm32_driver is not None:
-            status["board_c"] = stm32_driver.read_board_temperature()
+            board = _board_temperature_status(stm32_driver)
+            status.update(board)
+            status["board_c"] = board["temperature_c"]
         if gpio_driver is not None:
             status["pi_cpu_c"] = gpio_driver.read_cpu_temperature()
         return jsonify({"success": True, "status": status})
@@ -703,6 +740,7 @@ def camera_status(camera_name: str):
         "success": True,
         "camera": camera_name,
         "available": available,
+        "error": None if available else getattr(camera, "last_error", None),
     })
 
 
@@ -1238,11 +1276,21 @@ def api_status():
     gpio_ready = _gpio_ready()
     stm32_ready = _stm32_ready()
     capabilities = _runtime_capabilities()
+    gpio_error = None
+    if not gpio_ready:
+        raw_error = getattr(gpio_driver, "last_error", None)
+        gpio_error = str(raw_error) if raw_error is not None else "GPIO driver unavailable"
+    stm32_error = None
+    if not stm32_ready:
+        raw_error = getattr(stm32_driver, "last_error", None)
+        stm32_error = str(raw_error) if raw_error is not None else "STM32 driver unavailable"
     status_payload = {
         "api": "ok",
         "gpio_driver": gpio_ready,
+        "gpio_error": gpio_error,
         "stm32_driver": stm32_ready,
         "stm32_connected": stm32_ready,
+        "stm32_error": stm32_error,
         "version": _VERSION,
         "simulation_mode": capabilities["simulation_mode"],
     }

@@ -66,8 +66,8 @@ const HoralScannerUI = (() => {
       const simulationSuffix = status.simulation_mode ? " · Simulation" : "";
       byId("status-text").textContent = `Connecte · v${status.version || "?"}${simulationSuffix}`;
       updateCheck("check-api", status.api === "ok");
-      updateCheck("check-gpio", status.gpio_driver);
-      updateCheck("check-stm32", status.stm32_driver);
+      updateCheck("check-gpio", status.gpio_driver, status.gpio_error);
+      updateCheck("check-stm32", status.stm32_driver, status.stm32_error);
     } catch (error) {
       byId("status-dot").className = "status-dot offline";
       byId("status-text").textContent = "Scanner hors ligne";
@@ -75,10 +75,11 @@ const HoralScannerUI = (() => {
     }
   }
 
-  function updateCheck(id, ok) {
+  function updateCheck(id, ok, errorMessage) {
     const element = byId(id);
     element.className = `check ${ok ? "ok" : "fail"}`;
     element.textContent = ok ? "✓" : "×";
+    element.title = ok ? "" : (errorMessage || "");
   }
 
   function initializeScan() {
@@ -276,12 +277,6 @@ const HoralScannerUI = (() => {
     byId("led-off").addEventListener("click", () => setLedValues(0, 0, 0));
     byId("lidar-read").addEventListener("click", readLidar);
     byId("lidar-calibrate").addEventListener("click", calibrateLidar);
-    ["creality", "temperature"].forEach(fan => {
-      byId(`fan-${fan}`).addEventListener("input", () => {
-        byId(`fan-${fan}-value`).textContent = `${byId(`fan-${fan}`).value}%`;
-      });
-    });
-    byId("apply-fans").addEventListener("click", applyFans);
   }
 
   async function moveAxis(axis) {
@@ -372,16 +367,6 @@ const HoralScannerUI = (() => {
     } catch (error) { toast(error.message, true); }
   }
 
-  async function applyFans() {
-    try {
-      await Promise.all(["creality", "temperature"].map(fan => api(`/api/fan/${fan}`, {
-        method: "POST",
-        body: JSON.stringify({ percent: Number(byId(`fan-${fan}`).value) }),
-      })));
-      toast("Ventilateurs Creality mis a jour");
-    } catch (error) { toast(error.message, true); }
-  }
-
   async function refreshWorkshop() {
     const results = await Promise.allSettled([
       api("/api/motor/status"),
@@ -394,19 +379,23 @@ const HoralScannerUI = (() => {
       const pi = status.pi || {};
       byId("fan-pi-state").textContent = pi.speed > 0 ? "Marche" : "Arret";
       byId("temp-pi").textContent = pi.cpu_temperature_c == null ? "--" : `${pi.cpu_temperature_c.toFixed(1)} °C`;
-      [["creality", status.creality], ["temperature", status.temperature]].forEach(([fan, speed]) => {
-        if (speed !== undefined) {
-          const percent = Math.round(speed * 100);
-          byId(`fan-${fan}`).value = percent;
-          byId(`fan-${fan}-value`).textContent = `${percent}%`;
-        }
-      });
+      const boardFan = status.temperature;
+      if (boardFan !== undefined) {
+        byId("creality-fan-state").textContent = boardFan > 0 ? "Marche" : "Arret";
+      }
     }
     if (results[2].status === "fulfilled") {
       const temperatures = results[2].value.status;
       byId("temp-board").textContent = temperatures.board_c == null
         ? "--"
         : Number(temperatures.board_c).toFixed(1);
+      byId("creality-temp-state").textContent = temperatures.temperature_c == null
+        ? "--"
+        : `${Number(temperatures.temperature_c).toFixed(1)} °C`;
+      byId("creality-fan-state").textContent = temperatures.fan_on ? "Marche" : "Arret";
+      byId("creality-temp-error").textContent = temperatures.connected
+        ? "OK"
+        : (temperatures.error || "Sonde absente");
       byId("temp-pi").textContent = temperatures.pi_cpu_c == null
         ? "--"
         : `${Number(temperatures.pi_cpu_c).toFixed(1)} °C`;
@@ -456,7 +445,10 @@ const HoralScannerUI = (() => {
     badge.className = "badge idle";
     badge.textContent = "Connexion...";
     try {
-      await api(`/api/camera/${camera}/status`);
+      const status = await api(`/api/camera/${camera}/status`);
+      if (!status.available) {
+        throw new Error(status.error || "Camera indisponible");
+      }
       image.src = `/api/camera/${camera}/frame?t=${Date.now()}`;
       await image.decode();
       badge.className = "badge running";
@@ -465,6 +457,7 @@ const HoralScannerUI = (() => {
     } catch (error) {
       badge.className = "badge idle";
       badge.textContent = "Indisponible";
+      badge.title = error.message || "";
       if (notify) toast(error.message, true);
     }
   }

@@ -60,7 +60,7 @@ class CameraCapture:
             self._init_usb_camera()
 
     def _init_pi_camera(self) -> None:
-        """Initialiser la caméra Raspberry Pi V3 NoIR (DSI)"""
+        """Initialiser la caméra Raspberry Pi V3 NoIR (CSI)"""
         if not PICAMERA_AVAILABLE:
             logger.warning("picamera2 non disponible - mode simulation")
             self.is_connected = True

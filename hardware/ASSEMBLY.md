@@ -188,8 +188,8 @@ For each axis (X, Y, Z):
    - Then turn ON Pi 5V
    - (Reverse order when shutting down)
 
-### Step 5.3: DSI Camera (Pi Camera V3, Optional)
-1. Open **DSI ribbon connector** on Raspberry Pi (pull blue tab gently)
+### Step 5.3: CSI Camera (Pi Camera V3, Optional)
+1. Open **CSI ribbon connector** on Raspberry Pi (pull blue tab gently)
 2. Insert **22-pin ribbon cable** until it clicks
 3. Camera module should be mounted **above the X-axis platform** with 45° downward tilt
 

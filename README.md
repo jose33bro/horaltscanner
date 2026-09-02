@@ -16,7 +16,7 @@ HoralScanner is a complete **3D scanning and reconstruction system** built from 
 
 ✅ **Custom STM32 USB firmware** — Direct motor/stepper control via USB CDC protocol  
 ✅ **Flask REST API** — Lightweight web service on port 5000  
-✅ **Multi-sensor fusion** — Lidar (TF-Luna) + dual lasers + cameras (USB + DSI)  
+✅ **Multi-sensor fusion** — Lidar (TF-Luna) + dual lasers + cameras (USB + CSI)  
 ✅ **3D reconstruction** — Open3D-powered point cloud processing  
 ✅ **Web dashboard** — Real-time control & monitoring  
 ✅ **Systemd auto-start** — Service runs on boot  

@@ -90,6 +90,42 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
 
         self.assertIsNone(driver.read_board_temperature())
 
+    def test_board_fan_uses_pc5_temperature_hysteresis(self):
+        driver = STM32Driver(
+            simulation=True,
+            hardware_config={
+                "temperature": {
+                    "board_fan_control": {
+                        "auto_control": True,
+                        "on_temp_c": 39,
+                        "off_temp_c": 35,
+                    }
+                }
+            },
+        )
+        temperatures = iter((40.0, 40.0, 37.0, 34.0))
+        commands = []
+        driver.read_board_temperature = lambda: next(temperatures)
+        driver.set_fan_speed = lambda channel, speed: commands.append((channel, speed)) or True
+
+        self.assertTrue(driver.update_board_fan_auto_control())
+        self.assertTrue(driver.get_temperature_status()["fan_on"])
+        self.assertTrue(driver.update_board_fan_auto_control())
+        self.assertTrue(driver.update_board_fan_auto_control())
+        self.assertEqual(commands, [("temperature", 1.0), ("temperature", 1.0), ("temperature", 0.0)])
+
+    def test_board_fan_fails_safe_when_pc5_is_unavailable(self):
+        driver = STM32Driver(simulation=True)
+        driver.read_board_temperature = lambda: None
+        commands = []
+        driver.set_fan_speed = lambda channel, speed: commands.append((channel, speed)) or True
+
+        self.assertTrue(driver.update_board_fan_auto_control())
+        status = driver.get_temperature_status()
+        self.assertFalse(status["connected"])
+        self.assertEqual(status["error"], "Temperature probe PC5 unavailable")
+        self.assertEqual(commands, [("temperature", 1.0)])
+
     def test_move_motor_updates_position(self):
         driver = STM32Driver()
         commands = []

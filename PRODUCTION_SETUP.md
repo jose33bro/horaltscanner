@@ -205,7 +205,7 @@ sudo systemctl restart horaltscanner
 
 ### Reconstruction très lente / API freezes
 - Vérifiez que vous utilisez **Gunicorn** (pas `python api/horalscanner_api.py`)
-- Vérifiez que vous avez **1 worker** configuré pour garder un seul propriétaire matériel
+- Vérifiez que vous avez **1 worker** configuré; le matériel et l'état du scan ont un propriétaire unique
 - Vérifiez que vous utilisez **gevent** worker class (non-bloquant)
 
 ### Open3D import error
@@ -222,7 +222,9 @@ bash software/scripts/install_open3d_pi.sh
 
 ## 📈 Performance Tips
 
-1. **1 worker** pour garantir un propriétaire unique du GPIO, des ports série et des caméras
+1. **1 worker** pour tout déploiement matériel:
+   - Ne l'augmentez pas: GPIO, série, caméras et état du scan sont partagés
+   - Utilisez gevent et les tâches d'arrière-plan pour conserver une API réactive
 
 2. **Gevent worker class** élimine le blocage I/O:
    - Les captures d'image, uploads, et reads API deviennent async

@@ -234,6 +234,7 @@ SAFE_CONFIG = {
     "capture_timeout_s": 0.1,
     "lidar_timeout_s": 0.1,
     "motion_timeout_s": 0.1,
+    "max_triangulation_distance_mm": 1000,
 }
 
 
@@ -555,10 +556,13 @@ class RealScanSessionTests(unittest.TestCase):
             "pi": _FakeCamera(block_after=2),
             "usb": _FakeCamera(),
         }
-        session = self.make_session(cameras=cameras)
+        session = self.make_session(
+            cameras=cameras,
+            config={**SAFE_CONFIG, "stop_join_timeout_s": 0.01},
+        )
         session.start()
         deadline = time.time() + 1
-        while not self.gpio.state["left"] and time.time() < deadline:
+        while cameras["pi"].calls <= 2 and time.time() < deadline:
             time.sleep(0.005)
         calls_before = list(self.gpio.calls)
 
@@ -569,6 +573,34 @@ class RealScanSessionTests(unittest.TestCase):
         self.assertEqual(self.gpio.calls, calls_before)
         self.assertTrue(self.gpio.state["left"])
         session.stop()
+
+    def test_physical_scan_reserves_shared_hardware_until_cleanup(self):
+        reservation = threading.Lock()
+        cameras = {
+            "pi": _FakeCamera(block_after=2),
+            "usb": _FakeCamera(),
+        }
+        session = self.make_session(
+            cameras=cameras,
+            config={**SAFE_CONFIG, "stop_join_timeout_s": 0.01},
+        )
+        session._hardware_reservation = reservation
+        session.start()
+        deadline = time.time() + 1
+        while cameras["pi"].calls <= 2 and time.time() < deadline:
+            time.sleep(0.005)
+
+        self.assertTrue(session.hardware_reserved)
+        self.assertFalse(reservation.acquire(blocking=False))
+
+        session.stop()
+        self.assertTrue(session.hardware_reserved)
+        deadline = time.time() + 1
+        while session.hardware_reserved and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertFalse(session.hardware_reserved)
+        self.assertTrue(reservation.acquire(blocking=False))
+        reservation.release()
 
     def test_cancel_immediately_forces_lasers_off_and_stops_motors(self):
         cameras = {
@@ -715,13 +747,27 @@ class AsyncReconstructionTests(unittest.TestCase):
     def test_reconstruct_rejects_concurrent_calls_while_in_progress(self):
         session = self._make_session_with_points()
         engine = ReconstructionEngine(session)
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_poisson(_pcd, depth):
+            entered.set()
+            release.wait(1)
+            return _FakeMesh(), [1.0, 1.0, 1.0]
 
         with (
             mock.patch("software.api.scanner_engine._O3D_AVAILABLE", True),
             mock.patch("software.api.scanner_engine.o3d", _FakeO3D(), create=True),
+            mock.patch.object(
+                _FakeTriangleMesh,
+                "create_from_point_cloud_poisson",
+                side_effect=blocking_poisson,
+            ),
         ):
             first = engine.reconstruct()
+            self.assertTrue(entered.wait(1))
             second = engine.reconstruct()
+            release.set()
             # Drain the background thread before finishing the test.
             deadline = time.time() + 5
             while engine.status()["in_progress"] and time.time() < deadline:

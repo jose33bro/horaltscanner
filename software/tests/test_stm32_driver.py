@@ -1,3 +1,5 @@
+import threading
+import time
 import unittest
 from unittest.mock import Mock
 
@@ -301,6 +303,89 @@ class STM32DriverFanAndTemperatureTests(unittest.TestCase):
         self.assertFalse(driver.get_motor_status()["homed"]["x"])
         self.assertFalse(driver.connected)
         serial_port.close.assert_called_once_with()
+
+    def test_serial_exception_invalidates_homed_position(self):
+        serial_port = Mock()
+        serial_port.readline.side_effect = [
+            b"OK MOVE\n",
+            OSError("serial disconnected"),
+        ]
+        driver = STM32Driver(
+            simulation=False,
+            hardware_config={
+                "serial": {"mcu_port": "/dev/horalscanner_mcu"},
+                "motors": {"x": {"rotation_distance": 40, "microsteps": 16}},
+            },
+            serial_factory=Mock(return_value=serial_port),
+        )
+        driver.connect()
+        driver._motor_status["homed"]["x"] = True
+
+        with self.assertRaises(OSError):
+            driver.move_motor("x", 1.0)
+
+        self.assertFalse(driver.get_motor_status()["homed"]["x"])
+        self.assertFalse(driver.connected)
+
+    def test_concurrent_moves_are_serialized_before_limit_check(self):
+        driver = STM32Driver(
+            hardware_config={
+                "motors": {
+                    "x": {
+                        "rotation_distance": 40,
+                        "microsteps": 16,
+                        "position_min": 0,
+                        "position_max": 210,
+                    }
+                }
+            }
+        )
+        driver._motor_status["homed"]["x"] = True
+        driver._motor_status["positions"]["x"] = 190.0
+        driver._send_command = lambda _cmd: time.sleep(0.02) or True
+        results = []
+        workers = [
+            threading.Thread(target=lambda: results.append(driver.move_motor("x", 15.0)))
+            for _ in range(2)
+        ]
+
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+
+        self.assertEqual(sorted(results), [False, True])
+        self.assertEqual(driver.get_motor_status()["positions"]["x"], 205.0)
+
+    def test_emergency_stop_rejects_motion_already_queued(self):
+        driver = STM32Driver()
+        driver._motor_status["homed"]["x"] = True
+        entered = threading.Event()
+        release = threading.Event()
+        commands = []
+
+        def send(command):
+            commands.append(command)
+            if command.startswith("MOVE"):
+                entered.set()
+                release.wait(1)
+            return True
+
+        driver._send_command = send
+        results = []
+        first = threading.Thread(target=lambda: results.append(driver.move_motor("x", 1.0)))
+        second = threading.Thread(target=lambda: results.append(driver.move_motor("x", 1.0)))
+        first.start()
+        self.assertTrue(entered.wait(1))
+        second.start()
+
+        self.assertTrue(driver.stop_motor("all"))
+        release.set()
+        first.join()
+        second.join()
+
+        self.assertEqual(results, [False, False])
+        self.assertEqual(sum(command.startswith("MOVE") for command in commands), 1)
 
     def test_move_motor_unknown_axis_returns_false(self):
         driver = STM32Driver()

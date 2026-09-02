@@ -17,6 +17,7 @@ class HardwareReservationLock:
             os.path.join(tempfile.gettempdir(), "horalscanner-hardware.lock"),
         )
         self._file = None
+        self._owner_thread_id: int | None = None
 
     def acquire(self, blocking: bool = True) -> bool:
         if not self._thread_lock.acquire(blocking=blocking):
@@ -25,6 +26,7 @@ class HardwareReservationLock:
             try:
                 import fcntl
             except ImportError:
+                self._owner_thread_id = threading.get_ident()
                 return True
             self._file = open(self._path, "a+", encoding="ascii")
             flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
@@ -35,6 +37,7 @@ class HardwareReservationLock:
                 self._file = None
                 self._thread_lock.release()
                 return False
+            self._owner_thread_id = threading.get_ident()
             return True
         except Exception:
             if self._file is not None:
@@ -51,4 +54,9 @@ class HardwareReservationLock:
                 self._file.close()
                 self._file = None
         finally:
+            self._owner_thread_id = None
             self._thread_lock.release()
+
+    @property
+    def owned_by_current_thread(self) -> bool:
+        return self._owner_thread_id == threading.get_ident()

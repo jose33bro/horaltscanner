@@ -250,7 +250,7 @@ python -c "from software.api import create_app; app = create_app()"
 
 - [x] All dependencies installed
 - [x] WSGI app wrapper created
-- [x] Gunicorn running with 1 Gevent worker
+- [x] Gunicorn running with 1 Gevent worker (required for hardware ownership)
 - [x] systemd service enabled & auto-restart working
 - [x] API `/api/health` endpoint responding
 - [x] Port 5000 accessible locally & remotely

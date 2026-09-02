@@ -126,6 +126,10 @@ def _guard_scan_hardware_reservation():
             request.method == "POST"
             and request.path.startswith("/api/scan/pose/")
         )
+        or (
+            request.method == "POST"
+            and request.path == "/api/scan/preflight"
+        )
     )
     if request.path in allowed or not guarded:
         return None
@@ -1408,7 +1412,19 @@ def scan_start():
 def scan_preflight():
     """Report blockers; POST deliberately probes cameras, LiDAR, and laser-off control."""
     _configure_scan_session_hardware()
-    result = scan_session.readiness(probe=request.method == "POST")
+    if request.method == "POST":
+        reserved_probe = getattr(
+            scan_session,
+            "probe_readiness_with_reservation",
+            None,
+        )
+        if callable(reserved_probe):
+            g.scan_hardware_lock_acquired = False
+            result = reserved_probe()
+        else:
+            result = scan_session.readiness(probe=True)
+    else:
+        result = scan_session.readiness(probe=False)
     return jsonify({"success": True, **result}), 200
 
 

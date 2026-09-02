@@ -189,6 +189,13 @@ class ScanSession:
             and not _allow_starting
             and not _probe_reserved
             and self._hardware_reservation is not None
+            and not bool(
+                getattr(
+                    self._hardware_reservation,
+                    "owned_by_current_thread",
+                    False,
+                )
+            )
         ):
             if not self._hardware_reservation.acquire(blocking=False):
                 return {
@@ -332,6 +339,25 @@ class ScanSession:
             self._last_blockers = blockers
         return {"ready": not blockers, "mode": "real", "blockers": blockers}
 
+    def probe_readiness_with_reservation(self) -> dict:
+        """Adopt a request reservation and quarantine timed-out probe workers."""
+        owns_reservation = bool(
+            self._hardware_reservation is not None
+            and getattr(
+                self._hardware_reservation,
+                "owned_by_current_thread",
+                False,
+            )
+        )
+        if not owns_reservation:
+            return self.readiness(probe=True)
+        with self._lock:
+            self._hardware_reserved = True
+        try:
+            return self.readiness(probe=True, _probe_reserved=True)
+        finally:
+            self._release_hardware_reservation()
+
     def _required_axes(self) -> tuple[str, ...]:
         # The saved scan pose contains all three axes, so every axis must have a
         # trustworthy reference even when only Y/Z move during acquisition.
@@ -470,6 +496,13 @@ class ScanSession:
                 blockers.append(f"Camera '{name}' intrinsic_matrix calibration is missing")
             if not self._matrix_valid(camera.get("camera_to_scanner"), (4, 4), transform=True):
                 blockers.append(f"Camera '{name}' camera_to_scanner calibration is missing")
+            if camera.get("carriage_axis") and not self._vector_valid(
+                camera.get("carriage_direction"),
+                nonzero=True,
+            ):
+                blockers.append(f"Camera '{name}' carriage_direction calibration is invalid")
+            if camera.get("carriage_axis") not in (None, "x", "y", "z"):
+                blockers.append(f"Camera '{name}' carriage_axis calibration is invalid")
         planes = self._calibration.get("laser_planes", {})
         for side in self._LASER_SIDES:
             plane = planes.get(side, {}) if isinstance(planes, Mapping) else {}
@@ -488,9 +521,16 @@ class ScanSession:
         lidar = self._calibration.get("lidar", {})
         if not self._matrix_valid(lidar.get("lidar_to_scanner"), (4, 4), transform=True):
             blockers.append("TF-Luna lidar_to_scanner calibration is missing")
+        if lidar.get("carriage_axis") and not self._vector_valid(
+            lidar.get("carriage_direction"),
+            nonzero=True,
+        ):
+            blockers.append("TF-Luna carriage_direction calibration is invalid")
+        if lidar.get("carriage_axis") not in (None, "x", "y", "z"):
+            blockers.append("TF-Luna carriage_axis calibration is invalid")
         try:
             low, high = self._lidar_limits()
-            if low < 0 or high <= low:
+            if not all(math.isfinite(value) for value in (low, high)) or low < 0 or high <= low:
                 blockers.append("TF-Luna calibrated distance range must satisfy 0 <= min < max")
         except (TypeError, ValueError):
             blockers.append("TF-Luna calibrated distance range is invalid")
@@ -606,12 +646,19 @@ class ScanSession:
                     if self._simulation
                     else self._physical_capture_loop
                 )
-                self._thread = threading.Thread(
+                thread = threading.Thread(
                     target=target,
                     name="scan-acquisition",
                     daemon=True,
                 )
-                self._thread.start()
+                self._thread = thread
+                try:
+                    thread.start()
+                except Exception:
+                    self._thread = None
+                    self._scanning = False
+                    self._phase = "error"
+                    raise
         finally:
             with self._lock:
                 self._starting = False
@@ -1111,7 +1158,10 @@ class ScanSession:
             if abs(denominator) < 1e-9:
                 continue
             ray_distance = -(float(np.dot(normal, translated_origin)) + offset) / denominator
-            if ray_distance <= 0:
+            if (
+                ray_distance <= 0
+                or ray_distance > self._positive_float("max_triangulation_distance_mm", 2000.0)
+            ):
                 continue
             point = translated_origin + direction * ray_distance
             point = self._normalize_turntable_point(point, trajectory_origin)

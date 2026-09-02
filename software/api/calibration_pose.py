@@ -150,11 +150,16 @@ def move_to_pose(
     # Retrieve current absolute positions so we can compute relative deltas.
     status = stm32_driver.get_motor_status()
     current_positions: dict[str, float] = status.get("positions", {})
+    homed_axes = status.get("homed")
 
     for axis, target_mm in pose.items():
         axis_lower = axis.lower()
         current = current_positions.get(axis_lower, 0.0)
         delta = target_mm - current
+        if isinstance(homed_axes, dict) and not homed_axes.get(axis_lower, False):
+            errors.append(axis_lower)
+            logger.error("move_to_pose: axis %s is not homed", axis_lower)
+            continue
         if abs(delta) < 0.01:
             # Already at target; skip (not counted as moved)
             continue

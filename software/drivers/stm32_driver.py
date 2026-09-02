@@ -5,6 +5,8 @@ Supports simulation mode (no hardware required) for the test suite.
 from __future__ import annotations
 
 import re
+import threading
+import time
 from typing import Callable
 
 _FAN_CHANNELS: dict[str, str] = {
@@ -45,6 +47,9 @@ def _mm_s_to_steps_s(axis_cfg: dict, mm_s: float) -> int:
 class STM32Driver:
     """Driver for the STM32 co-processor managing motors and fans."""
 
+    MOTION_TIMEOUT_SECONDS = 30.0
+    HOME_TIMEOUT_SECONDS = 125.0
+
     def __init__(
         self,
         simulation: bool = True,
@@ -54,6 +59,7 @@ class STM32Driver:
         self._simulation = simulation
         self._hardware_config = hardware_config or {}
         self._serial_factory = serial_factory
+        self._serial_lock = threading.RLock()
         self._port = None  # serial port object once connected
         self._connected = False
         self._last_error: Exception | None = None
@@ -138,20 +144,22 @@ class STM32Driver:
     # ------------------------------------------------------------------
 
     def _send_command(self, cmd: str) -> bool:
-        if self._simulation:
-            return True
-        if self._port is None:
-            return False
-        self._port.write((cmd + "\n").encode())
-        response = self._port.readline().decode("ascii", errors="replace").strip()
-        return response.startswith("OK")
+        with self._serial_lock:
+            if self._simulation:
+                return True
+            if self._port is None:
+                return False
+            self._port.write((cmd + "\n").encode())
+            response = self._port.readline().decode("ascii", errors="replace").strip()
+            return response.startswith("OK")
 
     def _send_and_read(self, cmd: str) -> str:
         """Send command and return raw response line."""
-        if self._port is None:
-            return ""
-        self._port.write((cmd + "\n").encode())
-        return self._port.readline().decode("ascii", errors="replace").strip()
+        with self._serial_lock:
+            if self._port is None:
+                return ""
+            self._port.write((cmd + "\n").encode())
+            return self._port.readline().decode("ascii", errors="replace").strip()
 
     # ------------------------------------------------------------------
     # Fan control
@@ -236,6 +244,30 @@ class STM32Driver:
     def _axis_cfg(self, axis: str) -> dict | None:
         return self._motor_cfg.get(axis.lower())
 
+    def get_motor_limits(self, axis: str) -> tuple[float, float] | None:
+        cfg = self._axis_cfg(axis)
+        if cfg is None:
+            return None
+        return (
+            float(cfg.get("position_min", 0.0)),
+            float(cfg.get("position_max", float("inf"))),
+        )
+
+    def move_motor_to(self, axis: str, target_mm: float) -> bool:
+        axis = axis.lower()
+        limits = self.get_motor_limits(axis)
+        if limits is None:
+            return False
+        position_min, position_max = limits
+        if not position_min <= target_mm <= position_max:
+            return False
+        current = self._motor_status["positions"].get(axis)
+        if current is None:
+            return False
+        if abs(target_mm - current) < 1e-9:
+            return bool(self._motor_status["homed"].get(axis, False))
+        return self.move_motor(axis, target_mm - current)
+
     def move_motor(self, axis: str, distance_mm: float) -> bool:
         axis = axis.lower()
         cfg = self._axis_cfg(axis)
@@ -258,15 +290,25 @@ class STM32Driver:
             return False
         # In non-simulation mode wait for motion completion
         if not self._simulation and self._port is not None:
-            while True:
-                resp = self._send_and_read("MOTION_STATUS")
-                if "DONE" in resp:
-                    break
-                if "STOPPED" in resp:
-                    self._motor_status["homed"][axis] = False
-                    return False
+            if not self._wait_for_motion(axis, self.MOTION_TIMEOUT_SECONDS):
+                return False
         self._motor_status["positions"][axis] = target
         return True
+
+    def _wait_for_motion(self, axis: str, timeout_seconds: float) -> bool:
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            response = self._send_and_read("MOTION_STATUS")
+            if "DONE" in response:
+                return True
+            if "STOPPED" in response or "ERROR" in response:
+                self._motor_status["homed"][axis] = False
+                return False
+            if time.monotonic() >= deadline:
+                self._send_command(f"STOP {axis.upper()}")
+                self._motor_status["homed"][axis] = False
+                return False
+            time.sleep(0.01)
 
     def home_motor(self, axis: str) -> bool:
         axis = axis.lower()
@@ -277,10 +319,19 @@ class STM32Driver:
         if cfg is None:
             return False
         ok = self._send_command(f"HOME {axis.upper()}")
+        if ok and not self._simulation and self._port is not None:
+            ok = self._wait_for_motion(axis, self.HOME_TIMEOUT_SECONDS)
         if ok:
-            self._motor_status["positions"][axis] = 0.0
+            self._motor_status["positions"][axis] = float(
+                cfg.get("position_min", 0.0)
+            )
             self._motor_status["homed"][axis] = True
         return ok
+
+    def invalidate_motor_position(self, axis: str) -> None:
+        axis = axis.lower()
+        if axis in self._motor_status["homed"]:
+            self._motor_status["homed"][axis] = False
 
     def stop_motor(self, axis: str = "all") -> bool:
         axis = axis.lower()

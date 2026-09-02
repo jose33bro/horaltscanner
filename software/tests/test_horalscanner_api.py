@@ -326,13 +326,127 @@ class HoralScannerAPITests(unittest.TestCase):
         )
 
     def test_scan_start_falls_back_to_simulation(self):
+        original_session = self.api_module.scan_session
         self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
+        self.addCleanup(setattr, self.api_module, "scan_session", original_session)
+        self.addCleanup(self.api_module.scan_session.stop)
+        self.fake_stm32.calls.clear()
+
         response = self.client.post("/api/scan/start")
+
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertTrue(data["success"])
         self.assertTrue(data["status"]["simulation"])
         self.assertEqual(data["mode"], "simulation")
+        self.assertEqual(data["motor_preparation"]["target_mm"], 105.0)
+        self.assertEqual(
+            self.fake_stm32.calls[:2],
+            [("home_motor", "x"), ("move_motor", "x", 105.0)],
+        )
+
+    def test_scan_start_centers_x_from_asymmetric_configured_limits(self):
+        original_session = self.api_module.scan_session
+        self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
+        self.addCleanup(setattr, self.api_module, "scan_session", original_session)
+        self.addCleanup(self.api_module.scan_session.stop)
+        self.fake_stm32.get_motor_limits = lambda _axis: (10.0, 30.0)
+        self.fake_stm32.status["positions"]["x"] = 10.0
+        self.fake_stm32.calls.clear()
+
+        response = self.client.post("/api/scan/start")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["motor_preparation"]["target_mm"], 20.0)
+        self.assertEqual(
+            self.fake_stm32.calls[:2],
+            [("home_motor", "x"), ("move_motor", "x", 10.0)],
+        )
+
+    def test_scan_start_rejects_invalid_x_limits_without_motion(self):
+        original_session = self.api_module.scan_session
+        self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
+        self.addCleanup(setattr, self.api_module, "scan_session", original_session)
+        self.fake_stm32.get_motor_limits = lambda _axis: (30.0, 10.0)
+        self.fake_stm32.calls.clear()
+
+        response = self.client.post("/api/scan/start")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(self.api_module.scan_session.status()["scanning"])
+        self.assertEqual(self.fake_stm32.calls, [])
+
+    def test_scan_start_stops_x_when_centering_fails(self):
+        original_session = self.api_module.scan_session
+        self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
+        self.addCleanup(setattr, self.api_module, "scan_session", original_session)
+        self.fake_stm32.get_motor_limits = lambda _axis: (0.0, 100.0)
+        original_move = self.fake_stm32.move_motor
+        self.fake_stm32.move_motor = lambda axis, distance: (
+            self.fake_stm32.calls.append(("move_motor", axis, distance)) or False
+        )
+        self.addCleanup(setattr, self.fake_stm32, "move_motor", original_move)
+        self.fake_stm32.calls.clear()
+
+        response = self.client.post("/api/scan/start")
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn(("stop_motor", "x"), self.fake_stm32.calls)
+        self.assertFalse(self.api_module.scan_session.status()["scanning"])
+
+    def test_concurrent_scan_start_does_not_repeat_x_preparation(self):
+        home_started = threading.Event()
+        release_home = threading.Event()
+        first_response = []
+        original_session = self.api_module.scan_session
+        self.api_module.scan_session = self.api_module.ScanSession(simulation=False)
+        self.addCleanup(setattr, self.api_module, "scan_session", original_session)
+        self.addCleanup(self.api_module.scan_session.stop)
+        original_home = self.fake_stm32.home_motor
+
+        def blocking_home(axis):
+            self.fake_stm32.calls.append(("home_motor", axis))
+            home_started.set()
+            release_home.wait(1)
+            return True
+
+        self.fake_stm32.home_motor = blocking_home
+        self.addCleanup(setattr, self.fake_stm32, "home_motor", original_home)
+        self.fake_stm32.calls.clear()
+
+        def start_first_scan():
+            with self.app.test_client() as client:
+                first_response.append(client.post("/api/scan/start"))
+
+        first_thread = threading.Thread(target=start_first_scan)
+        first_thread.start()
+        self.assertTrue(home_started.wait(0.5))
+        try:
+            second_response = self.client.post("/api/scan/start")
+            self.assertEqual(second_response.status_code, 409)
+        finally:
+            release_home.set()
+            first_thread.join(1)
+
+        self.assertFalse(first_thread.is_alive())
+        self.assertEqual(first_response[0].status_code, 200)
+        self.assertEqual(
+            [call for call in self.fake_stm32.calls if call[0] == "home_motor"],
+            [("home_motor", "x")],
+        )
+
+    def test_pose_movement_is_rejected_while_scan_is_active(self):
+        original_session = self.api_module.scan_session
+        self.api_module.scan_session = self.api_module.ScanSession(simulation=True)
+        self.addCleanup(setattr, self.api_module, "scan_session", original_session)
+        self.addCleanup(self.api_module.scan_session.stop)
+        self.api_module.scan_session.start()
+        self.fake_stm32.calls.clear()
+
+        response = self.client.post("/api/camera/pi/goto_calibration_pose")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.fake_stm32.calls, [])
 
     def test_reconstruct_without_points_returns_structured_error(self):
         response = self.client.post("/api/model/reconstruct")
@@ -445,6 +559,7 @@ class HoralScannerAPITests(unittest.TestCase):
         }
         self.fake_gpio.laser_status["left"] = True
 
+        self.fake_stm32.calls.clear()
         response = self.client.post("/api/camera/pi/test")
 
         self.assertEqual(response.status_code, 200)
@@ -456,6 +571,9 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertIn(("laser_off", "left"), self.fake_gpio.calls)
         self.assertIn(("laser_off", "right"), self.fake_gpio.calls)
         self.assertIn(("laser_on", "left"), self.fake_gpio.calls)
+        self.assertFalse(
+            any(call[0] in ("home_motor", "move_motor") for call in self.fake_stm32.calls)
+        )
 
     def test_pi_camera_test_aborts_when_lasers_cannot_be_disabled(self):
         class FakeCamera:

@@ -115,16 +115,25 @@ const HoralScannerUI = (() => {
   }
 
   async function startScan() {
+    byId("scan-start").disabled = true;
+    byId("scan-state-badge").className = "badge idle";
+    byId("scan-state-badge").textContent = "Centrage X...";
     try {
       const result = await api("/api/scan/start", { method: "POST" });
-      byId("scan-start").disabled = true;
       byId("scan-stop").disabled = false;
       byId("scan-state-badge").className = "badge running";
       byId("scan-state-badge").textContent = result?.status?.simulation ? "Simulation" : "Acquisition";
       state.scanTimer = setInterval(refreshScanStatus, 800);
       state.pointTimer = setInterval(refreshPointCloud, 1200);
-      toast(result?.hint || "Acquisition 3D demarree");
+      const centered = result?.motor_preparation?.target_mm;
+      const message = centered == null
+        ? (result?.hint || "Acquisition 3D demarree")
+        : `Axe X centre a ${centered.toFixed(1)} mm · ${result?.hint || "acquisition demarree"}`;
+      toast(message);
     } catch (error) {
+      byId("scan-start").disabled = false;
+      byId("scan-state-badge").className = "badge idle";
+      byId("scan-state-badge").textContent = "Erreur";
       toast(formatUserError(error), true);
     }
   }

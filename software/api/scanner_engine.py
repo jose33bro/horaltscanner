@@ -83,6 +83,7 @@ class ScanSession:
         self._thread: Optional[threading.Thread] = None
         self._start_time: float = 0.0
         self._quality: float = 0.0
+        self._configured_simulation = simulation
         self._simulation = simulation
 
     # ------------------------------------------------------------------

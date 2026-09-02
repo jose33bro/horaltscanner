@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sys
 import threading
 import time
+from functools import wraps
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
@@ -209,6 +211,7 @@ _camera_operation_locks = {
     "usb": threading.Lock(),
 }
 _laser_operation_lock = threading.Lock()
+_motor_operation_lock = threading.Lock()
 
 _initialize_driver(stm32_driver, "STM32Driver")
 _initialize_driver(gpio_driver, "GPIODriver")
@@ -392,6 +395,92 @@ def _stm32_ready() -> bool:
     return bool(stm32_driver is not None and getattr(stm32_driver, "connected", False))
 
 
+def _motor_limits(axis: str) -> tuple[float, float]:
+    limits_getter = getattr(stm32_driver, "get_motor_limits", None)
+    limits = limits_getter(axis) if callable(limits_getter) else None
+    if limits is None:
+        axis_config = hardware_config.get("motors", {}).get(axis, {})
+        limits = (
+            axis_config.get("position_min", 0.0),
+            axis_config.get("position_max"),
+        )
+    try:
+        position_min, position_max = (float(value) for value in limits)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid configured limits for axis {axis.upper()}"
+        ) from exc
+    if (
+        not math.isfinite(position_min)
+        or not math.isfinite(position_max)
+        or position_max <= position_min
+    ):
+        raise ValueError(f"Invalid configured limits for axis {axis.upper()}")
+    return position_min, position_max
+
+
+def _prepare_scan_x_center() -> dict[str, float | bool]:
+    if not _stm32_ready():
+        raise ConnectionError("STM32 motor controller unavailable")
+
+    position_min, position_max = _motor_limits("x")
+    target = position_min + ((position_max - position_min) / 2.0)
+    if not position_min <= target <= position_max:
+        raise ValueError("Calculated X center is outside configured limits")
+    if not stm32_driver.home_motor("x"):
+        raise RuntimeError("X homing failed")
+
+    move_to = getattr(stm32_driver, "move_motor_to", None)
+    if callable(move_to):
+        moved = move_to("x", target)
+    else:
+        status = stm32_driver.get_motor_status()
+        current = float(status.get("positions", {}).get("x", position_min))
+        moved = stm32_driver.move_motor("x", target - current)
+    if not moved:
+        raise RuntimeError("X centering failed")
+
+    return {
+        "homed": True,
+        "position_min_mm": position_min,
+        "position_max_mm": position_max,
+        "target_mm": target,
+    }
+
+
+def _stop_and_invalidate_x() -> None:
+    if stm32_driver is None:
+        return
+    try:
+        stm32_driver.stop_motor("x")
+    except Exception as exc:
+        logger.error("Failed to stop X after scan preparation error: %s", exc)
+    invalidate = getattr(stm32_driver, "invalidate_motor_position", None)
+    if callable(invalidate):
+        invalidate("x")
+
+
+def _serialized_motor_route(*, allow_while_scanning: bool = False):
+    def decorate(route):
+        @wraps(route)
+        def wrapped(*args, **kwargs):
+            if not _motor_operation_lock.acquire(blocking=False):
+                return _json_error("Motor control busy", 409)
+            try:
+                if (
+                    not allow_while_scanning
+                    and scan_session.status().get("scanning", False)
+                ):
+                    return _json_error("Motor movement unavailable during scan", 409)
+                return route(*args, **kwargs)
+            finally:
+                _motor_operation_lock.release()
+
+        return wrapped
+
+    return decorate
+
+
 def _runtime_capabilities() -> dict[str, Any]:
     camera_status = {
         "pi": bool(pi_camera and pi_camera.is_open),
@@ -568,6 +657,7 @@ def led_color():
 
 
 @api_bp.route("/api/move/<axis>", methods=["POST"])
+@_serialized_motor_route()
 def move(axis: str):
     data = request.get_json(silent=True) or {}
     try:
@@ -590,6 +680,7 @@ def move(axis: str):
 
 
 @api_bp.route("/api/home/<target>", methods=["POST"])
+@_serialized_motor_route()
 def home(target: str):
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -926,6 +1017,7 @@ def camera_test(camera_name: str):
 # ---------------------------------------------------------------------------
 
 @api_bp.route("/api/camera/<camera_name>/goto_calibration_pose", methods=["POST"])
+@_serialized_motor_route()
 def camera_goto_calibration_pose(camera_name: str):
     """Move motors to the default calibration pose for *camera_name*.
 
@@ -1016,6 +1108,7 @@ def camera_save_scan_pose(camera_name: str):
 
 
 @api_bp.route("/api/camera/<camera_name>/goto_scan_pose", methods=["POST"])
+@_serialized_motor_route()
 def camera_goto_scan_pose(camera_name: str):
     """Return the machine to the previously saved scan pose for *camera_name*.
 
@@ -1150,6 +1243,7 @@ def laser_align(side: str):
 
 
 @api_bp.route("/api/camera/calibrate/pose/<camera_name>", methods=["POST"])
+@_serialized_motor_route()
 def camera_calibrate_pose(camera_name: str):
     """Move motors to the calibration pose for the requested camera.
 
@@ -1204,6 +1298,7 @@ def scan_pose_save():
 
 
 @api_bp.route("/api/scan/pose/restore", methods=["POST"])
+@_serialized_motor_route()
 def scan_pose_restore():
     """Move motors back to the saved scan pose for a camera.
 
@@ -1225,7 +1320,29 @@ def scan_pose_restore():
 
 
 @api_bp.route("/api/scan/start", methods=["POST"])
+@_serialized_motor_route(allow_while_scanning=True)
 def scan_start():
+    current_status = scan_session.status()
+    if current_status.get("scanning"):
+        return jsonify({"success": True, "status": current_status})
+
+    motor_preparation = None
+    configured_simulation = bool(
+        getattr(scan_session, "_configured_simulation", current_status.get("simulation", False))
+    )
+    if not configured_simulation:
+        try:
+            motor_preparation = _prepare_scan_x_center()
+        except (ConnectionError, ValueError) as exc:
+            return _json_error(str(exc), 503)
+        except RuntimeError as exc:
+            _stop_and_invalidate_x()
+            return _json_error(str(exc), 502)
+        except Exception:
+            logger.exception("Unexpected X scan preparation failure")
+            _stop_and_invalidate_x()
+            return _json_error("X scan preparation failed", 502)
+
     try:
         scan_session.start()
     except RuntimeError as exc:
@@ -1237,6 +1354,8 @@ def scan_start():
         )
     status = scan_session.status()
     payload = {"success": True, "status": status}
+    if motor_preparation is not None:
+        payload["motor_preparation"] = motor_preparation
     if status.get("simulation"):
         payload["mode"] = "simulation"
         payload["hint"] = "Real acquisition backend unavailable; running in simulation mode."
@@ -1311,6 +1430,7 @@ def model_current():
 
 
 @api_bp.route("/api/camera/<camera_name>/calibration-pose", methods=["POST"])
+@_serialized_motor_route()
 def camera_calibration_pose(camera_name: str):
     """Move motors to the calibration pose for the selected camera.
 
@@ -1331,14 +1451,12 @@ def camera_calibration_pose(camera_name: str):
         return _json_error("Pilote STM32 indisponible", 503)
 
     try:
-        axes_moved: list[str] = []
-        for axis in ("x", "y", "z"):
-            target = pose.get(axis)
-            if target is not None:
-                ok = stm32_driver.move_motor(axis, float(target))
-                if not ok:
-                    return _json_error(f"Deplacement axe {axis.upper()} echoue", 502)
-                axes_moved.append(axis)
+        target_pose = {
+            axis: float(target)
+            for axis in ("x", "y", "z")
+            if (target := pose.get(axis)) is not None
+        }
+        axes_moved = move_to_pose(stm32_driver, target_pose)
 
         motor_status = stm32_driver.get_motor_status()
         positions = motor_status.get("positions", {})
@@ -1417,6 +1535,7 @@ def camera_scan_pose_get():
 
 
 @api_bp.route("/api/camera/scan-pose/goto", methods=["POST"])
+@_serialized_motor_route()
 def camera_scan_pose_goto():
     """Move motors back to the memorized scan pose."""
     if _scan_pose is None:
@@ -1426,12 +1545,12 @@ def camera_scan_pose_goto():
         return _json_error("Pilote STM32 indisponible", 503)
 
     try:
-        for axis in ("x", "y", "z"):
-            target = _scan_pose.get(axis)
-            if target is not None:
-                ok = stm32_driver.move_motor(axis, float(target))
-                if not ok:
-                    return _json_error(f"Retour axe {axis.upper()} echoue", 502)
+        target_pose = {
+            axis: float(target)
+            for axis in ("x", "y", "z")
+            if (target := _scan_pose.get(axis)) is not None
+        }
+        move_to_pose(stm32_driver, target_pose)
 
         motor_status = stm32_driver.get_motor_status()
         camera_label = "Pi Camera V3" if _scan_pose.get("camera") == "pi" else "Logitech C270"

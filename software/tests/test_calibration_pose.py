@@ -122,6 +122,20 @@ class TestMoveToPose(unittest.TestCase):
         # x and y are already at target, no moves should be issued
         self.assertEqual(len(driver.calls), 0)
 
+    def test_rejects_cached_target_when_axis_is_not_homed(self):
+        class UnhomedDriver:
+            def get_motor_status(self):
+                return {
+                    "positions": {"x": 0.0},
+                    "homed": {"x": False},
+                }
+
+            def move_motor(self, _axis, _distance):
+                raise AssertionError("unhomed motor must not move")
+
+        with self.assertRaisesRegex(RuntimeError, "x"):
+            self.move_to_pose(UnhomedDriver(), {"x": 0.0})
+
     def test_raises_connection_error_when_driver_none(self):
         with self.assertRaises(ConnectionError):
             self.move_to_pose(None, {"x": 10.0})

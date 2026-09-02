@@ -29,6 +29,10 @@ class CalibrationCancelled(CalibrationError):
     """The operator cancelled calibration."""
 
 
+class CheckerboardDetectionTimeout(CalibrationError):
+    """One bounded checkerboard attempt reached its deadline."""
+
+
 BOARD_COLUMNS = 11
 BOARD_ROWS = 6
 BOARD_SQUARE_MM = 13.0
@@ -732,6 +736,18 @@ class GeometricCalibrationService:
     def _capture_checkerboard_views(self, poses: list[dict[str, float]]) -> dict[str, list[dict]]:
         views: dict[str, list[dict]] = {"pi": [], "usb": []}
         frames_per_pose = int(self._config.get("fresh_frames_per_pose", 3))
+        pose_timeout = float(self._config.get("checkerboard_pose_timeout_s", 35.0))
+        detector_timeout = float(self._config.get("checkerboard_timeout_s", 8.0))
+        if (
+            frames_per_pose <= 0
+            or not math.isfinite(pose_timeout)
+            or pose_timeout <= 0
+            or not math.isfinite(detector_timeout)
+            or detector_timeout <= 0
+        ):
+            raise CalibrationError(
+                "fresh_frames_per_pose and checkerboard timeouts must be positive"
+            )
         for index, pose in enumerate(poses):
             self._check_cancelled()
             phase = "framing" if index == 0 else "camera-views"
@@ -742,19 +758,30 @@ class GeometricCalibrationService:
             )
             self._move_to(pose)
             self._sleep_interruptible(float(self._config.get("settle_s", 0.25)))
+            pose_deadline = time.monotonic() + pose_timeout
+            failures: dict[str, str] = {}
             for name in ("pi", "usb"):
-                best: dict | None = None
-                for _ in range(frames_per_pose):
-                    frame = self._capture(name)
-                    candidate = self._detect_checkerboard(frame, pose)
-                    if candidate and (best is None or candidate["coverage"] > best["coverage"]):
-                        best = candidate
+                candidate, timed_out, deadline_exhausted = (
+                    self._capture_checkerboard_candidate(
+                        name,
+                        pose,
+                        frames_per_pose=frames_per_pose,
+                        pose_deadline=pose_deadline,
+                    )
+                )
                 with self._lock:
-                    if best is None:
+                    if candidate is None:
                         self._status["rejected_views"][name] += 1
                     else:
-                        views[name].append(best)
+                        views[name].append(candidate)
                         self._status["accepted_views"][name] += 1
+                if candidate is None:
+                    details = []
+                    if timed_out:
+                        details.append(f"{timed_out} detector timeout(s)")
+                    if deadline_exhausted:
+                        details.append(f"{pose_timeout:g}s pose deadline exhausted")
+                    failures[name] = ", ".join(details) or "no exact 11x6 detection"
             if index == 0:
                 with self._lock:
                     self._status["starting_pose_validated"] = all(views[name] for name in views)
@@ -763,6 +790,9 @@ class GeometricCalibrationService:
                     raise CalibrationError(
                         "starting pose framing rejected for camera(s): "
                         + ", ".join(missing)
+                        + " ("
+                        + "; ".join(f"{name}: {failures[name]}" for name in missing)
+                        + ")"
                         + "; no multi-pose calibration trajectory was started"
                     )
         minimum = int(self._config.get("minimum_views", 6))
@@ -776,7 +806,58 @@ class GeometricCalibrationService:
             )
         return views
 
-    def _detect_checkerboard(self, jpeg: bytes, pose: Mapping[str, float]) -> dict | None:
+    def _capture_checkerboard_candidate(
+        self,
+        name: str,
+        pose: Mapping[str, float],
+        *,
+        frames_per_pose: int,
+        pose_deadline: float,
+    ) -> tuple[dict | None, int, bool]:
+        timed_out = 0
+        for _ in range(frames_per_pose):
+            self._check_cancelled()
+            remaining = pose_deadline - time.monotonic()
+            if remaining <= 0:
+                return None, timed_out, True
+            try:
+                frame = self._capture(
+                    name,
+                    timeout_s=min(
+                        float(self._config.get("capture_timeout_s", 5.0)),
+                        remaining,
+                    ),
+                )
+            except CalibrationError:
+                if time.monotonic() >= pose_deadline:
+                    return None, timed_out, True
+                raise
+            remaining = pose_deadline - time.monotonic()
+            if remaining <= 0:
+                return None, timed_out, True
+            try:
+                candidate = self._detect_checkerboard(
+                    frame,
+                    pose,
+                    timeout_s=min(
+                        float(self._config.get("checkerboard_timeout_s", 8.0)),
+                        remaining,
+                    ),
+                )
+            except CheckerboardDetectionTimeout:
+                timed_out += 1
+                continue
+            if candidate is not None:
+                return candidate, timed_out, False
+        return None, timed_out, time.monotonic() >= pose_deadline
+
+    def _detect_checkerboard(
+        self,
+        jpeg: bytes,
+        pose: Mapping[str, float],
+        *,
+        timeout_s: float | None = None,
+    ) -> dict | None:
         image = self._cv.imdecode(np.frombuffer(jpeg, np.uint8), self._cv.IMREAD_COLOR)
         if image is None:
             return None
@@ -789,13 +870,20 @@ class GeometricCalibrationService:
             image,
             (pattern,),
             max_width=int(self._config.get("checkerboard_max_width", 1280)),
-            timeout_s=float(self._config.get("checkerboard_timeout_s", 2.0)),
+            timeout_s=(
+                float(timeout_s)
+                if timeout_s is not None
+                else float(self._config.get("checkerboard_timeout_s", 8.0))
+            ),
             allow_ir_glare_fallback=bool(
                 self._config.get("checkerboard_ir_glare_fallback", True)
             ),
+            cancel_event=self._cancel,
         )
+        if detection.get("cancelled"):
+            self._check_cancelled()
         if detection.get("timed_out"):
-            raise CalibrationError("checkerboard detection timed out")
+            raise CheckerboardDetectionTimeout("checkerboard detection timed out")
         if not detection.get("found"):
             return None
         if tuple(detection.get("pattern", ())) != pattern:
@@ -1282,9 +1370,13 @@ class GeometricCalibrationService:
             current[axis] = value
             self._check_cancelled()
 
-    def _capture(self, name: str) -> bytes:
+    def _capture(self, name: str, *, timeout_s: float | None = None) -> bytes:
         camera = self._cameras[name]
-        timeout = float(self._config.get("capture_timeout_s", 5.0))
+        timeout = (
+            float(timeout_s)
+            if timeout_s is not None
+            else float(self._config.get("capture_timeout_s", 5.0))
+        )
         if not getattr(camera, "is_open", False) and not self._hardware_call(
             f"camera '{name}' open", camera.open, timeout
         ):

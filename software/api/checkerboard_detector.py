@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import threading
+import time
 from typing import Any, Iterable
 
 import numpy as np
@@ -166,6 +167,7 @@ def find_checkerboard_bounded(
     max_width: int = 1280,
     timeout_s: float = 2.0,
     allow_ir_glare_fallback: bool = True,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Detect a checkerboard and return corners in full captured-image coordinates."""
     if image is None or image.ndim != 3 or image.shape[2] < 3:
@@ -194,8 +196,18 @@ def find_checkerboard_bounded(
             done.set()
 
     threading.Thread(target=invoke, name="checkerboard-detection", daemon=True).start()
-    if not done.wait(timeout_s):
-        return {"found": False, "timed_out": True, "error": "checkerboard detection timed out"}
+    deadline = time.monotonic() + timeout_s
+    while not done.is_set():
+        if cancel_event is not None and cancel_event.is_set():
+            return {"found": False, "cancelled": True}
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {
+                "found": False,
+                "timed_out": True,
+                "error": "checkerboard detection timed out",
+            }
+        done.wait(min(0.05, remaining))
     if "error" in outcome:
         return {"found": False, "error": outcome["error"]}
     return outcome["result"]

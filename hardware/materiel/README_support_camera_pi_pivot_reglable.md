@@ -1,44 +1,32 @@
-# Support caméra Pi v3 noir – pivot réglable (M5) + roue crantée
+# Support caméra Pi v3 noir – pivot réglable
 
-Ce document décrit les pièces STL, les cotes fonctionnelles, l’assemblage et les réglages d’impression (Klipper + PLA Creality Hyper Series).
+Ce document décrit l’impression et l’assemblage de la base orientable de Pi
+Camera V3 (Klipper + PLA Creality Hyper Series). Les cotes et la génération du
+modèle sont documentées dans
+[`../cad/pi_camera_tilt_mount/README.md`](../cad/pi_camera_tilt_mount/README.md).
 
 ## Fichiers STL
 
 - `hardware/cad/pi_camera_tilt_mount/stl/pi_camera_tilt_base.stl`
-- `hardware/cad/pi_camera_tilt_mount/stl/ball_screw_M5x40_ball5_square_flat.stl`
-- `hardware/cad/pi_camera_tilt_mount/stl/knurled_wheel_D100_T15_pitch5_flattooth.stl`
+- `hardware/cad/pi_camera_tilt_mount/stl/fit_test_rear_cavity_30.45x38.2.stl`
 
 ## Fonction mécanique
 
-### 1) Base pivot caméra
+### Base pivot caméra
 - Pièce : `pi_camera_tilt_base.stl`
-- Rectangle vide (slot) déplacé vers l’avant sur la plaque basse.
-- Passage de réglage positionné à **27 mm du haut** de la plaque.
-- Passage en **taraudage interne M5x0.8** (imprimable).
-
-### 2) Tige filetée de réglage
-- Pièce : `ball_screw_M5x40_ball5_square_flat.stl`
-- Filetage externe : **M5x0.8** (hélicoïdal réel).
-- Longueur filetée : **40 mm**.
-- Extrémité 1 : **boule Ø5 mm max**.
-- Extrémité 2 : **carré 4x4 mm**, longueur 8 mm.
-- Au centre du carré : perçage **M3 (pré-taraudage 2.5 mm)**, profondeur **6 mm**.
-
-### 3) Roue crantée
-- Pièce : `knurled_wheel_D100_T15_pitch5_flattooth.stl`
-- Diamètre : **100 mm**
-- Épaisseur : **15 mm**
-- Dents : **plates** (non pointues), écartement/pas **5 mm**
-- Centre : carré **4.2 x 4.2 mm** (emboîtement sur tige 4x4)
-- Passage vis : trou lisse **M3 (Ø3.2 mm)** traversant
+- Fenêtre CSI : **18,00 × 9,56 mm** dans la plaque verticale.
+- Deux oreilles reçoivent la caméra et son axe traversant M3.
+- Les deux rails inférieurs reçoivent une vis M3 depuis chaque côté.
 
 ## Assemblage
 
-1. Visser la tige M5 dans le taraudage M5 de la base.
-2. Emboîter la roue sur le carré de la tige.
-3. Insérer une vis M3 dans la roue (passage lisse).
-4. La vis M3 prend dans le trou M3 de la tige (profondeur 6 mm).
-5. Serrer pour bloquer la roue sur la tige.
+1. Imprimer d'abord `fit_test_rear_cavity_30.45x38.2.stl` et valider
+   l'encombrement.
+2. Installer la caméra entre les oreilles de la base.
+3. Insérer une vis M3 traversante, des rondelles et un écrou.
+4. Régler l'inclinaison et serrer l'écrou.
+5. Fixer la base horizontalement au support par les deux rails inférieurs avec
+   une vis M3 de chaque côté.
 
 ## Réglages impression recommandés (Klipper + Creality Hyper PLA, buse 0.4)
 
@@ -58,10 +46,6 @@ Ce document décrit les pièces STL, les cotes fonctionnelles, l’assemblage et
 - Brim : **6 mm base**, **8 mm tige**, **3–5 mm roue**
 - Compensation XY : **-0.04 mm** (point de départ)
 
-### Ajustement fit filetage
-- Trop serré : compensation XY à **-0.06 mm**
-- Trop lâche : remonter à **-0.02 mm** ou **0.00 mm**
-
 Profil complet (start/end G-code Klipper, réglages support détaillés) :
 [`PRINT_PROFILE_klipper_creality_hyper_pla.txt`](./PRINT_PROFILE_klipper_creality_hyper_pla.txt).
 
@@ -76,22 +60,15 @@ Profil complet (start/end G-code Klipper, réglages support détaillés) :
   - Interface : ON (2 couches)
   - Z distance : 0.22 mm
 
-### `ball_screw_M5x40_ball5_square_flat.stl`
-- Orientation : déjà à plat.
-- Supports : Non (ou “touching buildplate only” si besoin).
-
-### `knurled_wheel_D100_T15_pitch5_flattooth.stl`
-- Orientation : grande face à plat.
-- Supports : Non.
-
 ## Génération STL
 
 Depuis la racine du repo :
 
 ```bash
+python3 -m pip install cadquery-ocp
 python3 hardware/cad/pi_camera_tilt_mount/generate.py
 ```
 
 ## Notes
-- Les filetages sont modélisés pour impression FDM.
-- Pour un ajustement parfait, un passage léger au taraud M3/M5 est possible après impression.
+- La commande régénère `pi_camera_tilt_base.stl` et le test d'encombrement;
+  elle ne génère pas les autres STL de ce répertoire.

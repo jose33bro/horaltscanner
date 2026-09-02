@@ -77,6 +77,8 @@ def _make_placeholder() -> bytes:
 class LogitechCamera:
     """Captures frames from a V4L2 USB camera (Logitech C270 etc.)."""
 
+    FRESH_FRAME_GRABS = 2
+
     #: Indices tried, in order, when the configured ``device_id`` fails to
     #: open or fails to deliver a frame.
     FALLBACK_DEVICE_IDS = (0, 1, 2, 3)
@@ -136,11 +138,14 @@ class LogitechCamera:
                 opened = cap.isOpened()
                 ok = False
                 if opened:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+                    buffer_size_property = getattr(cv2, "CAP_PROP_BUFFERSIZE", None)
+                    if buffer_size_property is not None:
+                        cap.set(buffer_size_property, 1)
                     ok, _frame = cap.read()
 
                 if opened and ok:
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
                     self._cap = cap
                     if idx != self.device_id:
                         logger.info(
@@ -184,14 +189,28 @@ class LogitechCamera:
         return self._cap is not None and self._cap.isOpened()
 
     def capture_jpeg(self) -> bytes | None:
-        """Capture one frame and return JPEG bytes."""
+        """Discard a bounded queue prefix and return a freshly encoded frame."""
         with self._lock:
             if not self.is_open:
                 return None
+            grab = getattr(self._cap, "grab", None)
+            for _ in range(self.FRESH_FRAME_GRABS):
+                if callable(grab):
+                    ok = grab()
+                else:
+                    ok, _discarded = self._cap.read()
+                if not ok:
+                    self.last_error = "USB camera failed while discarding a queued frame"
+                    return None
             ret, frame = self._cap.read()
             if not ret:
+                self.last_error = "USB camera failed to capture a fresh frame"
                 return None
-            _, buf = cv2.imencode(".jpg", frame)
+            encoded, buf = cv2.imencode(".jpg", frame)
+            if not encoded:
+                self.last_error = "USB camera failed to encode a fresh frame"
+                return None
+            self.last_error = None
             return buf.tobytes()
 
     def capture_jpeg_b64(self) -> str | None:

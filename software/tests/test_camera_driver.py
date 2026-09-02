@@ -25,16 +25,19 @@ class _FakeCap:
         self.idx = idx
         self._works = works
         self.released = False
+        self.events = []
 
     def isOpened(self):
         return self._works
 
     def read(self):
+        self.events.append(("read",))
         if not self._works:
             return False, None
         return True, np.zeros((480, 640, 3), dtype=np.uint8)
 
-    def set(self, *_args):
+    def set(self, *args):
+        self.events.append(("set", *args))
         return True
 
     def release(self):
@@ -44,6 +47,7 @@ class _FakeCap:
 class FakeCv2ForLogitech:
     CAP_PROP_FRAME_WIDTH = 3
     CAP_PROP_FRAME_HEIGHT = 4
+    CAP_PROP_BUFFERSIZE = 38
 
     def __init__(self, working_indices):
         self._opened_log: list = []
@@ -68,6 +72,15 @@ class LogitechCameraOpenTests(unittest.TestCase):
 
         self.assertEqual(camera.device_id, 0)
         self.assertEqual(fake_cv2._opened_log, [0])
+        self.assertEqual(
+            camera._cap.events,
+            [
+                ("set", fake_cv2.CAP_PROP_FRAME_WIDTH, 1920),
+                ("set", fake_cv2.CAP_PROP_FRAME_HEIGHT, 1080),
+                ("set", fake_cv2.CAP_PROP_BUFFERSIZE, 1),
+                ("read",),
+            ],
+        )
 
     def test_falls_back_to_working_index_when_configured_one_fails(self):
         # Configured device_id=2 is bad; only index 0 actually works.
@@ -155,6 +168,91 @@ class LogitechCameraOpenTests(unittest.TestCase):
             self.assertTrue(camera2.open())
         self.assertEqual(camera2.device_id, 3)
         self.assertEqual(fake_cv2_2._opened_log[0], 3)
+
+
+class _QueuedCapture:
+    def __init__(self, frames, *, fail_read=False):
+        self.frames = list(frames)
+        self.fail_read = fail_read
+        self.grab_calls = 0
+        self.read_calls = 0
+
+    def isOpened(self):
+        return True
+
+    def grab(self):
+        self.grab_calls += 1
+        if not self.frames:
+            return False
+        self.frames.pop(0)
+        return True
+
+    def read(self):
+        self.read_calls += 1
+        if self.fail_read or not self.frames:
+            return False, None
+        return True, self.frames.pop(0)
+
+
+class LogitechCameraFreshFrameTests(unittest.TestCase):
+    def setUp(self):
+        self.camera = camera_driver.LogitechCamera(device_id=0)
+
+    def test_discards_stale_frames_and_encodes_latest_bounded_frame(self):
+        stale_one = np.full((2, 2, 3), 1, dtype=np.uint8)
+        stale_two = np.full((2, 2, 3), 2, dtype=np.uint8)
+        latest = np.full((2, 2, 3), 3, dtype=np.uint8)
+        capture = _QueuedCapture([stale_one, stale_two, latest])
+        self.camera._cap = capture
+        encoded = np.array([7, 8, 9], dtype=np.uint8)
+        fake_cv2 = mock.Mock()
+        fake_cv2.imencode.return_value = (True, encoded)
+
+        with mock.patch.object(camera_driver, "cv2", fake_cv2, create=True):
+            result = self.camera.capture_jpeg()
+
+        self.assertEqual(result, encoded.tobytes())
+        self.assertEqual(capture.grab_calls, self.camera.FRESH_FRAME_GRABS)
+        self.assertEqual(capture.read_calls, 1)
+        np.testing.assert_array_equal(fake_cv2.imencode.call_args.args[1], latest)
+
+    def test_fresh_frame_read_failure_returns_none_without_encoding(self):
+        capture = _QueuedCapture(
+            [
+                np.zeros((2, 2, 3), dtype=np.uint8),
+                np.ones((2, 2, 3), dtype=np.uint8),
+            ],
+            fail_read=True,
+        )
+        self.camera._cap = capture
+        fake_cv2 = mock.Mock()
+
+        with mock.patch.object(camera_driver, "cv2", fake_cv2, create=True):
+            result = self.camera.capture_jpeg()
+
+        self.assertIsNone(result)
+        self.assertEqual(capture.grab_calls, self.camera.FRESH_FRAME_GRABS)
+        self.assertEqual(capture.read_calls, 1)
+        fake_cv2.imencode.assert_not_called()
+        self.assertIn("fresh frame", self.camera.last_error)
+
+    def test_queue_discard_loop_is_strictly_bounded(self):
+        class EndlessCapture(_QueuedCapture):
+            def grab(self):
+                self.grab_calls += 1
+                return True
+
+        latest = np.full((2, 2, 3), 4, dtype=np.uint8)
+        capture = EndlessCapture([latest])
+        self.camera._cap = capture
+        fake_cv2 = mock.Mock()
+        fake_cv2.imencode.return_value = (True, np.array([4], dtype=np.uint8))
+
+        with mock.patch.object(camera_driver, "cv2", fake_cv2, create=True):
+            self.assertEqual(self.camera.capture_jpeg(), b"\x04")
+
+        self.assertEqual(capture.grab_calls, self.camera.FRESH_FRAME_GRABS)
+        self.assertEqual(capture.read_calls, 1)
 
 
 class FakePicamera2:

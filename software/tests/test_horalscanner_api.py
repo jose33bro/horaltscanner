@@ -1,5 +1,7 @@
 import importlib
+import json
 import runpy
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -179,6 +181,73 @@ class HoralScannerAPITests(unittest.TestCase):
             {"pi": {"speed": 0.4}, "creality": 0.6, "temperature": 0.8},
         )
 
+    def test_fan_pi4_status_defaults_when_files_missing(self):
+        self.api_module._PI4_FAN_THERMAL_FILE = Path("/nonexistent/thermal_zone0/temp")
+        self.api_module._PI4_FAN_CONFIG_FILE = Path("/nonexistent/fan_config.json")
+        self.api_module._PI4_FAN_STATE_FILE = Path("/nonexistent/fan_state.json")
+
+        response = self.client.get("/api/fan/pi4/status")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["mode"], "auto")
+        self.assertIsNone(data["temp_c"])
+        self.assertIsNone(data["fan_percent"])
+        self.assertEqual(data["t_min"], 30)
+        self.assertEqual(data["t_max"], 50)
+
+    def test_fan_pi4_status_reads_temp_config_and_state_files(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            thermal_file = tmp_path / "temp"
+            thermal_file.write_text("45123\n")
+            config_file = tmp_path / "fan_config.json"
+            config_file.write_text(json.dumps({"t_min": 25, "t_max": 55}))
+            state_file = tmp_path / "fan_state.json"
+            state_file.write_text(json.dumps({"temp_c": 46.7, "fan_percent": 62}))
+
+            self.api_module._PI4_FAN_THERMAL_FILE = thermal_file
+            self.api_module._PI4_FAN_CONFIG_FILE = config_file
+            self.api_module._PI4_FAN_STATE_FILE = state_file
+
+            response = self.client.get("/api/fan/pi4/status")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(
+            data,
+            {
+                "mode": "auto",
+                "temp_c": 46.7,
+                "fan_percent": 62,
+                "t_min": 25,
+                "t_max": 55,
+            },
+        )
+
+    def test_fan_pi4_status_ignores_malformed_state_and_config_files(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            thermal_file = tmp_path / "temp"
+            thermal_file.write_text("38000\n")
+            config_file = tmp_path / "fan_config.json"
+            config_file.write_text("not-json")
+            state_file = tmp_path / "fan_state.json"
+            state_file.write_text("not-json")
+
+            self.api_module._PI4_FAN_THERMAL_FILE = thermal_file
+            self.api_module._PI4_FAN_CONFIG_FILE = config_file
+            self.api_module._PI4_FAN_STATE_FILE = state_file
+
+            response = self.client.get("/api/fan/pi4/status")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["temp_c"], 38.0)
+        self.assertIsNone(data["fan_percent"])
+        self.assertEqual(data["t_min"], 30)
+        self.assertEqual(data["t_max"], 50)
+
     def test_temperature_routes_read_board_sensor(self):
         board_response = self.client.get("/api/temperature/board")
         all_response = self.client.get("/api/temperature/all")
@@ -247,6 +316,37 @@ class HoralScannerAPITests(unittest.TestCase):
         data = response.get_json()
         self.assertFalse(data["success"])
         self.assertIn("hint", data)
+
+    def test_reconstruct_returns_in_progress_and_status_endpoint_polls_result(self):
+        session = self.api_module.scan_session
+        for i in range(150):
+            session._data.add_point(float(i), 0.0, 0.0)
+        self.addCleanup(session._data.clear)
+
+        response = self.client.post("/api/model/reconstruct")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertTrue(data["ok"])
+        # Without Open3D installed, reconstruction runs synchronously via
+        # the grid-triangulation fallback; with Open3D it starts in the
+        # background. Either way, the route must not raise and must report
+        # its progress state.
+        self.assertIn("in_progress", data)
+
+        status_response = self.client.get("/api/model/status")
+        self.assertEqual(status_response.status_code, 200)
+        status_data = status_response.get_json()
+        self.assertTrue(status_data["success"])
+        self.assertIn("in_progress", status_data)
+        self.assertIn("result", status_data)
+
+    def test_cancel_endpoint_requests_stop_and_reports_status(self):
+        response = self.client.post("/api/model/cancel")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertIn("in_progress", data)
 
     def test_health_endpoints_return_ok(self):
         for route in ("/health", "/api/health"):

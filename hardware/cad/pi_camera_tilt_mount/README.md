@@ -1,87 +1,52 @@
 # Support orientable pour Pi Camera V3
 
-Ce modèle en L réutilise le support blanc visible sur le scanner. Sa plaque
-verticale reprend l'espace validé, tandis qu'une tablette inférieure part vers
-l'avant. Deux oreilles arrondies en haut reçoivent l'axe M3 de la caméra.
+Ce répertoire contient la base du support orientable de Pi Camera V3 et son
+test d'encombrement. La plaque verticale et la tablette inférieure forment un
+support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
 
-## Cotes utilisées
+## Fichiers générés
 
-- plaque verticale corrigée après essai: 30,45 × 38,20 × 3,20 mm;
-- tablette inférieure vers l'avant: 24,00 mm;
-- deux parois sur les côtés de la tablette: hauteur 6,20 mm;
-- deux rails sous la tablette, depuis le bord avant: largeur 5,00 mm, longueur
-  16,00 mm, descente 5,00 mm;
-- un avant-trou horizontal de 2,70 mm dans chaque rail pour une vis M3 depuis
-  le côté;
-- deux oreilles arrondies sortant du bord avant: projection 8,70 mm, largeur
-  8,50 mm, hauteur 5,99 mm;
-- espace entre les oreilles: 5,33 mm;
-- trou traversant M3: 3,40 mm.
-- hauteur totale caméra + support entre les oreilles: 34,00 mm;
-- trou de réglage inférieur orienté arrière → avant dans la plaque verticale:
-  M5 (Ø 5,30 mm de passage); position remontée de 5 mm par rapport au placement
-  précédent;
-- vis de réglage inférieure: M5 à bout sphérique, longueur utile 40 mm,
-  boule Ø 6,5 mm au bout (filetage M5 hélicoïdal réel imprimable, pas 0,8 mm);
-- logement de la boule côté support caméra: Ø 6,9 mm (hémisphère centré sur la plaque)
-  avec anneau de rétention à 4 pétales (hauteur 4 mm, paroi 1 mm, fente 0,8 mm) et un
-  passage central Ø 5,30 mm débouchant pour laisser coulisser la tige M5 sans la
-  bloquer;
-- deux trous M3 symétriques (Ø 3,2 mm) à ±8 mm du centre sur la plaque support;
-- fenêtre CSI centrée dans la tablette horizontale: 18,00 × 9,56 mm.
+- `stl/pi_camera_tilt_base.stl` : base orientable définitive;
+- `stl/fit_test_rear_cavity_30.45x38.2.stl` : test d'encombrement à imprimer
+  avant la base.
 
-Les oreilles sont centrées en haut de la plaque (hauteur 38,20 mm). Le support caméra entre dans leur espace de 5,33 mm. Une seule vis M3 traverse les deux
-arrondis et le support; un écrou M3 bloque l'angle. La vis inférieure de
-réglage M5 à bout sphérique (longueur 40 mm, boule Ø 6,5 mm) est **filetée M5 hélicoïdale
-imprimable** (pas 0,8 mm, profil triangulaire, Ø intérieur ≈ 4,13 mm, Ø extérieur 5,0 mm)
-et traverse maintenant
-la plaque verticale d'arrière → avant, avec un passage imprimable de 5,30 mm.
-Le trou de réglage a été remonté de 5 mm par rapport au placement précédent.
-La nappe CSI traverse la fenêtre centrée dans la tablette horizontale.
-La boule de bout est reçue dans le logement Ø 6,9 mm centré sur la plaque support
-(28,05 × 7 × 1 mm); un **anneau de rétention à 4 pétales** (hauteur 4 mm, paroi 1 mm,
-fentes de 0,8 mm, chanfrein d'entrée 0,5 mm) enclenche la boule par snap-fit sans que
-celle-ci ne dépasse le diamètre M5 (la boule est légèrement en retrait du bout de la
-tige). Un passage central Ø 5,30 mm traverse toute l'épaisseur de la plaque pour que
-la tige M5 (Ø 5,00 mm) coulisse librement à travers l'anneau et le logement.
-Deux trous M3 (Ø 3,2 mm) à ±8 mm du centre permettent la fixation du support caméra.
-Toutes les pièces sont compatibles PLA Creality Hyper Series.
+Les autres fichiers STL éventuellement présents dans ce répertoire ne sont pas
+générés par `generate.py`.
 
-## Fichiers
+## Cotes fonctionnelles de la base
 
-- `stl/fit_test_rear_cavity_30.45x38.2.stl`: test d'encombrement à imprimer en
-  premier;
-- `stl/pi_camera_tilt_base.stl`: base orientable définitive;
-- `stl/ball_screw_M5x40_ball6.5.stl`: vis M5 × 40 mm à bout sphérique Ø 6,5 mm
-  avec filetage M5 hélicoïdal imprimable (pas 0,8 mm);
-- `stl/camera_support_plate_28.05x7x1.stl`: plaque support caméra 28,05 × 7 × 1 mm
-  avec logement boule Ø 6,9 mm centré, anneau de rétention 4 pétales (H=4 mm),
-  passage central Ø 5,30 mm pour la tige M5 et deux trous M3 à ±8 mm du centre;
-- `generate.py`: source paramétrique Python/OpenCascade.
+- plaque verticale : 30,45 × 38,20 × 3,20 mm;
+- tablette inférieure vers l'avant : projection 24,00 mm;
+- parois latérales de tablette : 3,20 mm d'épaisseur et 6,20 mm de hauteur;
+- rails sous la tablette : 5,00 mm de large, 16,00 mm de long et 5,00 mm de
+  descente, avec un avant-trou horizontal Ø 2,70 mm dans chaque rail;
+- oreilles : projection 8,70 mm, largeur 8,50 mm, hauteur 5,99 mm et espace
+  central 5,33 mm;
+- trou d'axe traversant : Ø 3,40 mm;
+- fenêtre CSI dans la plaque verticale : 18,00 × 9,56 mm.
 
-## Visserie
+## Génération
 
-- 1 vis M3 traversante avec écrou et 2 rondelles pour le pivot caméra;
-- 1 vis M5 × 40 mm à bout sphérique Ø 6,5 mm pour le réglage inférieur;
-- 2 vis M3 supplémentaires de 10 à 12 mm pour fixer la base au support rouge.
+Le générateur paramétrique `generate.py` dépend des bindings OpenCascade
+fournis par le paquet `cadquery-ocp`. Dans un environnement Python dédié :
 
-La vis traversante serre les deux oreilles contre la patte centrale du support
-caméra afin de bloquer l'angle.
+```bash
+python3 -m pip install cadquery-ocp
+python3 hardware/cad/pi_camera_tilt_mount/generate.py
+```
+
+Exécuter la commande depuis la racine du dépôt. Elle vérifie les solides avant
+l'export et remplace uniquement les deux STL listés ci-dessus.
 
 ## Impression et montage
 
-1. Imprimer d'abord le test d'encombrement à plat.
-2. Vérifier qu'il correspond à l'espace arrière sans forcer.
-3. Imprimer la base définitive en PETG recommandé,
-   avec quatre périmètres et au moins 35 % de remplissage.
-4. Retirer le berceau blanc du support rouge sans débrancher brutalement la
-   nappe CSI.
-5. Placer la patte du support caméra dans l'espace central de 5,33 mm.
-6. Aligner les trous, installer la vis M3 traversante, régler l'inclinaison et
-   serrer l'écrou.
-7. Repérer les deux avant-trous dans les rails inférieurs, percer le support
-   rouge à 3,2 mm puis fixer la base horizontalement depuis chaque côté avec
-   une vis M3.
+1. Imprimer d'abord le test d'encombrement à plat et vérifier l'espace arrière.
+2. Imprimer la base avec le grand dos de la plaque contre le plateau.
+3. Utiliser des supports « Everywhere », angle de surplomb 55°, densité 12 %,
+   interface activée (2 couches) et distance Z de 0,22 mm.
+4. Installer la caméra entre les oreilles, puis une vis M3, des rondelles et
+   un écrou pour régler et bloquer l'inclinaison.
+5. Fixer la base par les deux rails inférieurs avec des vis M3.
 
-Maintenir la nappe CSI à l'extérieur de la base. Ne pas la pincer ni la plier
-fortement pendant l'inclinaison.
+Le profil d'impression détaillé est documenté dans
+[`../../../materiel/README_support_camera_pi_pivot_reglable.md`](../../../materiel/README_support_camera_pi_pivot_reglable.md).

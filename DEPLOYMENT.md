@@ -85,6 +85,51 @@ sudo systemctl status horalscanner
 sudo journalctl -u horalscanner -f
 ```
 
+## Production Server (Gunicorn)
+
+The Flask development server (`python -m api.horalscanner_api`) is
+**single-threaded and unsuitable for production**: it handles one HTTP
+request at a time, so while a client is streaming an MJPEG preview or
+polling `/api/model/status`, every other request (scan control, status
+checks, UI page loads) is blocked. Even though 3D reconstruction now runs
+on a background thread and returns immediately, the dev server itself
+cannot serve multiple *concurrent* requests, which limits the benefit of
+that async work.
+
+For production/RPi4 deployments, run the API behind
+[Gunicorn](https://gunicorn.org/) with the `gevent` worker class, which
+gives cooperative, non-blocking concurrency well suited to a Raspberry Pi's
+limited CPU cores:
+
+```bash
+pip install -r requirements.txt  # installs gunicorn + gevent
+cd software
+gunicorn --workers 4 --worker-class gevent --bind 0.0.0.0:5000 "api:create_app()"
+```
+
+- `--workers 4`: 4 worker processes let the API accept and answer several
+  requests (status polling, camera preview, UI) at once instead of queuing
+  behind a single-threaded dev server.
+- `--worker-class gevent`: cooperative greenlets inside each worker so
+  blocking I/O (camera reads, file responses) doesn't stall other
+  in-flight requests on that worker.
+
+### systemd service using Gunicorn
+
+Update the `ExecStart` line in the service file above to use Gunicorn
+instead of the Flask dev server:
+
+```ini
+ExecStart=/home/pi/horaltscanner_env/bin/gunicorn --workers 4 --worker-class gevent --bind 0.0.0.0:5000 "api:create_app()"
+```
+
+Then reload and restart as usual:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart horalscanner
+```
+
 ## Updating
 
 ```bash

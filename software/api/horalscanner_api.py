@@ -993,7 +993,21 @@ def model_reconstruct():
             detail=detail,
             hint="Start a scan and collect enough points before reconstructing a model.",
         )
+    # When reconstruction is running in the background, the caller should
+    # poll /api/model/status for progress/result rather than expecting the
+    # final mesh inline.
     return jsonify({"success": True, **result})
+
+
+@api_bp.route("/api/model/status", methods=["GET"])
+def model_status():
+    return jsonify({"success": True, **reconstruction_engine.status()})
+
+
+@api_bp.route("/api/model/cancel", methods=["POST"])
+def model_cancel():
+    reconstruction_engine.cancel()
+    return jsonify({"success": True, **reconstruction_engine.status()})
 
 
 @api_bp.route("/api/model/current", methods=["GET"])

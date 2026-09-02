@@ -49,6 +49,11 @@ class FakeCv2ForLogitech:
 
 
 class LogitechCameraOpenTests(unittest.TestCase):
+    def setUp(self):
+        # Ensure the class-level "last working device" cache doesn't leak
+        # state between tests (or from a previous test module run).
+        camera_driver.LogitechCamera._last_working_device_id = None
+
     def test_opens_on_configured_device_id_without_fallback(self):
         fake_cv2 = FakeCv2ForLogitech(working_indices={0})
         camera = camera_driver.LogitechCamera(device_id=0)
@@ -110,6 +115,31 @@ class LogitechCameraOpenTests(unittest.TestCase):
         camera = camera_driver.LogitechCamera(device_id=0)
         with mock.patch.object(camera_driver, "_CV2_AVAILABLE", False):
             self.assertFalse(camera.open())
+
+    def test_caches_last_working_device_and_tries_it_first(self):
+        # First camera finds device 3 working; this should be cached at the
+        # class level.
+        fake_cv2 = FakeCv2ForLogitech(working_indices={3})
+        camera = camera_driver.LogitechCamera(device_id=3)
+        with (
+            mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
+            mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
+        ):
+            self.assertTrue(camera.open())
+        self.assertEqual(camera_driver.LogitechCamera._last_working_device_id, 3)
+
+        # A second camera configured with a different (bad) device_id should
+        # try the cached index 3 before falling back to its own candidates,
+        # avoiding a full re-probe of every device.
+        fake_cv2_2 = FakeCv2ForLogitech(working_indices={3})
+        camera2 = camera_driver.LogitechCamera(device_id=9)
+        with (
+            mock.patch.object(camera_driver, "cv2", fake_cv2_2, create=True),
+            mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
+        ):
+            self.assertTrue(camera2.open())
+        self.assertEqual(camera2.device_id, 3)
+        self.assertEqual(fake_cv2_2._opened_log[0], 3)
 
 
 class FakeCv2:

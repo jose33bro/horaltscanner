@@ -1,3 +1,4 @@
+import io
 import unittest
 from unittest import mock
 
@@ -110,6 +111,61 @@ class LogitechCameraOpenTests(unittest.TestCase):
         camera = camera_driver.LogitechCamera(device_id=0)
         with mock.patch.object(camera_driver, "_CV2_AVAILABLE", False):
             self.assertFalse(camera.open())
+
+
+class FakePicamera2:
+    """Minimal Picamera2 stand-in returning a known BGR-ordered array."""
+
+    def __init__(self, array):
+        self._array = array
+        self.started = False
+        self.stopped = False
+        self.closed = False
+
+    def create_still_configuration(self, **_kwargs):
+        return {}
+
+    def configure(self, _config):
+        return None
+
+    def start(self):
+        self.started = True
+
+    def capture_array(self):
+        return self._array
+
+    def stop(self):
+        self.stopped = True
+
+    def close(self):
+        self.closed = True
+
+
+class PiCameraCaptureTests(unittest.TestCase):
+    def test_capture_jpeg_corrects_picamera2_bgr_ordering(self):
+        # picamera2's "RGB888" configuration actually yields BGR-ordered
+        # pixels (libcamera/DRM naming quirk). Build a frame that is pure
+        # blue in that raw ordering and assert the saved JPEG is red,
+        # proving the channel swap fix is applied before encoding.
+        raw_bgr_frame = np.zeros((4, 4, 3), dtype=np.uint8)
+        raw_bgr_frame[:, :, 2] = 255  # true "red" value, stored at the
+        # last position because picamera2 delivers it in BGR memory order
+
+        fake_cam = FakePicamera2(raw_bgr_frame)
+        camera = camera_driver.PiCamera()
+        with mock.patch.object(camera_driver, "_PICAM_AVAILABLE", True), \
+                mock.patch.object(camera_driver, "Picamera2", lambda: fake_cam, create=True):
+            self.assertTrue(camera.open())
+
+        jpeg = camera.capture_jpeg()
+        self.assertIsNotNone(jpeg)
+
+        from PIL import Image
+        decoded = np.array(Image.open(io.BytesIO(jpeg)).convert("RGB"))
+        # A pixel that was "blue" in the raw BGR-ordered array must be
+        # reported as red once corrected to true RGB order.
+        self.assertGreater(int(decoded[0, 0, 0]), 200)
+        self.assertLess(int(decoded[0, 0, 2]), 50)
 
 
 class FakeCv2:

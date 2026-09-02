@@ -237,9 +237,15 @@ class PiCamera:
         if not self.is_open:
             return None
         try:
-            import numpy as np
             from PIL import Image
             array = self._cam.capture_array()
+            # picamera2's "RGB888" configuration actually delivers pixels in
+            # BGR memory order (a well-known libcamera/DRM naming quirk: see
+            # https://github.com/raspberrypi/picamera2/issues/848). Reverse
+            # the channel axis so the array is true RGB before handing it to
+            # PIL, otherwise captured frames (and downstream red-channel
+            # laser-line detection) have red/blue swapped.
+            array = array[:, :, ::-1]
             img = Image.fromarray(array)
             buf = io.BytesIO()
             img.save(buf, format="JPEG")

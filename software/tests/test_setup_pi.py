@@ -2,6 +2,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import time
 import unittest
 from pathlib import Path
 
@@ -54,6 +55,14 @@ class RaspberryPiRepairScriptTests(unittest.TestCase):
         )
         offsets = [repair.index(step) for step in expected_order]
         self.assertEqual(offsets, sorted(offsets))
+
+    def test_health_check_uses_bounded_readiness_polling(self):
+        self.assertIn("HORALSCANNER_HEALTH_TIMEOUT_S:-45", self.script)
+        self.assertIn("HORALSCANNER_HEALTH_INTERVAL_S:-2", self.script)
+        health = self.script.split("non_motion_health_check() {", 1)[1].split(
+            "\n}", 1
+        )[0]
+        self.assertIn("wait_for_service_ready", health)
 
     def test_existing_venv_is_upgraded_with_system_site_packages(self):
         self.assertIn(
@@ -212,6 +221,51 @@ class RaspberryPiRepairShellBehaviorTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(call_log.exists())
+
+    def test_readiness_poll_succeeds_after_delayed_http_startup(self):
+        call_log = self.scratch / "curl-calls.txt"
+        command = (
+            f"source {shlex.quote(str(ROOT / 'setup_pi.sh'))}; "
+            "HORALSCANNER_HEALTH_TIMEOUT_S=5; "
+            "HORALSCANNER_HEALTH_INTERVAL_S=1; "
+            "CURL_CALLS=0; "
+            'systemctl() { [ "$1" = "is-active" ] && echo active; }; '
+            "sleep() { :; }; "
+            'curl() { CURL_CALLS=$((CURL_CALLS + 1)); '
+            '[ "$CURL_CALLS" -ge 3 ]; }; '
+            "wait_for_service_ready; "
+            f'printf "%s" "$CURL_CALLS" >{shlex.quote(str(call_log))}'
+        )
+
+        subprocess.run(["bash", "-c", command], check=True)
+
+        self.assertEqual(call_log.read_text(encoding="utf-8"), "3")
+
+    def test_readiness_poll_reports_real_timeout_and_journal_hint(self):
+        command = (
+            f"source {shlex.quote(str(ROOT / 'setup_pi.sh'))}; "
+            "HORALSCANNER_HEALTH_TIMEOUT_S=1; "
+            "HORALSCANNER_HEALTH_INTERVAL_S=1; "
+            'systemctl() { if [ "$1" = "is-active" ]; then echo active; '
+            'else echo "mock service status"; fi; }; '
+            "curl() { return 1; }; "
+            'journalctl() { echo "mock journal"; }; '
+            "wait_for_service_ready"
+        )
+        started = time.monotonic()
+
+        result = subprocess.run(
+            ["bash", "-c", command],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertIn("readiness timed out after 1s", result.stdout)
+        self.assertIn("sudo journalctl", result.stdout)
+        self.assertIn("mock journal", result.stdout)
 
 
 if __name__ == "__main__":

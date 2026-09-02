@@ -33,6 +33,8 @@ class GPIODriverTests(unittest.TestCase):
     def test_connect_returns_true(self):
         driver = GPIODriver(simulation=True)
         self.assertTrue(driver.connect())
+        self.assertTrue(driver.simulation)
+        self.assertTrue(driver.hardware_available)
 
     def test_connect_initializes_pi_fan_from_hardware_config(self):
         fan_device = Mock()
@@ -63,6 +65,14 @@ class GPIODriverTests(unittest.TestCase):
         self.assertTrue(driver.set_fan_speed(0.0))
         fan_device.off.assert_called_once_with()
         self.assertEqual(driver.get_fan_status()["speed"], 0.0)
+
+    def test_read_cpu_temperature_uses_injected_reader(self):
+        driver = GPIODriver(
+            simulation=True,
+            cpu_temperature_reader=lambda: 48.75,
+        )
+
+        self.assertEqual(driver.read_cpu_temperature(), 48.75)
 
     def test_real_gpio_outputs_use_active_high_devices(self):
         output_devices = [Mock(), Mock(), Mock()]
@@ -118,6 +128,39 @@ class GPIODriverTests(unittest.TestCase):
 
         self.assertFalse(driver.connect())
         self.assertFalse(driver.set_fan_speed(1.0))
+        self.assertIsInstance(driver.last_error, RuntimeError)
+        self.assertEqual(str(driver.last_error), "GPIO busy")
+
+    def test_last_error_is_none_after_successful_connect(self):
+        driver = GPIODriver(
+            simulation=False,
+            hardware_config={"fans": {"pi_fan": {"gpio": 23}}},
+            output_device_factory=Mock(return_value=Mock()),
+        )
+
+        self.assertTrue(driver.connect())
+        self.assertIsNone(driver.last_error)
+
+    def test_real_laser_and_led_reject_commands_when_gpio_is_unavailable(self):
+        driver = GPIODriver(
+            simulation=False,
+            hardware_config={
+                "lasers": {"left": {"gpio": 27}, "right": {"gpio": 22}},
+                "led_rgb": {
+                    "red": {"gpio": 18},
+                    "green": {"gpio": 13},
+                    "blue": {"gpio": 19},
+                },
+                "fans": {"pi_fan": {"gpio": 23}},
+            },
+            output_device_factory=Mock(side_effect=RuntimeError("GPIO busy")),
+            pwm_device_factory=Mock(),
+        )
+
+        self.assertFalse(driver.connect())
+        self.assertFalse(driver.laser_on("left"))
+        self.assertFalse(driver.laser_off("right"))
+        self.assertFalse(driver.led_set(1, 2, 3))
 
     def test_close_releases_pi_fan_gpio(self):
         fan_device = Mock()

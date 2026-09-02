@@ -74,9 +74,6 @@ class GPIOLaserControl:
             backend = RpiGPIOBackend()
             self._controller = LaserController(backend)
 
-    # ------------------------------------------------------------------
-    # Laser
-    # ------------------------------------------------------------------
 
     def laser_on(self, side: str = "both") -> None:
         if self._controller is None:
@@ -89,7 +86,10 @@ class GPIOLaserControl:
     def laser_off(self, side: str = "both") -> None:
         if self._controller is None:
             return
-        self._controller.disable_both()
+        if side in ("both", "gauche", "left"):
+            self._controller._backend.write(self._controller._left_pin, False)
+        if side in ("both", "droit", "right"):
+            self._controller._backend.write(self._controller._right_pin, False)
 
     def laser_pulse(self, duration_ms: float, side: str = "both") -> None:
         self.laser_on(side)
@@ -140,10 +140,6 @@ class GPIOLaserControl:
 
     def status_error(self) -> None:
         pass
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
 
     def shutdown(self) -> None:
         if self._controller is not None:

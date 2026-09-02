@@ -1,4 +1,4 @@
-"""HoralScanner Flask API."""
+"""HoralScanner Flask API (modern version)."""
 
 from __future__ import annotations
 
@@ -6,15 +6,34 @@ import logging
 import sys
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 # Add repo root to path so 'software' module can be imported
 _API_DIR = Path(__file__).resolve().parent
+_SOFTWARE_DIR = _API_DIR.parent
 _REPO_ROOT = _API_DIR.parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_SOFTWARE_DIR))
 
-from flask import Flask, Response, jsonify, request, send_file, send_from_directory
-from software.api import config_manager
+# Modern Flask imports
+from flask import (
+    Blueprint,
+    Flask,
+    Response,
+    jsonify,
+    request,
+    send_file,
+    send_from_directory,
+)
+
+# Blueprint moderne
+api_bp = Blueprint("api", __name__)
+
+# Modern API imports
+try:
+    from . import config_manager
+except ImportError:  # pragma: no cover - direct script execution
+    from software.api import config_manager
 from software.api.camera_calibration import (
     get_all_saved_poses,
     get_calibration_pose,
@@ -23,13 +42,24 @@ from software.api.camera_calibration import (
     restore_scan_pose,
     save_current_pose,
 )
-from software.api.camera_driver import LogitechCamera, PiCamera, analyze_camera_frame, analyze_laser_line
-from software.api.calibration_pose import PoseMemory, get_default_pose, move_to_pose, read_lidar_distance
+from software.api.camera_driver import (
+    LogitechCamera,
+    PiCamera,
+    analyze_camera_frame,
+    analyze_laser_line,
+)
+from software.api.calibration_pose import (
+    PoseMemory,
+    get_default_pose,
+    move_to_pose,
+    read_lidar_distance,
+)
 from software.api.lidar_driver import LidarDriver
-from software.api.scanner_engine import ReconstructionEngine, ScanSession
+from software.api.scanner_engine import ReconstructionEngine, ScanSession, _O3D_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
+# Drivers
 try:
     from software.drivers.stm32_driver import STM32Driver
 except Exception as exc:  # pragma: no cover - environment dependent
@@ -41,9 +71,6 @@ try:
 except Exception as exc:  # pragma: no cover - environment dependent
     GPIODriver = None  # type: ignore[assignment]
     logger.warning("GPIODriver import failed: %s", exc)
-
-
-app = Flask(__name__)
 
 _WEB_DIR = _API_DIR.parent / "web"
 _VERSION_FILE = _REPO_ROOT / "VERSION"
@@ -61,7 +88,7 @@ CAMERA_CALIBRATION_POSES: dict[str, dict[str, float | None]] = {
 _scan_pose: dict[str, Any] | None = None
 
 
-@app.after_request
+@api_bp.after_request
 def _add_cors(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
@@ -69,22 +96,22 @@ def _add_cors(response):
     return response
 
 
-@app.route("/", methods=["GET"])
+@api_bp.route("/", methods=["GET"])
 def index():
     return send_from_directory(str(_WEB_DIR), "index.html")
 
 
-@app.route("/app.js", methods=["GET"])
+@api_bp.route("/app.js", methods=["GET"])
 def web_app_script():
     return send_from_directory(str(_WEB_DIR), "app.js")
 
 
-@app.route("/style.css", methods=["GET"])
+@api_bp.route("/style.css", methods=["GET"])
 def web_styles():
     return send_from_directory(str(_WEB_DIR), "style.css")
 
 
-@app.route("/viewer3d.js", methods=["GET"])
+@api_bp.route("/viewer3d.js", methods=["GET"])
 def web_3d_viewer_script():
     return send_from_directory(str(_WEB_DIR), "viewer3d.js")
 
@@ -97,9 +124,52 @@ def _initialize_driver(driver: Any, name: str) -> None:
 
     try:
         if not driver.connect():
-            logger.warning("%s connection failed", name)
+            last_error = getattr(driver, "last_error", None)
+            if last_error is not None:
+                logger.warning("%s connection failed", name, exc_info=last_error)
+            else:
+                logger.warning("%s connection failed", name)
     except Exception as exc:  # pragma: no cover - hardware dependent
-        logger.warning("%s connection error: %s", name, exc)
+        logger.warning("%s connection error", name, exc_info=exc)
+
+
+def _load_gpiozero_factories() -> tuple[Callable | None, Callable | None]:
+    try:
+        from gpiozero import OutputDevice, PWMOutputDevice
+    except Exception as exc:  # pragma: no cover - environment dependent
+        logger.warning("gpiozero import failed: %s", exc)
+        return None, None
+
+    def output_device_factory(pin, active_high=True, initial_value=False):
+        return OutputDevice(
+            pin,
+            active_high=active_high,
+            initial_value=bool(initial_value),
+        )
+
+    def pwm_device_factory(pin, active_high=True, initial_value=False):
+        return PWMOutputDevice(
+            pin,
+            active_high=active_high,
+            initial_value=1.0 if initial_value else 0.0,
+        )
+
+    return output_device_factory, pwm_device_factory
+
+
+def _create_gpio_driver(enabled: bool, config: dict) -> Any:
+    if GPIODriver is None:
+        return None
+    output_factory = None
+    pwm_factory = None
+    if enabled:
+        output_factory, pwm_factory = _load_gpiozero_factories()
+    return GPIODriver(
+        simulation=not enabled,
+        hardware_config=config,
+        output_device_factory=output_factory,
+        pwm_device_factory=pwm_factory,
+    )
 
 
 hardware_config = config_manager.load_hardware_config()
@@ -116,9 +186,7 @@ stm32_driver = (
     else None
 )
 gpio_driver = (
-    GPIODriver(simulation=not pi_gpio_enabled, hardware_config=hardware_config)
-    if GPIODriver
-    else None
+    _create_gpio_driver(pi_gpio_enabled, hardware_config)
 )
 lidar_driver = LidarDriver(
     port=serial_config.get("lidar_port", "/dev/ttyUSB0"),
@@ -152,8 +220,74 @@ def _ensure_lidar_connected() -> bool:
     return lidar_driver.connected or lidar_driver.connect()
 
 
-def _json_error(message: str, status_code: int = 400):
-    return jsonify({"success": False, "error": message}), status_code
+def _gpio_driver_ready() -> bool:
+    if gpio_driver is None:
+        return False
+    simulation = getattr(gpio_driver, "simulation", None)
+    hardware_available = getattr(gpio_driver, "hardware_available", None)
+    if simulation is not None and hardware_available is not None:
+        return bool(simulation or hardware_available)
+    status_fn = getattr(gpio_driver, "status", None)
+    if callable(status_fn):
+        try:
+            status = status_fn()
+            return bool(status.get("simulation") or status.get("hardware_available"))
+        except Exception:
+            return False
+    return False
+
+
+def _stm32_driver_ready() -> bool:
+    if stm32_driver is None:
+        return False
+    return bool(getattr(stm32_driver, "connected", False))
+
+
+def _json_error(
+    message: str,
+    status_code: int = 400,
+    *,
+    detail: str | None = None,
+    hint: str | None = None,
+):
+    payload = {"success": False, "error": message}
+    if detail is not None:
+        payload["detail"] = detail
+    if hint is not None:
+        payload["hint"] = hint
+    return jsonify(payload), status_code
+
+
+def _gpio_ready() -> bool:
+    return bool(
+        gpio_driver is not None
+        and (
+            getattr(gpio_driver, "simulation", False)
+            or getattr(gpio_driver, "hardware_available", False)
+        )
+    )
+
+
+def _stm32_ready() -> bool:
+    return bool(stm32_driver is not None and getattr(stm32_driver, "connected", False))
+
+
+def _runtime_capabilities() -> dict[str, Any]:
+    camera_status = {
+        "pi": bool(pi_camera and (pi_camera.is_open or pi_camera.open())),
+        "usb": bool(usb_camera and (usb_camera.is_open or usb_camera.open())),
+    }
+    simulation_mode = bool(getattr(scan_session, "_simulation", False))
+    acquisition_backend_ready = bool(
+        simulation_mode or _stm32_ready() or _gpio_ready()
+    )
+    return {
+        "camera_available": camera_status,
+        "gpio_available": _gpio_ready(),
+        "open3d_available": bool(_O3D_AVAILABLE),
+        "acquisition_backend_ready": acquisition_backend_ready,
+        "simulation_mode": simulation_mode,
+    }
 
 
 def _lidar_validation(camera_name: str, lidar_distance_mm: float | None) -> dict[str, Any]:
@@ -200,7 +334,7 @@ def _parse_pwm_speed(data: dict[str, Any]) -> float:
     raise ValueError("Missing speed value")
 
 
-@app.route("/api/laser/<side>", methods=["POST"])
+@api_bp.route("/api/laser/<side>", methods=["POST"])
 def laser(side: str):
     data = request.get_json(silent=True) or {}
     state = bool(data.get("state", False))
@@ -219,7 +353,7 @@ def laser(side: str):
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/led/color", methods=["POST"])
+@api_bp.route("/api/led/color", methods=["POST"])
 def led_color():
     data = request.get_json(silent=True) or {}
     try:
@@ -243,7 +377,7 @@ def led_color():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/move/<axis>", methods=["POST"])
+@api_bp.route("/api/move/<axis>", methods=["POST"])
 def move(axis: str):
     data = request.get_json(silent=True) or {}
     try:
@@ -265,7 +399,7 @@ def move(axis: str):
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/home/<target>", methods=["POST"])
+@api_bp.route("/api/home/<target>", methods=["POST"])
 def home(target: str):
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -281,7 +415,7 @@ def home(target: str):
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/motor/status", methods=["GET", "POST"])
+@api_bp.route("/api/motor/status", methods=["GET", "POST"])
 def motor_status():
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -293,7 +427,7 @@ def motor_status():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/motor/stop", methods=["POST"])
+@api_bp.route("/api/motor/stop", methods=["POST"])
 def motor_stop():
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -312,7 +446,7 @@ def motor_stop():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/fan/pi", methods=["POST"])
+@api_bp.route("/api/fan/pi", methods=["POST"])
 def fan_pi():
     if gpio_driver is None:
         return _json_error("GPIO driver unavailable", 503)
@@ -333,7 +467,7 @@ def fan_pi():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/fan/creality", methods=["POST"])
+@api_bp.route("/api/fan/creality", methods=["POST"])
 def fan_creality():
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -354,7 +488,7 @@ def fan_creality():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/fan/temperature", methods=["POST"])
+@api_bp.route("/api/fan/temperature", methods=["POST"])
 def fan_temperature():
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -375,7 +509,7 @@ def fan_temperature():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/fan/status", methods=["GET"])
+@api_bp.route("/api/fan/status", methods=["GET"])
 def fan_status():
     if gpio_driver is None and stm32_driver is None:
         return _json_error("No fan drivers available", 503)
@@ -392,7 +526,7 @@ def fan_status():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/temperature/board", methods=["GET"])
+@api_bp.route("/api/temperature/board", methods=["GET"])
 def temperature_board():
     if stm32_driver is None:
         return _json_error("STM32 driver unavailable", 503)
@@ -407,27 +541,27 @@ def temperature_board():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/temperature/all", methods=["GET"])
+@api_bp.route("/api/temperature/all", methods=["GET"])
 def temperature_all():
-    if stm32_driver is None:
-        return _json_error("STM32 driver unavailable", 503)
+    if stm32_driver is None and gpio_driver is None:
+        return _json_error("Temperature drivers unavailable", 503)
 
     try:
-        board_temperature = stm32_driver.read_board_temperature()
-        if board_temperature is None:
-            return _json_error("Failed to read board temperature", 502)
-        status = {
-            "board_c": board_temperature,
+        status: dict[str, Any] = {
             "sensor_pin": "PC5",
             "sensor_type": "EPCOS 100K B57560G104F",
         }
+        if stm32_driver is not None:
+            status["board_c"] = stm32_driver.read_board_temperature()
+        if gpio_driver is not None:
+            status["pi_cpu_c"] = gpio_driver.read_cpu_temperature()
         return jsonify({"success": True, "status": status})
     except Exception:
         logger.exception("All temperature route failed")
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/laser/status", methods=["GET"])
+@api_bp.route("/api/laser/status", methods=["GET"])
 def laser_status():
     if gpio_driver is None:
         return _json_error("GPIO driver unavailable", 503)
@@ -438,7 +572,7 @@ def laser_status():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/led/status", methods=["GET"])
+@api_bp.route("/api/led/status", methods=["GET"])
 def led_status():
     if gpio_driver is None:
         return _json_error("GPIO driver unavailable", 503)
@@ -449,7 +583,7 @@ def led_status():
         return _json_error("Internal server error", 500)
 
 
-@app.route("/api/lidar/read", methods=["POST"])
+@api_bp.route("/api/lidar/read", methods=["POST"])
 def lidar_read():
     if not _ensure_lidar_connected():
         return _json_error("TF-Luna unavailable", 503)
@@ -463,7 +597,7 @@ def lidar_read():
     })
 
 
-@app.route("/api/lidar/calibrate", methods=["POST"])
+@api_bp.route("/api/lidar/calibrate", methods=["POST"])
 def lidar_calibrate():
     data = request.get_json(silent=True) or {}
     try:
@@ -480,7 +614,7 @@ def lidar_calibrate():
     return jsonify({"success": True, "offset_mm": round(offset, 1)})
 
 
-@app.route("/api/camera/<camera_name>/frame", methods=["GET"])
+@api_bp.route("/api/camera/<camera_name>/frame", methods=["GET"])
 def camera_frame(camera_name: str):
     camera = _get_camera(camera_name)
     if camera is None:
@@ -493,7 +627,7 @@ def camera_frame(camera_name: str):
     return Response(jpeg, mimetype="image/jpeg")
 
 
-@app.route("/api/camera/<camera_name>/status", methods=["GET"])
+@api_bp.route("/api/camera/<camera_name>/status", methods=["GET"])
 def camera_status(camera_name: str):
     camera = _get_camera(camera_name)
     if camera is None:
@@ -506,7 +640,7 @@ def camera_status(camera_name: str):
     })
 
 
-@app.route("/api/camera/<camera_name>/test", methods=["POST"])
+@api_bp.route("/api/camera/<camera_name>/test", methods=["POST"])
 def camera_test(camera_name: str):
     camera = _get_camera(camera_name)
     if camera is None:
@@ -526,7 +660,7 @@ def camera_test(camera_name: str):
 # Camera calibration pose endpoints
 # ---------------------------------------------------------------------------
 
-@app.route("/api/camera/<camera_name>/goto_calibration_pose", methods=["POST"])
+@api_bp.route("/api/camera/<camera_name>/goto_calibration_pose", methods=["POST"])
 def camera_goto_calibration_pose(camera_name: str):
     """Move motors to the default calibration pose for *camera_name*.
 
@@ -579,7 +713,7 @@ def camera_goto_calibration_pose(camera_name: str):
     })
 
 
-@app.route("/api/camera/<camera_name>/save_scan_pose", methods=["POST"])
+@api_bp.route("/api/camera/<camera_name>/save_scan_pose", methods=["POST"])
 def camera_save_scan_pose(camera_name: str):
     """Save the current motor position as the scan pose for *camera_name*.
 
@@ -616,7 +750,7 @@ def camera_save_scan_pose(camera_name: str):
     })
 
 
-@app.route("/api/camera/<camera_name>/goto_scan_pose", methods=["POST"])
+@api_bp.route("/api/camera/<camera_name>/goto_scan_pose", methods=["POST"])
 def camera_goto_scan_pose(camera_name: str):
     """Return the machine to the previously saved scan pose for *camera_name*.
 
@@ -664,7 +798,7 @@ def camera_goto_scan_pose(camera_name: str):
     })
 
 
-@app.route("/api/camera/scan_poses", methods=["GET"])
+@api_bp.route("/api/camera/scan_poses", methods=["GET"])
 def camera_scan_poses():
     """Return all saved scan poses.
 
@@ -674,7 +808,7 @@ def camera_scan_poses():
     return jsonify({"success": True, "poses": pose_memory.all_poses()})
 
 
-@app.route("/api/laser/align/<side>", methods=["POST"])
+@api_bp.route("/api/laser/align/<side>", methods=["POST"])
 def laser_align(side: str):
     """Automatic laser alignment check using the Pi Camera.
 
@@ -736,7 +870,7 @@ def laser_align(side: str):
     })
 
 
-@app.route("/api/camera/calibrate/pose/<camera_name>", methods=["POST"])
+@api_bp.route("/api/camera/calibrate/pose/<camera_name>", methods=["POST"])
 def camera_calibrate_pose(camera_name: str):
     """Move motors to the calibration pose for the requested camera.
 
@@ -763,13 +897,13 @@ def camera_calibrate_pose(camera_name: str):
     return jsonify({"success": True, **result})
 
 
-@app.route("/api/scan/pose", methods=["GET"])
+@api_bp.route("/api/scan/pose", methods=["GET"])
 def scan_pose_get():
     """Return all saved scan poses."""
     return jsonify({"success": True, "poses": get_all_saved_poses()})
 
 
-@app.route("/api/scan/pose/save", methods=["POST"])
+@api_bp.route("/api/scan/pose/save", methods=["POST"])
 def scan_pose_save():
     """Save the current motor position as the scan reference pose for a camera.
 
@@ -790,7 +924,7 @@ def scan_pose_save():
     return jsonify({"success": True, **result})
 
 
-@app.route("/api/scan/pose/restore", methods=["POST"])
+@api_bp.route("/api/scan/pose/restore", methods=["POST"])
 def scan_pose_restore():
     """Move motors back to the saved scan pose for a camera.
 
@@ -811,46 +945,70 @@ def scan_pose_restore():
     return jsonify({"success": True, **result})
 
 
-@app.route("/api/scan/start", methods=["POST"])
+@api_bp.route("/api/scan/start", methods=["POST"])
 def scan_start():
     try:
         scan_session.start()
     except RuntimeError as exc:
-        return _json_error(str(exc), 503)
-    return jsonify({"success": True, "status": scan_session.status()})
+        return _json_error(
+            str(exc),
+            503,
+            detail="Real scanner acquisition backend is not configured.",
+            hint="The scanner is running in simulation mode until hardware backend support is available.",
+        )
+    status = scan_session.status()
+    payload = {"success": True, "status": status}
+    if status.get("simulation"):
+        payload["mode"] = "simulation"
+        payload["hint"] = "Real acquisition backend unavailable; running in simulation mode."
+    return jsonify(payload)
 
 
-@app.route("/api/scan/stop", methods=["POST"])
+@api_bp.route("/api/scan/stop", methods=["POST"])
 def scan_stop():
     scan_session.stop()
     return jsonify({"success": True, "status": scan_session.status()})
 
 
-@app.route("/api/scan/status", methods=["GET"])
+@api_bp.route("/api/scan/status", methods=["GET"])
 def scan_status():
     return jsonify({"success": True, "status": scan_session.status()})
 
 
-@app.route("/api/scan/pointcloud", methods=["GET"])
+@api_bp.route("/api/scan/pointcloud", methods=["GET"])
 def scan_pointcloud():
     return jsonify({"success": True, **scan_session.get_pointcloud()})
 
 
-@app.route("/api/model/reconstruct", methods=["POST"])
+@api_bp.route("/api/model/reconstruct", methods=["POST"])
 def model_reconstruct():
     result = reconstruction_engine.reconstruct()
-    status_code = 200 if result["ok"] else 409
-    return jsonify({"success": result["ok"], **result}), status_code
+    if not result["ok"]:
+        detail = "The current scan does not contain enough points for mesh reconstruction."
+        if result.get("stl_size", 0) > 0:
+            detail = f"Only {result.get('stl_size', 0)} bytes of model data were produced."
+        return _json_error(
+            result.get("error", "Reconstruction failed"),
+            409,
+            detail=detail,
+            hint="Start a scan and collect enough points before reconstructing a model.",
+        )
+    return jsonify({"success": True, **result})
 
 
-@app.route("/api/model/current", methods=["GET"])
+@api_bp.route("/api/model/current", methods=["GET"])
 def model_current():
     model_format = request.args.get("format", "stl").lower()
     if model_format not in {"stl", "amf"}:
         return _json_error("Format must be stl or amf", 400)
     model = reconstruction_engine.get_model(model_format)
     if model is None:
-        return _json_error("No reconstructed model available", 404)
+        return _json_error(
+            "No reconstructed model available",
+            404,
+            detail=f"No {model_format.upper()} model exists for the current session.",
+            hint="Run a scan and reconstruct the model before exporting it.",
+        )
     return send_file(
         BytesIO(model),
         mimetype="application/octet-stream",
@@ -859,7 +1017,7 @@ def model_current():
     )
 
 
-@app.route("/api/camera/<camera_name>/calibration-pose", methods=["POST"])
+@api_bp.route("/api/camera/<camera_name>/calibration-pose", methods=["POST"])
 def camera_calibration_pose(camera_name: str):
     """Move motors to the calibration pose for the selected camera.
 
@@ -924,7 +1082,7 @@ def camera_calibration_pose(camera_name: str):
         return _json_error("Erreur interne", 500)
 
 
-@app.route("/api/camera/scan-pose/save", methods=["POST"])
+@api_bp.route("/api/camera/scan-pose/save", methods=["POST"])
 def camera_scan_pose_save():
     """Save the current motor position as the scan pose for the given camera."""
     global _scan_pose
@@ -957,7 +1115,7 @@ def camera_scan_pose_save():
         return _json_error("Erreur interne", 500)
 
 
-@app.route("/api/camera/scan-pose", methods=["GET"])
+@api_bp.route("/api/camera/scan-pose", methods=["GET"])
 def camera_scan_pose_get():
     """Return the memorized scan pose."""
     if _scan_pose is None:
@@ -965,7 +1123,7 @@ def camera_scan_pose_get():
     return jsonify({"success": True, "scan_pose": _scan_pose})
 
 
-@app.route("/api/camera/scan-pose/goto", methods=["POST"])
+@api_bp.route("/api/camera/scan-pose/goto", methods=["POST"])
 def camera_scan_pose_goto():
     """Move motors back to the memorized scan pose."""
     if _scan_pose is None:
@@ -995,33 +1153,59 @@ def camera_scan_pose_goto():
         return _json_error("Erreur interne", 500)
 
 
-@app.route("/api/status", methods=["GET"])
+@api_bp.route("/api/status", methods=["GET"])
 def api_status():
-    gpio_ready = bool(
-        gpio_driver is not None
-        and (
-            getattr(gpio_driver, "simulation", True)
-            or getattr(gpio_driver, "hardware_available", False)
-        )
-    )
-    stm32_ready = bool(
-        stm32_driver is not None
-        and getattr(stm32_driver, "connected", True)
-    )
+    gpio_ready = _gpio_ready()
+    stm32_ready = _stm32_ready()
+    capabilities = _runtime_capabilities()
+    status_payload = {
+        "api": "ok",
+        "gpio_driver": gpio_ready,
+        "stm32_driver": stm32_ready,
+        "stm32_connected": stm32_ready,
+        "version": _VERSION,
+        "simulation_mode": capabilities["simulation_mode"],
+    }
     return jsonify({
         "success": True,
-        "status": {
-            "api": "ok",
-            "gpio_driver": gpio_ready,
-            "stm32_driver": stm32_ready,
-            "version": _VERSION,
-        },
+        "status": status_payload,
+        "capabilities": capabilities,
     })
 
-@app.route("/health", methods=["GET"])
+
+@api_bp.route("/api/capabilities", methods=["GET"])
+def api_capabilities():
+    return jsonify({"success": True, "capabilities": _runtime_capabilities()})
+
+
+@api_bp.route("/api/health", methods=["GET"])
+@api_bp.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
 
+
+def _create_standalone_app() -> Flask:
+    app = Flask(__name__)
+    try:
+        from software.api.middleware.errors import register_error_handlers
+
+        register_error_handlers(app)
+    except Exception as exc:  # pragma: no cover - startup best effort
+        logger.warning("Error middleware unavailable: %s", exc)
+    app.register_blueprint(api_bp)
+    try:
+        from software.api.blueprints.scan import scan_bp
+
+        app.register_blueprint(scan_bp)
+    except Exception as exc:  # pragma: no cover - startup best effort
+        logger.warning("Scan blueprint unavailable: %s", exc)
+    return app
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    from flask import Flask
+
+    app = Flask(__name__)
+    app.register_blueprint(api_bp)
     app.run(host="0.0.0.0", port=5000, debug=False)

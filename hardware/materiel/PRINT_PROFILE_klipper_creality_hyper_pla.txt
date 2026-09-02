@@ -1,0 +1,75 @@
+[PROFIL GLOBAL - KLIPPER + CREALITY HYPER PLA - BUSE 0.4]
+
+Température buse: 215°C
+Température plateau: 60°C
+Hauteur de couche: 0.16 mm
+Hauteur 1ère couche: 0.20 mm
+Largeur de ligne: 0.42 mm
+Parois (walls/perimeters): 6
+Top layers: 7
+Bottom layers: 7
+Infill: 35% (Gyroid ou Cubic)
+Ventilation: 100% à partir de la couche 3
+Vitesse paroi externe: 22 mm/s
+Vitesse paroi interne: 35 mm/s
+Vitesse infill: 50 mm/s
+Vitesse déplacement: 160 mm/s
+Vitesse 1ère couche: 15 mm/s
+Brim: 8 mm (tige), 6 mm (base), 3-5 mm (roue)
+Compensation XY: -0.04 mm
+Compensation XY 1ère couche: -0.12 mm
+Seam: arrière
+Coasting: OFF
+Outer before inner walls: ON
+Elephant foot compensation: 0.20 mm (PrusaSlicer)
+
+[REGLAGE SUPPORT - BASE PI_CAMERA_TILT_BASE.STL]
+Support: OUI
+Type: Everywhere
+Overhang angle: 55°
+Support density: 12%
+Support interface: ON
+Interface layers: 2
+Z distance support: 0.22 mm
+X/Y distance support: 0.6 mm
+
+[ORIENTATION DES PIECES]
+1) pi_camera_tilt_base.stl
+   - Mettre le grand dos de la plaque contre le plateau (à plat)
+   - Support OUI (réglages ci-dessus)
+
+2) ball_screw_M5x40_ball5_square_flat.stl
+   - Déjà orientée à plat
+   - Support NON (ou touching buildplate only si besoin)
+   - Brim 8 mm
+
+3) knurled_wheel_D100_T15_pitch5_flattooth.stl
+   - Grande face à plat
+   - Support NON
+   - Brim 3-5 mm (optionnel)
+
+[AJUSTEMENT FILETAGE M5/M3 APRES TEST]
+Si c'est trop serré:
+  - XY compensation = -0.06 mm
+  - ou monter buse à 218°C
+Si c'est trop lâche:
+  - XY compensation = -0.02 mm ou 0.00 mm
+
+[START GCODE KLIPPER]
+M140 S{material_bed_temperature_layer_0}
+M190 S{material_bed_temperature_layer_0}
+M104 S{material_print_temperature_layer_0}
+M109 S{material_print_temperature_layer_0}
+G28
+BED_MESH_PROFILE LOAD=default
+G92 E0
+G1 Z2.0 F3000
+
+[END GCODE KLIPPER]
+G92 E0
+G1 E-2 F1800
+G1 Z10 F3000
+G1 X0 Y220 F6000
+M104 S0
+M140 S0
+M107

@@ -151,23 +151,17 @@ class GPIOLaserControl:
         if side in ("droit", "right", "both"):
             self.laser_droit and self.laser_droit.off()
 
-    def laser_pulse(self, duration_ms: int = 100, side: str = "both") -> None:
+    def laser_pulse(self, duration_ms: float, side: str = "both") -> None:
         self.laser_on(side)
         time.sleep(duration_ms / 1000.0)
         self.laser_off(side)
 
     # ------------------------------------------------------------------
-    # LED helpers
+    # LED (no dedicated hardware yet – simulation-safe stubs)
     # ------------------------------------------------------------------
 
     def led_set_color(self, r: float, g: float, b: float) -> None:
-        """Set LED colour with float values in 0.0–1.0 (clamped)."""
-        _ = (
-            max(0.0, min(1.0, r)),
-            max(0.0, min(1.0, g)),
-            max(0.0, min(1.0, b)),
-        )
-        # On real hardware, PWMLED per channel would be used here.
+        pass
 
     def led_on(self, color: str = "white") -> None:
         r, g, b = _LED_COLOURS.get(color, (0.5, 0.5, 0.5))

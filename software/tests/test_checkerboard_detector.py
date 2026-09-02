@@ -1,3 +1,4 @@
+import threading
 import time
 import unittest
 
@@ -177,6 +178,23 @@ class CheckerboardDetectorTests(unittest.TestCase):
             _SlowCV(), image, ((11, 6),), timeout_s=0.03
         )
         self.assertTrue(result["timed_out"])
+        self.assertLess(time.monotonic() - started, 0.2)
+
+    def test_cancellation_interrupts_wait_for_slow_detector(self):
+        image = np.zeros((100, 100, 3), dtype=np.uint8)
+        cancelled = threading.Event()
+        threading.Timer(0.03, cancelled.set).start()
+        started = time.monotonic()
+
+        result = find_checkerboard_bounded(
+            _SlowCV(),
+            image,
+            ((11, 6),),
+            timeout_s=5,
+            cancel_event=cancelled,
+        )
+
+        self.assertTrue(result["cancelled"])
         self.assertLess(time.monotonic() - started, 0.2)
 
 

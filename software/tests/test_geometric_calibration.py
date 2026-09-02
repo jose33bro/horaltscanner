@@ -13,6 +13,7 @@ from software.api.geometric_calibration import (
     AtomicCalibrationStore,
     CalibrationCancelled,
     CalibrationError,
+    CheckerboardDetectionTimeout,
     GeometricCalibrationService,
     checkerboard_points,
     fit_plane_robust,
@@ -320,19 +321,155 @@ class CalibrationServiceTests(unittest.TestCase):
     def test_failed_starting_framing_blocks_multi_pose_motion(self):
         moved = []
         self.service._move_to = lambda pose: moved.append(dict(pose))
-        self.service._capture = lambda name: name.encode()
+        self.service._capture = lambda name, **_kwargs: name.encode()
         pi_view = {
             "corners": np.zeros((66, 2), dtype=np.float32),
             "image_size": (1280, 960),
             "coverage": 0.2,
         }
-        self.service._detect_checkerboard = lambda frame, pose: (
+        self.service._detect_checkerboard = lambda frame, pose, **_kwargs: (
             {**pi_view, "pose": dict(pose)} if frame == b"pi" else None
         )
         poses = self.service._trajectory({})
         with self.assertRaisesRegex(CalibrationError, "starting pose framing rejected"):
             self.service._capture_checkerboard_views(poses)
         self.assertEqual(moved, [poses[0]])
+
+    def test_framing_retries_after_one_timeout_and_accepts_first_exact_view(self):
+        view = {
+            "corners": np.zeros((66, 2), dtype=np.float32),
+            "image_size": (1280, 960),
+            "coverage": 0.2,
+            "pose": {"x": 210, "y": 0, "z": 10},
+        }
+        self.service._capture = mock.Mock(return_value=b"usb")
+        self.service._detect_checkerboard = mock.Mock(
+            side_effect=[
+                CheckerboardDetectionTimeout("checkerboard detection timed out"),
+                view,
+            ]
+        )
+
+        candidate, timeouts, exhausted = (
+            self.service._capture_checkerboard_candidate(
+                "usb",
+                view["pose"],
+                frames_per_pose=3,
+                pose_deadline=time.monotonic() + 1,
+            )
+        )
+
+        self.assertIs(candidate, view)
+        self.assertEqual(timeouts, 1)
+        self.assertFalse(exhausted)
+        self.assertEqual(self.service._capture.call_count, 2)
+        self.assertEqual(self.service._detect_checkerboard.call_count, 2)
+
+    def test_starting_framing_fails_after_all_configured_frames_time_out(self):
+        pose = {"x": 210.0, "y": 0.0, "z": 10.0}
+        view = {
+            "corners": np.zeros((66, 2), dtype=np.float32),
+            "image_size": (1280, 960),
+            "coverage": 0.2,
+            "pose": pose,
+        }
+        attempts = {"usb": 0}
+        self.service._config.update(
+            fresh_frames_per_pose=3,
+            checkerboard_pose_timeout_s=1,
+        )
+        self.service._move_to = lambda _pose: None
+        self.service._capture = lambda name, **_kwargs: name.encode()
+
+        def detect(frame, _pose, **_kwargs):
+            if frame == b"pi":
+                return view
+            attempts["usb"] += 1
+            raise CheckerboardDetectionTimeout("checkerboard detection timed out")
+
+        self.service._detect_checkerboard = detect
+        with self.assertRaisesRegex(
+            CalibrationError, r"usb: 3 detector timeout\(s\)"
+        ):
+            self.service._capture_checkerboard_views([pose])
+        self.assertEqual(attempts["usb"], 3)
+
+    def test_checkerboard_retries_obey_overall_pose_deadline(self):
+        self.service._config.update(
+            checkerboard_timeout_s=0.03,
+            capture_timeout_s=0.03,
+        )
+        self.service._capture = lambda _name, **_kwargs: b"jpeg"
+        attempts = 0
+
+        def bounded_timeout(_frame, _pose, *, timeout_s):
+            nonlocal attempts
+            attempts += 1
+            time.sleep(timeout_s)
+            raise CheckerboardDetectionTimeout("checkerboard detection timed out")
+
+        self.service._detect_checkerboard = bounded_timeout
+        started = time.monotonic()
+        candidate, timeouts, exhausted = (
+            self.service._capture_checkerboard_candidate(
+                "usb",
+                {"x": 210, "y": 0, "z": 10},
+                frames_per_pose=20,
+                pose_deadline=started + 0.055,
+            )
+        )
+        elapsed = time.monotonic() - started
+
+        self.assertIsNone(candidate)
+        self.assertEqual(timeouts, attempts)
+        self.assertTrue(exhausted)
+        self.assertLessEqual(attempts, 2)
+        self.assertLess(elapsed, 0.15)
+
+    def test_capture_cancellation_near_deadline_is_not_converted_to_timeout(self):
+        def cancel_during_capture(_name, **_kwargs):
+            self.service._cancel.set()
+            time.sleep(0.01)
+            raise CalibrationCancelled("calibration cancelled")
+
+        self.service._capture = cancel_during_capture
+        with self.assertRaises(CalibrationCancelled):
+            self.service._capture_checkerboard_candidate(
+                "usb",
+                {"x": 210, "y": 0, "z": 10},
+                frames_per_pose=1,
+                pose_deadline=time.monotonic() + 0.005,
+            )
+
+    def test_cancel_at_last_camera_last_pose_is_checked_before_diversity(self):
+        pose = {"x": 210.0, "y": 0.0, "z": 10.0}
+        view = {
+            "corners": np.zeros((66, 2), dtype=np.float32),
+            "image_size": (1280, 960),
+            "coverage": 0.2,
+            "pose": pose,
+        }
+        self.service._config.update(
+            fresh_frames_per_pose=1,
+            checkerboard_pose_timeout_s=1,
+        )
+        self.service._move_to = lambda _pose: None
+        self.service._capture = lambda name, **_kwargs: name.encode()
+
+        def cancel_on_last_camera(frame, _pose, **_kwargs):
+            if frame == b"usb":
+                self.service._cancel.set()
+            return view
+
+        self.service._detect_checkerboard = cancel_on_last_camera
+        with (
+            mock.patch(
+                "software.api.geometric_calibration.validate_view_diversity"
+            ) as diversity,
+            self.assertRaises(CalibrationCancelled),
+        ):
+            self.service._capture_checkerboard_views([pose])
+        diversity.assert_not_called()
 
     def test_intrinsic_solver_preserves_distortion_and_rejects_bad_rms(self):
         points = checkerboard_points()[:, :2]

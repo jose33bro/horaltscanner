@@ -27,6 +27,11 @@ bounded fallback. If both fail, one small saturated/chromatic IR blob may be
 masked and inpainted before a final retry; broad white board regions are never
 masked. This only protects corner detection—the IR spot is not used as
 geometric evidence. The workflow does not require the absent RGB LED.
+Calibration allows up to 8 seconds for each ARM checkerboard attempt and
+retries up to three fresh frames, accepting the first exact 11 × 6 result.
+Both cameras share a bounded 35-second framing deadline at each pose; a single
+timed-out frame does not abort the run, and cancellation is checked while
+OpenCV detection is pending. Normal camera API deadlines are unchanged.
 
 ## Before supervised motion
 
@@ -105,7 +110,12 @@ curl -fsS http://127.0.0.1:5000/api/status | python3 -m json.tool
 
 This rechecks rpicam/libcamera, Picamera2, OpenCV, Python requirements, groups,
 udev aliases, and systemd. Its health checks do not move an axis or energize a
-laser.
+laser. Repair first verifies `import libcamera` with `/usr/bin/python3`, then
+creates or upgrades `/home/pi/horaltscanner_env` with
+`--system-site-packages`. A venv whose interpreter cannot execute is recreated
+at that resolved venv path only. It validates all required imports before
+changing or restarting the systemd unit; on validation failure the currently
+running service and unit are left untouched.
 
 Back up runtime state before an OS reinstall:
 

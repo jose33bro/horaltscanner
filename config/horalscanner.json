@@ -45,6 +45,53 @@
       "target_points": 1000,
       "restore_start_pose": true,
       "stop_join_timeout_s": 3
+    },
+    "geometric_calibration": {
+      "columns": 11,
+      "rows": 6,
+      "square_size_mm": 13,
+      "turntable_diameter_mm": 200,
+      "starting_pose_mm": {
+        "x": 185,
+        "y": 0,
+        "z": 25
+      },
+      "pose_offsets_mm": [
+        {"x": 0, "y": 0, "z": 0},
+        {"x": -10, "y": 10.4719755, "z": -5},
+        {"x": 10, "y": 20.943951, "z": 5},
+        {"x": -10, "y": 31.4159265, "z": 0},
+        {"x": 0, "y": 41.887902, "z": -5},
+        {"x": 10, "y": 52.3598776, "z": 0},
+        {"x": 0, "y": 62.8318531, "z": 5}
+      ],
+      "axis_limits_mm": {
+        "x": {"min": 0, "max": 210},
+        "y": {"min": 0, "max": 628.32},
+        "z": {"min": 0, "max": 270}
+      },
+      "minimum_views": 6,
+      "fresh_frames_per_pose": 3,
+      "settle_s": 0.25,
+      "laser_settle_s": 0.1,
+      "capture_timeout_s": 5,
+      "motion_timeout_s": 30,
+      "lidar_timeout_s": 2,
+      "lidar_samples_per_pose": 3,
+      "minimum_frame_margin": 0.04,
+      "minimum_board_coverage": 0.03,
+      "minimum_center_span": 0.025,
+      "minimum_scale_span": 0.01,
+      "minimum_angle_span_deg": 4,
+      "maximum_camera_rms_px": 1.25,
+      "maximum_extrinsic_rms_mm": 5,
+      "maximum_extrinsic_rms_deg": 3,
+      "maximum_laser_plane_rms_mm": 2,
+      "minimum_laser_points": 30,
+      "maximum_lidar_rms_mm": 20,
+      "minimum_lidar_poses": 3,
+      "x_scale_tolerance_fraction": 0.05,
+      "maximum_x_repeatability_mm": 3
     }
   },
   "slicer": {

@@ -3,6 +3,7 @@ Scanner Engine - 3D reconstruction (point cloud → mesh → STL/AMF)
 Uses Open3D when available; falls back to a stub otherwise.
 """
 
+import copy
 import io
 import logging
 import math
@@ -168,6 +169,13 @@ class ScanSession:
             self._gpio = gpio_driver
             self._cameras = dict(cameras)
             self._lidar = lidar_driver
+
+    def update_calibration(self, calibration: Mapping[str, Any]) -> None:
+        """Install a newly validated calibration when acquisition is idle."""
+        with self._lock:
+            if self._scanning or self._starting:
+                raise RuntimeError("Cannot replace calibration during acquisition")
+            self._calibration = copy.deepcopy(dict(calibration))
 
     # ------------------------------------------------------------------
     # Preflight
@@ -494,8 +502,40 @@ class ScanSession:
             intrinsic = camera.get("intrinsic_matrix")
             if not self._matrix_valid(intrinsic, (3, 3), invertible=True):
                 blockers.append(f"Camera '{name}' intrinsic_matrix calibration is missing")
+            distortion = camera.get("distortion_coefficients")
+            try:
+                distortion_values = np.asarray(distortion, dtype=float).reshape(-1)
+                distortion_valid = (
+                    len(distortion_values) >= 4
+                    and bool(np.isfinite(distortion_values).all())
+                )
+            except (TypeError, ValueError):
+                distortion_valid = False
+            if not distortion_valid:
+                blockers.append(f"Camera '{name}' distortion calibration is missing")
             if not self._matrix_valid(camera.get("camera_to_scanner"), (4, 4), transform=True):
                 blockers.append(f"Camera '{name}' camera_to_scanner calibration is missing")
+            quality = camera.get("quality", {})
+            if (
+                not isinstance(quality, Mapping)
+                or not quality.get("accepted")
+                or not self._finite_number(quality.get("rms_px"))
+                or not self._finite_number(quality.get("maximum_rms_px"), positive=True)
+                or float(quality["rms_px"]) > float(quality["maximum_rms_px"])
+                or not self._finite_number(quality.get("extrinsic_translation_rms_mm"))
+                or not self._finite_number(
+                    quality.get("maximum_extrinsic_rms_mm"), positive=True
+                )
+                or float(quality["extrinsic_translation_rms_mm"])
+                > float(quality["maximum_extrinsic_rms_mm"])
+                or not self._finite_number(quality.get("extrinsic_rotation_rms_deg"))
+                or not self._finite_number(
+                    quality.get("maximum_extrinsic_rms_deg"), positive=True
+                )
+                or float(quality["extrinsic_rotation_rms_deg"])
+                > float(quality["maximum_extrinsic_rms_deg"])
+            ):
+                blockers.append(f"Camera '{name}' calibration quality is missing or rejected")
             if camera.get("carriage_axis") and not self._vector_valid(
                 camera.get("carriage_direction"),
                 nonzero=True,
@@ -511,6 +551,15 @@ class ScanSession:
                 blockers.append(f"Laser '{side}' calibrated plane normal is missing")
             if not self._finite_number(plane.get("offset_mm")):
                 blockers.append(f"Laser '{side}' calibrated plane offset_mm is missing")
+            quality = plane.get("quality", {})
+            if (
+                not isinstance(quality, Mapping)
+                or not quality.get("accepted")
+                or not self._finite_number(quality.get("rms_mm"))
+                or not self._finite_number(quality.get("maximum_rms_mm"), positive=True)
+                or float(quality["rms_mm"]) > float(quality["maximum_rms_mm"])
+            ):
+                blockers.append(f"Laser '{side}' calibration quality is missing or rejected")
         turntable = self._calibration.get("turntable", {})
         if not self._vector_valid(turntable.get("center_mm")):
             blockers.append("Turntable center_mm calibration is missing")
@@ -518,6 +567,22 @@ class ScanSession:
             blockers.append("Turntable axis calibration is missing")
         if not self._finite_number(turntable.get("mm_per_revolution"), positive=True):
             blockers.append("Turntable mm_per_revolution calibration is missing")
+        diameter = turntable.get("diameter_mm")
+        circumference = turntable.get("mm_per_revolution")
+        if (
+            turntable.get("source") != "measured_diameter"
+            or not isinstance(turntable.get("quality"), Mapping)
+            or not turntable.get("quality", {}).get("accepted")
+            or not self._finite_number(diameter, positive=True)
+            or not self._finite_number(circumference, positive=True)
+            or not math.isclose(
+                float(circumference),
+                math.pi * float(diameter),
+                rel_tol=1e-8,
+                abs_tol=1e-6,
+            )
+        ):
+            blockers.append("Turntable circumference source/quality is missing")
         lidar = self._calibration.get("lidar", {})
         if not self._matrix_valid(lidar.get("lidar_to_scanner"), (4, 4), transform=True):
             blockers.append("TF-Luna lidar_to_scanner calibration is missing")
@@ -528,12 +593,37 @@ class ScanSession:
             blockers.append("TF-Luna carriage_direction calibration is invalid")
         if lidar.get("carriage_axis") not in (None, "x", "y", "z"):
             blockers.append("TF-Luna carriage_axis calibration is invalid")
+        lidar_quality = lidar.get("quality", {})
+        if (
+            lidar.get("source") != "operator_measured_origin_direction"
+            or not isinstance(lidar_quality, Mapping)
+            or not lidar_quality.get("accepted")
+            or not self._finite_number(lidar_quality.get("rms_mm"))
+            or not self._finite_number(lidar_quality.get("maximum_rms_mm"), positive=True)
+            or float(lidar_quality["rms_mm"])
+            > float(lidar_quality["maximum_rms_mm"])
+        ):
+            blockers.append("TF-Luna transform source/quality is missing")
         try:
             low, high = self._lidar_limits()
             if not all(math.isfinite(value) for value in (low, high)) or low < 0 or high <= low:
                 blockers.append("TF-Luna calibrated distance range must satisfy 0 <= min < max")
         except (TypeError, ValueError):
             blockers.append("TF-Luna calibrated distance range is invalid")
+        x_scale = self._calibration.get("x_scale_validation", {})
+        if (
+            not isinstance(x_scale, Mapping)
+            or not x_scale.get("accepted")
+            or not self._finite_number(x_scale.get("measured_mm_per_commanded_mm"), positive=True)
+            or not self._finite_number(x_scale.get("repeatability_rms_mm"))
+            or not self._finite_number(
+                x_scale.get("maximum_repeatability_mm"), positive=True
+            )
+            or float(x_scale["repeatability_rms_mm"])
+            > float(x_scale["maximum_repeatability_mm"])
+            or x_scale.get("motor_rotation_distance_changed") is not False
+        ):
+            blockers.append("X scale validation is missing or rejected")
         return blockers
 
     @staticmethod
@@ -1137,9 +1227,8 @@ class ScanSession:
                     break
 
         camera_cfg = self._calibration["cameras"][camera_name]
-        intrinsic_inv = np.linalg.inv(
-            np.asarray(camera_cfg["intrinsic_matrix"], dtype=float)
-        )
+        intrinsic = np.asarray(camera_cfg["intrinsic_matrix"], dtype=float)
+        distortion = np.asarray(camera_cfg["distortion_coefficients"], dtype=float)
         transform = np.asarray(camera_cfg["camera_to_scanner"], dtype=float)
         origin = transform[:3, 3]
         plane = self._calibration["laser_planes"][laser_side]
@@ -1148,7 +1237,12 @@ class ScanSession:
         offset = float(plane["offset_mm"])
         points = []
         for u, v in pixels:
-            ray_camera = intrinsic_inv @ np.array([u, v, 1.0])
+            normalized = cv2.undistortPoints(
+                np.array([[[u, v]]], dtype=np.float64),
+                intrinsic,
+                distortion,
+            ).reshape(2)
+            ray_camera = np.array([normalized[0], normalized[1], 1.0])
             direction = transform[:3, :3] @ ray_camera
             direction /= np.linalg.norm(direction)
             translated_origin = self._apply_carriage_translation(

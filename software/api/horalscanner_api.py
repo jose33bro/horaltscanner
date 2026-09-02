@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sys
 import threading
 import time
@@ -62,6 +63,11 @@ from software.api.calibration_pose import (
 )
 from software.api.lidar_driver import LidarDriver
 from software.api.hardware_lock import HardwareReservationLock
+from software.api.geometric_calibration import (
+    AtomicCalibrationStore,
+    CalibrationError,
+    GeometricCalibrationService,
+)
 from software.api.scanner_engine import (
     ReconstructionEngine,
     ScanPreflightError,
@@ -297,6 +303,23 @@ scan_session = ScanSession(
     saved_poses_provider=get_all_saved_poses,
     laser_line_analyzer=analyze_laser_line,
     hardware_reservation=_scan_hardware_lock,
+)
+
+
+def _install_geometric_calibration(calibration: dict[str, Any]) -> None:
+    hardware_config["scan_calibration"] = calibration
+    scan_session.update_calibration(calibration)
+
+
+geometric_calibration = GeometricCalibrationService(
+    motor_driver=stm32_driver,
+    gpio_driver=gpio_driver,
+    cameras={"pi": pi_camera, "usb": usb_camera},
+    lidar_driver=lidar_driver,
+    hardware_reservation=_scan_hardware_lock,
+    store=AtomicCalibrationStore(config_manager.HARDWARE_CONFIG_PATH),
+    config=scanner_config.get("geometric_calibration", {}),
+    on_saved=_install_geometric_calibration,
 )
 reconstruction_engine = ReconstructionEngine(scan_session)
 pose_memory = PoseMemory()
@@ -1327,6 +1350,109 @@ def camera_calibrate_pose(camera_name: str):
 def scan_pose_get():
     """Return all saved scan poses."""
     return jsonify({"success": True, "poses": get_all_saved_poses()})
+
+
+def _geometric_calibration_options(data):
+    if not isinstance(data, dict):
+        raise ValueError("calibration request must be a JSON object")
+    start = data.get("starting_pose_mm", data.get("start_pose"))
+    lidar = data.get("lidar", data.get("lidar_measurements"))
+    result = {}
+
+    def finite_vector(value, label, keys=None):
+        if keys is not None and isinstance(value, dict):
+            value = [value.get(key) for key in keys]
+        if not isinstance(value, (list, tuple)) or len(value) != 3:
+            raise ValueError(f"{label} must contain exactly three values")
+        numbers = [float(item) for item in value]
+        if not all(math.isfinite(item) for item in numbers):
+            raise ValueError(f"{label} values must be finite")
+        return numbers
+
+    if start is not None:
+        values = finite_vector(start, "starting pose", ("x", "y", "z"))
+        result["starting_pose_mm"] = dict(zip(("x", "y", "z"), values))
+    if lidar is not None:
+        if not isinstance(lidar, dict):
+            raise ValueError("lidar measurements must be an object")
+        result["lidar"] = {
+            "origin_mm": finite_vector(lidar.get("origin_mm"), "TF-Luna origin_mm"),
+            "direction": finite_vector(lidar.get("direction"), "TF-Luna direction"),
+            "reference_z_mm": float(
+                lidar.get(
+                    "reference_z_mm",
+                    result.get("starting_pose_mm", {}).get("z", 25.0),
+                )
+            ),
+        }
+        if not math.isfinite(result["lidar"]["reference_z_mm"]):
+            raise ValueError("TF-Luna reference_z_mm must be finite")
+    return result
+
+
+@api_bp.route("/api/calibration/geometric/preflight", methods=["POST"])
+def geometric_calibration_preflight():
+    try:
+        options = _geometric_calibration_options(request.get_json(silent=True) or {})
+    except (TypeError, ValueError) as exc:
+        return _json_error(str(exc), 400)
+    result = geometric_calibration.preflight(options)
+    return jsonify({"success": True, **result})
+
+
+@api_bp.route("/api/calibration/geometric/start", methods=["POST"])
+def geometric_calibration_start():
+    try:
+        options = _geometric_calibration_options(request.get_json(silent=True) or {})
+    except (TypeError, ValueError) as exc:
+        return _json_error(str(exc), 400)
+    readiness = geometric_calibration.preflight(options)
+    if not readiness["ready"]:
+        return jsonify({
+            "success": False,
+            "error": "Geometric calibration preflight failed",
+            "blockers": readiness["blockers"],
+        }), 409
+    try:
+        status = geometric_calibration.start(options)
+    except CalibrationError as exc:
+        return _json_error(str(exc), 409)
+    return jsonify({"success": True, **status}), 202
+
+
+@api_bp.route("/api/calibration/geometric/status", methods=["GET"])
+def geometric_calibration_status():
+    return jsonify({"success": True, **geometric_calibration.status()})
+
+
+@api_bp.route("/api/calibration/geometric/cancel", methods=["POST"])
+def geometric_calibration_cancel():
+    return jsonify({"success": True, **geometric_calibration.cancel()})
+
+
+@api_bp.route("/api/calibration/geometric/rollback", methods=["POST"])
+def geometric_calibration_rollback():
+    try:
+        result = geometric_calibration.rollback()
+    except CalibrationError as exc:
+        return _json_error(str(exc), 409)
+    return jsonify({"success": True, **result})
+
+
+@api_bp.route("/api/calibration/geometric/report", methods=["GET"])
+def geometric_calibration_report():
+    try:
+        report = geometric_calibration.report()
+    except CalibrationError as exc:
+        return _json_error(str(exc), 404)
+    if request.args.get("download") == "1":
+        return send_file(
+            BytesIO(json.dumps(report, indent=2).encode("utf-8")),
+            mimetype="application/json",
+            as_attachment=True,
+            download_name="horalscanner-calibration-report.json",
+        )
+    return jsonify({"success": True, **report})
 
 
 @api_bp.route("/api/scan/pose/save", methods=["POST"])

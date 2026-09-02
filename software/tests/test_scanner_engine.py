@@ -189,23 +189,30 @@ VALID_CALIBRATION = {
     "cameras": {
         "pi": {
             "intrinsic_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            "distortion_coefficients": [0, 0, 0, 0, 0],
             "camera_to_scanner": np.eye(4).tolist(),
+            "quality": {"accepted": True, "rms_px": 0.1, "maximum_rms_px": 1.0, "extrinsic_translation_rms_mm": 0.1, "maximum_extrinsic_rms_mm": 5.0, "extrinsic_rotation_rms_deg": 0.1, "maximum_extrinsic_rms_deg": 3.0},
         },
         "usb": {
             "intrinsic_matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            "distortion_coefficients": [0, 0, 0, 0, 0],
             "camera_to_scanner": np.eye(4).tolist(),
             "carriage_axis": "z",
             "carriage_direction": [0, 0, 1],
+            "quality": {"accepted": True, "rms_px": 0.1, "maximum_rms_px": 1.0, "extrinsic_translation_rms_mm": 0.1, "maximum_extrinsic_rms_mm": 5.0, "extrinsic_rotation_rms_deg": 0.1, "maximum_extrinsic_rms_deg": 3.0},
         },
     },
     "laser_planes": {
-        "left": {"normal": [0, 0, 1], "offset_mm": -100},
-        "right": {"normal": [0, 0, 1], "offset_mm": -100},
+        "left": {"normal": [0, 0, 1], "offset_mm": -100, "quality": {"accepted": True, "rms_mm": 0.1, "maximum_rms_mm": 2.0}},
+        "right": {"normal": [0, 0, 1], "offset_mm": -100, "quality": {"accepted": True, "rms_mm": 0.1, "maximum_rms_mm": 2.0}},
     },
     "turntable": {
         "center_mm": [0, 0, 0],
         "axis": [0, 0, 1],
-        "mm_per_revolution": 100,
+        "diameter_mm": 200,
+        "mm_per_revolution": np.pi * 200,
+        "source": "measured_diameter",
+        "quality": {"accepted": True},
     },
     "lidar": {
         "lidar_to_scanner": np.eye(4).tolist(),
@@ -213,6 +220,15 @@ VALID_CALIBRATION = {
         "carriage_direction": [0, 0, 1],
         "min_distance_mm": 20,
         "max_distance_mm": 1000,
+        "source": "operator_measured_origin_direction",
+        "quality": {"accepted": True, "rms_mm": 1.0, "maximum_rms_mm": 20.0},
+    },
+    "x_scale_validation": {
+        "accepted": True,
+        "measured_mm_per_commanded_mm": 1.0,
+        "repeatability_rms_mm": 0.1,
+        "maximum_repeatability_mm": 3.0,
+        "motor_rotation_distance_changed": False,
     },
 }
 

@@ -1061,5 +1061,92 @@ class HoralScannerAPITests(unittest.TestCase):
         response = self.client.post("/api/laser/align/left")
         self.assertEqual(response.status_code, 503)
 
+    def _install_geometric_service(self):
+        service = Mock()
+        service.preflight.return_value = {"ready": True, "blockers": []}
+        service.start.return_value = {"active": True, "phase": "preflight"}
+        service.status.return_value = {"active": False, "phase": "idle"}
+        service.cancel.return_value = {"active": True, "phase": "cancelling"}
+        service.rollback.return_value = {"rolled_back": True}
+        service.report.return_value = {"schema_version": 1, "metrics": {"pi": {"rms_px": 0.2}}}
+        original = self.api_module.geometric_calibration
+        self.addCleanup(setattr, self.api_module, "geometric_calibration", original)
+        self.api_module.geometric_calibration = service
+        return service
+
+    def test_geometric_calibration_preflight_normalizes_wizard_inputs(self):
+        service = self._install_geometric_service()
+        response = self.client.post(
+            "/api/calibration/geometric/preflight",
+            json={
+                "start_pose": {"x": 185, "y": 0, "z": 25},
+                "lidar_measurements": {
+                    "origin_mm": [1, 2, 3],
+                    "direction": [1, 0, 0],
+                },
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        service.preflight.assert_called_once_with(
+            {
+                "starting_pose_mm": {"x": 185.0, "y": 0.0, "z": 25.0},
+                "lidar": {
+                    "origin_mm": [1.0, 2.0, 3.0],
+                    "direction": [1.0, 0.0, 0.0],
+                    "reference_z_mm": 25.0,
+                },
+            }
+        )
+
+    def test_geometric_calibration_lifecycle_routes_surface_state(self):
+        service = self._install_geometric_service()
+        payload = {
+            "starting_pose_mm": {"x": 185, "y": 0, "z": 25},
+            "lidar": {"origin_mm": [1, 2, 3], "direction": [1, 0, 0]},
+        }
+        start = self.client.post("/api/calibration/geometric/start", json=payload)
+        status = self.client.get("/api/calibration/geometric/status")
+        cancel = self.client.post("/api/calibration/geometric/cancel")
+        rollback = self.client.post("/api/calibration/geometric/rollback")
+        report = self.client.get("/api/calibration/geometric/report")
+        self.assertEqual(
+            [start.status_code, status.status_code, cancel.status_code, rollback.status_code, report.status_code],
+            [202, 200, 200, 200, 200],
+        )
+        self.assertEqual(start.get_json()["phase"], "preflight")
+        self.assertEqual(status.get_json()["phase"], "idle")
+        self.assertEqual(cancel.get_json()["phase"], "cancelling")
+        self.assertTrue(rollback.get_json()["rolled_back"])
+        self.assertEqual(report.get_json()["schema_version"], 1)
+
+    def test_geometric_preflight_rejects_nonfinite_or_incomplete_vectors(self):
+        service = self._install_geometric_service()
+        response = self.client.post(
+            "/api/calibration/geometric/preflight",
+            json={"start_pose": {"x": 185, "y": 0, "z": 25}, "lidar_measurements": {"origin_mm": [1, 2]}},
+        )
+        self.assertEqual(response.status_code, 400)
+        service.preflight.assert_not_called()
+
+    def test_geometric_wizard_surfaces_safety_inputs_progress_and_actions(self):
+        html = self.client.get("/").get_data(as_text=True)
+        script = self.client.get("/app.js").get_data(as_text=True)
+        for element_id in (
+            "geometry-start-x",
+            "geometry-start-y",
+            "geometry-start-z",
+            "lidar-origin-x",
+            "lidar-direction-z",
+            "geometry-calibration-progress",
+            "geometry-calibration-blockers",
+            "geometry-calibration-cancel",
+            "geometry-calibration-rollback",
+        ):
+            self.assertIn(f'id="{element_id}"', html)
+        self.assertIn("/api/calibration/geometric/preflight", script)
+        self.assertIn("/api/calibration/geometric/status", script)
+        self.assertIn("Annulation demandee; lasers coupes", script)
+        self.assertNotIn("RGB LED requis", html)
+
 if __name__ == "__main__":
     unittest.main()

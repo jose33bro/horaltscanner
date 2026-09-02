@@ -288,8 +288,65 @@
 
     <section id="tab-calibration" class="tab-page">
       <div class="page-heading compact">
-        <div><span class="eyebrow">Controle optique</span><h1>Test de calibration camera</h1><p>Placez une mire damier dans le champ puis analysez son alignement avec le centre de chaque camera.</p></div>
+        <div><span class="eyebrow">Geometrie metrologique</span><h1>Assistant de calibration physique</h1><p>Acquisition multi-vues, intrinseques, reperes scanner, plans laser et validation TF-Luna.</p></div>
       </div>
+      <article class="panel calibration-wizard">
+        <div class="wizard-header">
+          <div>
+            <span class="eyebrow">Assistant automatique supervise</span>
+            <h2>Damier centre 11 × 6 · cases 13 mm</h2>
+            <p class="muted">Le point de depart X 185 / Y 0 / Z 25 mm est une suggestion mesuree. L'assistant valide le cadrage et plusieurs vues fraiches avant tout calcul.</p>
+          </div>
+          <span id="geometry-calibration-badge" class="badge idle">Inactif</span>
+        </div>
+        <ol id="geometry-calibration-steps" class="wizard-steps">
+          <li data-phase="preflight">Securite</li>
+          <li data-phase="framing">Cadrage</li>
+          <li data-phase="camera-views">Multi-vues</li>
+          <li data-phase="intrinsics">Intrinseques</li>
+          <li data-phase="extrinsics">Repere scanner</li>
+          <li data-phase="x-scale">Echelle X</li>
+          <li data-phase="laser-planes">Plans laser</li>
+          <li data-phase="lidar">TF-Luna</li>
+          <li data-phase="validation">Validation</li>
+          <li data-phase="persisting">Sauvegarde</li>
+        </ol>
+        <div class="wizard-grid">
+          <fieldset>
+            <legend>Pose de depart configurable</legend>
+            <label>Position X (mm)<input id="geometry-start-x" type="number" min="0" max="210" step="0.1" value="185"></label>
+            <label>Rotation Y (mm)<input id="geometry-start-y" type="number" min="0" max="628.32" step="0.1" value="0"></label>
+            <label>Hauteur Z (mm)<input id="geometry-start-z" type="number" min="0" max="270" step="0.1" value="25"></label>
+          </fieldset>
+          <fieldset>
+            <legend>Mesures physiques TF-Luna</legend>
+            <p class="muted">Origine et direction du faisceau dans le repere scanner. Obligatoires car les distances seules ne rendent pas le transform complet observable.</p>
+            <div class="vector-inputs">
+              <label>Origine X<input id="lidar-origin-x" type="number" step="0.1" placeholder="mm"></label>
+              <label>Origine Y<input id="lidar-origin-y" type="number" step="0.1" placeholder="mm"></label>
+              <label>Origine Z<input id="lidar-origin-z" type="number" step="0.1" placeholder="mm"></label>
+              <label>Direction X<input id="lidar-direction-x" type="number" step="0.001" placeholder="vecteur"></label>
+              <label>Direction Y<input id="lidar-direction-y" type="number" step="0.001" placeholder="vecteur"></label>
+              <label>Direction Z<input id="lidar-direction-z" type="number" step="0.001" placeholder="vecteur"></label>
+            </div>
+          </fieldset>
+        </div>
+        <div class="scan-progress-track"><div id="geometry-calibration-progress"></div></div>
+        <div class="wizard-status">
+          <b id="geometry-calibration-phase">idle</b>
+          <span id="geometry-calibration-step">Pret pour le preflight sans mouvement.</span>
+          <span id="geometry-calibration-views">Pi 0 vue · USB 0 vue</span>
+        </div>
+        <div id="geometry-calibration-metrics" class="metrics-list"></div>
+        <div id="geometry-calibration-blockers" class="scan-message warning">Renseignez les mesures TF-Luna puis lancez le preflight.</div>
+        <div class="button-row wizard-actions">
+          <button id="geometry-calibration-preflight" class="button ghost">Preflight sans mouvement</button>
+          <button id="geometry-calibration-start" class="button primary">Demarrer sous supervision</button>
+          <button id="geometry-calibration-cancel" class="button danger" disabled>Annuler et securiser</button>
+          <button id="geometry-calibration-rollback" class="button secondary">Restaurer la sauvegarde</button>
+          <a class="button secondary" href="/api/calibration/geometric/report?download=1">Exporter le rapport</a>
+        </div>
+      </article>
       <div class="calibration-layout">
         <article class="panel calibration-guide">
           <div class="checkerboard" aria-label="Mire damier 9 par 6"></div>

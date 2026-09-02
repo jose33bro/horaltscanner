@@ -20,7 +20,7 @@ _FAN_CHANNELS: dict[str, str] = {
 # Used when no hardware_config is provided at all.
 _DEFAULT_MOTOR_CONFIG: dict[str, dict] = {
     "x": {"rotation_distance": 1, "microsteps": 16, "steps_per_rotation": 200,
-          "position_min": 0, "position_max": 210, "default_speed_mm_s": 6.25},
+          "position_min": 0, "position_max": 195, "default_speed_mm_s": 6.25},
     "y": {"rotation_distance": 1, "microsteps": 16, "steps_per_rotation": 200,
           "position_min": 0, "position_max": 628.32, "default_speed_mm_s": 6.25},
     "z": {"rotation_distance": 1, "microsteps": 16, "steps_per_rotation": 200,

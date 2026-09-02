@@ -59,6 +59,24 @@ class _ClassicCV(_BaseCV):
         raise AssertionError("SB must not run after classic detection succeeds")
 
 
+class _EqualizedCV(_BaseCV):
+    @staticmethod
+    def equalizeHist(gray):
+        equalized = gray.copy()
+        equalized[:] = 77
+        return equalized
+
+    @staticmethod
+    def findChessboardCornersSB(gray, pattern, _flags=0):
+        if int(gray[0, 0]) != 77:
+            return False, None
+        corners = np.tile(
+            np.array([[[25.0, 35.0]]], dtype=np.float32),
+            (pattern[0] * pattern[1], 1, 1),
+        )
+        return True, corners
+
+
 class _GlareCV(_BaseCV):
     @staticmethod
     def connectedComponentsWithStats(candidate, _connectivity):
@@ -108,13 +126,39 @@ class _SlowCV(_BaseCV):
         return False, None
 
 
-class _CornerOccludedCV(_GlareCV):
+class _GlareNoDetectionCV(_GlareCV):
+    @staticmethod
+    def findChessboardCornersSB(_gray, _pattern, _flags=0):
+        return False, None
+
+
+class _EqualizedCornerOccludedCV(_GlareCV):
+    @staticmethod
+    def equalizeHist(gray):
+        equalized = gray.copy()
+        equalized[:] = 77
+        return equalized
+
     @staticmethod
     def findChessboardCornersSB(gray, pattern, _flags=0):
-        if int(gray[0, 0]) != 99:
+        if int(gray[0, 0]) != 77:
             return False, None
         corners = np.tile(
             np.array([[[46.0, 46.0]]], dtype=np.float32),
+            (pattern[0] * pattern[1], 1, 1),
+        )
+        return True, corners
+
+
+class _CornerOccludedCV(_GlareCV):
+    def __init__(self, corner):
+        self.corner = corner
+
+    def findChessboardCornersSB(self, gray, pattern, _flags=0):
+        if int(gray[0, 0]) != 99:
+            return False, None
+        corners = np.tile(
+            np.array([[self.corner]], dtype=np.float32),
             (pattern[0] * pattern[1], 1, 1),
         )
         return True, corners
@@ -142,9 +186,18 @@ class CheckerboardDetectorTests(unittest.TestCase):
         self.assertEqual(cv.sb_calls, 1)
         np.testing.assert_allclose(result["corners"][0, 0], [200, 400])
 
+    def test_equalized_sb_detects_low_contrast_exact_pattern(self):
+        image = np.zeros((100, 100, 3), dtype=np.uint8)
+        result = find_checkerboard_bounded(
+            _EqualizedCV(), image, ((11, 6),), timeout_s=0.5
+        )
+        self.assertTrue(result["found"])
+        self.assertEqual(result["pattern"], (11, 6))
+        self.assertEqual(result["method"], "sb-equalized")
+
     def test_partial_bright_ir_spot_is_narrowly_inpainted_before_sb_retry(self):
         image = np.zeros((100, 100, 3), dtype=np.uint8)
-        image[45:49, 45:49] = [255, 40, 250]
+        image[45:49, 45:49] = [255, 40, 100]
         result = find_checkerboard_bounded(
             _GlareCV(), image, ((11, 6),), max_width=1280, timeout_s=0.5
         )
@@ -153,11 +206,33 @@ class CheckerboardDetectorTests(unittest.TestCase):
         self.assertTrue(result["glare_masked"])
         np.testing.assert_allclose(result["corners"][0, 0], [30, 40])
 
-    def test_inpainted_result_is_rejected_if_glare_overlaps_a_corner(self):
+    def test_inpainted_result_is_rejected_for_varied_glare_over_internal_corner(self):
+        cases = (
+            ((20, 20), np.array([255, 40, 100], dtype=np.uint8)),
+            ((46, 46), np.array([240, 200, 205], dtype=np.uint8)),
+            ((76, 71), np.array([235, 206, 206], dtype=np.uint8)),
+        )
+        for (x, y), intensity in cases:
+            with self.subTest(position=(x, y), intensity=intensity.tolist()):
+                image = np.zeros((100, 100, 3), dtype=np.uint8)
+                image[y - 1:y + 3, x - 1:x + 3] = intensity
+                result = find_checkerboard_bounded(
+                    _CornerOccludedCV((float(x), float(y))),
+                    image,
+                    ((11, 6),),
+                    timeout_s=0.5,
+                )
+                self.assertFalse(result["found"])
+                self.assertIn("overlaps", result["error"])
+
+    def test_equalized_result_is_rejected_if_glare_overlaps_internal_corner(self):
         image = np.zeros((100, 100, 3), dtype=np.uint8)
-        image[45:49, 45:49] = [255, 40, 250]
+        image[45:49, 45:49] = [255, 40, 100]
         result = find_checkerboard_bounded(
-            _CornerOccludedCV(), image, ((11, 6),), timeout_s=0.5
+            _EqualizedCornerOccludedCV(),
+            image,
+            ((11, 6),),
+            timeout_s=0.5,
         )
         self.assertFalse(result["found"])
         self.assertIn("overlaps", result["error"])
@@ -170,6 +245,16 @@ class CheckerboardDetectorTests(unittest.TestCase):
         )
         self.assertFalse(result["found"])
         self.assertFalse(result.get("glare_masked", False))
+
+    def test_failed_localized_glare_retry_has_specific_diagnostic(self):
+        image = np.zeros((100, 100, 3), dtype=np.uint8)
+        image[70:74, 45:49] = [255, 40, 100]
+        result = find_checkerboard_bounded(
+            _GlareNoDetectionCV(), image, ((11, 6),), timeout_s=0.5
+        )
+        self.assertFalse(result["found"])
+        self.assertTrue(result["glare_masked"])
+        self.assertIn("after localized IR glare fallback", result["error"])
 
     def test_slow_sb_call_returns_at_configured_deadline(self):
         image = np.zeros((100, 100, 3), dtype=np.uint8)

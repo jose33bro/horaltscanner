@@ -56,7 +56,7 @@ class MotorController:
     def _motor_cfg(self, axis: str) -> dict:
         axis = axis.upper()
         defaults = {
-            "X": {"microsteps": 16, "rotation_distance": 40, "position_max": 210},
+            "X": {"microsteps": 16, "rotation_distance": 40, "position_max": 195},
             "Y": {"microsteps": 16, "rotation_distance": 620, "position_max": 628.32},
             "Z": {"microsteps": 16, "rotation_distance": 8, "position_max": 270},
         }

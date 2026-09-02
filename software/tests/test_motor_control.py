@@ -68,7 +68,7 @@ class TestMotorController(unittest.TestCase):
 
     def test_move_absolute_out_of_limits(self):
         """Test mouvement hors limites"""
-        result = self.controller.move_abs('X', 500.0)  # Max X = 210mm
+        result = self.controller.move_abs('X', 500.0)  # Max X = 195mm
         self.assertFalse(result)
         self.mock_usb.move.assert_not_called()
 

@@ -66,7 +66,7 @@ Avant de déployer via systemd, testez que tout fonctionne:
 # Depuis le repo root
 cd software
 gunicorn \
-  --workers 2 \
+  --workers 1 \
   --worker-class gevent \
   --bind 127.0.0.1:5000 \
   api:create_app
@@ -205,7 +205,7 @@ sudo systemctl restart horaltscanner
 
 ### Reconstruction très lente / API freezes
 - Vérifiez que vous utilisez **Gunicorn** (pas `python api/horalscanner_api.py`)
-- Vérifiez que vous avez **4 workers** configurés
+- Vérifiez que vous avez **1 worker** configuré; le matériel et l'état du scan ont un propriétaire unique
 - Vérifiez que vous utilisez **gevent** worker class (non-bloquant)
 
 ### Open3D import error
@@ -222,9 +222,9 @@ bash software/scripts/install_open3d_pi.sh
 
 ## 📈 Performance Tips
 
-1. **4 workers** pour RPi4 4GB: bon équilibre entre concurrence et mémoire
-   - Augmentez à 8 si vous avez 8GB RAM
-   - Diminuez à 2 si vous avez moins de 2GB RAM
+1. **1 worker** pour tout déploiement matériel:
+   - Ne l'augmentez pas: GPIO, série, caméras et état du scan sont partagés
+   - Utilisez gevent et les tâches d'arrière-plan pour conserver une API réactive
 
 2. **Gevent worker class** élimine le blocage I/O:
    - Les captures d'image, uploads, et reads API deviennent async

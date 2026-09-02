@@ -152,6 +152,36 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertEqual(status_response.get_json()["status"], self.fake_stm32.status)
         self.assertIn(("stop_motor", "z"), self.fake_stm32.calls)
 
+    def test_manual_hardware_controls_are_blocked_during_acquisition(self):
+        class ReservedSession:
+            hardware_reserved = True
+
+        original = self.api_module.scan_session
+        self.addCleanup(setattr, self.api_module, "scan_session", original)
+        self.api_module.scan_session = ReservedSession()
+
+        response = self.client.post("/api/move/x", json={"mm": 1})
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("reserved", response.get_json()["error"])
+
+    def test_manual_hardware_route_holds_shared_reservation(self):
+        observed = []
+
+        def move_motor(_axis, _distance):
+            acquired = self.api_module._scan_hardware_lock.acquire(blocking=False)
+            observed.append(not acquired)
+            if acquired:
+                self.api_module._scan_hardware_lock.release()
+            return True
+
+        self.fake_stm32.move_motor = move_motor
+
+        response = self.client.post("/api/move/x", json={"mm": 1})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(observed, [True])
+
     def test_invalid_numeric_payloads_return_400(self):
         led_response = self.client.post("/api/led/color", json={"r": "red", "g": 0, "b": 0})
         move_response = self.client.post("/api/move/x", json={"mm": "far"})
@@ -350,6 +380,31 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertFalse(data["ready"])
         self.assertTrue(data["blockers"])
 
+    def test_probing_preflight_holds_shared_hardware_reservation(self):
+        observed = []
+
+        class ProbeSession:
+            hardware_reserved = False
+
+            def configure_hardware(self, **_kwargs):
+                return None
+
+            def readiness(inner_self, probe=False):
+                acquired = self.api_module._scan_hardware_lock.acquire(blocking=False)
+                observed.append(probe and not acquired)
+                if acquired:
+                    self.api_module._scan_hardware_lock.release()
+                return {"ready": False, "mode": "real", "blockers": ["test"]}
+
+        original = self.api_module.scan_session
+        self.addCleanup(setattr, self.api_module, "scan_session", original)
+        self.api_module.scan_session = ProbeSession()
+
+        response = self.client.post("/api/scan/preflight")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(observed, [True])
+
     def test_reconstruct_without_points_returns_structured_error(self):
         response = self.client.post("/api/model/reconstruct")
         self.assertEqual(response.status_code, 409)
@@ -537,12 +592,21 @@ class HoralScannerAPITests(unittest.TestCase):
         self.assertTrue(started.is_set())
         self.assertEqual(response.status_code, 504)
         self.assertLess(elapsed, 0.5)
+        self.assertFalse(self.api_module._scan_hardware_lock.acquire(blocking=False))
 
         busy_response = self.client.post("/api/camera/pi/test")
         self.assertEqual(busy_response.status_code, 409)
 
         release.set()
         self.assertTrue(finished.wait(0.5))
+        deadline = time.time() + 0.5
+        acquired = False
+        while not acquired and time.time() < deadline:
+            acquired = self.api_module._scan_hardware_lock.acquire(blocking=False)
+            if not acquired:
+                time.sleep(0.005)
+        self.assertTrue(acquired)
+        self.api_module._scan_hardware_lock.release()
 
     def test_camera_test_timeout_does_not_start_overlapping_analysis(self):
         analysis_started = threading.Event()

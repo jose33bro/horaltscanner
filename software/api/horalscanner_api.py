@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
+import tempfile
 import threading
 import time
 from io import BytesIO
@@ -23,6 +25,7 @@ from flask import (
     Blueprint,
     Flask,
     Response,
+    g,
     jsonify,
     request,
     send_file,
@@ -67,6 +70,53 @@ from software.api.scanner_engine import (
 
 logger = logging.getLogger(__name__)
 
+
+class HardwareReservationLock:
+    """Process-local lock plus Linux flock for multi-worker exclusion."""
+
+    def __init__(self, path: str | None = None) -> None:
+        self._thread_lock = threading.Lock()
+        self._path = path or os.environ.get(
+            "HORALSCANNER_HARDWARE_LOCK",
+            os.path.join(tempfile.gettempdir(), "horalscanner-hardware.lock"),
+        )
+        self._file = None
+
+    def acquire(self, blocking: bool = True) -> bool:
+        if not self._thread_lock.acquire(blocking=blocking):
+            return False
+        try:
+            try:
+                import fcntl
+            except ImportError:
+                return True
+            self._file = open(self._path, "a+", encoding="ascii")
+            flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+            try:
+                fcntl.flock(self._file.fileno(), flags)
+            except BlockingIOError:
+                self._file.close()
+                self._file = None
+                self._thread_lock.release()
+                return False
+            return True
+        except Exception:
+            if self._file is not None:
+                self._file.close()
+                self._file = None
+            self._thread_lock.release()
+            raise
+
+    def release(self) -> None:
+        try:
+            if self._file is not None:
+                import fcntl
+                fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+                self._file.close()
+                self._file = None
+        finally:
+            self._thread_lock.release()
+
 # Drivers
 try:
     from software.drivers.stm32_driver import STM32Driver
@@ -102,6 +152,75 @@ def _add_cors(response):
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
+
+
+@api_bp.before_request
+def _guard_scan_hardware_reservation():
+    """Prevent manual controls from racing a physical acquisition."""
+    allowed = {
+        "/api/motor/stop",
+        "/api/motor/status",
+    }
+    guarded = (
+        request.path.startswith((
+            "/api/move/",
+            "/api/home/",
+            "/api/rotate",
+            "/api/laser/",
+            "/api/camera/",
+            "/api/lidar/",
+        ))
+        or (
+            request.method == "POST"
+            and request.path.startswith("/api/scan/pose/")
+        )
+        or (
+            request.method == "POST"
+            and request.path == "/api/scan/preflight"
+        )
+    )
+    if request.path in allowed or not guarded:
+        return None
+
+    session = globals().get("scan_session")
+    reservation = globals().get("_scan_hardware_lock")
+    if (
+        session is not None
+        and bool(getattr(session, "hardware_reserved", False))
+    ) or reservation is None or not reservation.acquire(blocking=False):
+        return _json_error(
+            "Scanner hardware is reserved by an active acquisition",
+            409,
+            hint="Stop the scan before using manual motor, laser, camera, or LiDAR controls.",
+        )
+    g.scan_hardware_lock_acquired = True
+    return None
+
+
+@api_bp.after_request
+def _release_request_hardware_reservation(response):
+    if getattr(g, "scan_hardware_lock_acquired", False):
+        g.scan_hardware_lock_acquired = False
+        parts = request.path.strip("/").split("/")
+        camera_lock = None
+        if len(parts) >= 3 and parts[:2] == ["api", "camera"]:
+            camera_lock = _camera_operation_locks.get(parts[2])
+        if camera_lock is not None and camera_lock.locked():
+            threading.Thread(
+                target=_release_after_camera_operation,
+                args=(camera_lock,),
+                name="camera-hardware-quarantine",
+                daemon=True,
+            ).start()
+        else:
+            _scan_hardware_lock.release()
+    return response
+
+
+def _release_after_camera_operation(camera_lock: threading.Lock) -> None:
+    camera_lock.acquire()
+    camera_lock.release()
+    _scan_hardware_lock.release()
 
 
 @api_bp.route("/", methods=["GET"])
@@ -217,6 +336,7 @@ lidar_driver = LidarDriver(
 )
 pi_camera = PiCamera()
 usb_camera = LogitechCamera(device_id=camera_config.get("usb_device_id", "auto"))
+_scan_hardware_lock = HardwareReservationLock()
 scan_session = ScanSession(
     simulation=_simulation_enabled(scanner_config),
     motor_driver=stm32_driver,
@@ -227,6 +347,7 @@ scan_session = ScanSession(
     calibration=hardware_config.get("scan_calibration", {}),
     saved_poses_provider=get_all_saved_poses,
     laser_line_analyzer=analyze_laser_line,
+    hardware_reservation=_scan_hardware_lock,
 )
 reconstruction_engine = ReconstructionEngine(scan_session)
 pose_memory = PoseMemory()

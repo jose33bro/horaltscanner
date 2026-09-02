@@ -206,7 +206,11 @@ const HoralScannerUI = (() => {
       if (status.scanning) {
         byId("scan-state-badge").className = "badge running";
         byId("scan-state-badge").textContent = status.mode === "real" ? "Acquisition reelle" : "Simulation explicite";
+        byId("scan-start").disabled = true;
+        byId("scan-stop").disabled = false;
         byId("scan-preflight").disabled = true;
+        if (!state.scanTimer) state.scanTimer = setInterval(refreshScanStatus, 800);
+        if (!state.pointTimer) state.pointTimer = setInterval(refreshPointCloud, 1200);
       } else if (status.error) {
         byId("scan-state-badge").className = "badge warning";
         byId("scan-state-badge").textContent = "Erreur";

@@ -1,3 +1,4 @@
+import copy
 import threading
 import time
 import unittest
@@ -204,6 +205,7 @@ VALID_CALIBRATION = {
             "camera_to_scanner": np.eye(4).tolist(),
             "carriage_axis": "z",
             "carriage_direction": [0, 0, 1],
+            "reference_axis_position_mm": 10.0,
             "quality": {"accepted": True, "rms_px": 0.1, "maximum_rms_px": 1.0, "extrinsic_translation_rms_mm": 0.1, "maximum_extrinsic_rms_mm": 5.0, "extrinsic_rotation_rms_deg": 0.1, "maximum_extrinsic_rms_deg": 3.0},
         },
     },
@@ -223,6 +225,7 @@ VALID_CALIBRATION = {
         "lidar_to_scanner": np.eye(4).tolist(),
         "carriage_axis": "z",
         "carriage_direction": [0, 0, 1],
+        "reference_axis_position_mm": 10.0,
         "min_distance_mm": 20,
         "max_distance_mm": 1000,
         "source": "operator_measured_origin_direction",
@@ -510,6 +513,97 @@ class RealScanSessionTests(unittest.TestCase):
         self.assertFalse(readiness["ready"])
         self.assertTrue(any("Turntable axis" in item for item in readiness["blockers"]))
         self.assertTrue(any("mm_per_revolution" in item for item in readiness["blockers"]))
+
+    def test_moving_sensor_references_are_required_finite_and_in_axis_limits(self):
+        for sensor, value in (("usb", None), ("usb", float("nan")), ("lidar", 11.0)):
+            with self.subTest(sensor=sensor, value=value):
+                calibration = copy.deepcopy(VALID_CALIBRATION)
+                target = (
+                    calibration["cameras"]["usb"]
+                    if sensor == "usb"
+                    else calibration["lidar"]
+                )
+                if value is None:
+                    target.pop("reference_axis_position_mm")
+                else:
+                    target["reference_axis_position_mm"] = value
+                blockers = self.make_session(calibration=calibration).readiness()["blockers"]
+                self.assertTrue(
+                    any("reference_axis_position_mm" in blocker for blocker in blockers)
+                )
+
+    def test_usb_translation_uses_absolute_calibration_reference_not_scan_origin(self):
+        session = self.make_session(saved_pose={"x": 0.0, "y": 0.0, "z": 7.0})
+        session._axis_position["z"] = 8.0
+
+        translated = session._apply_carriage_translation(
+            np.array([1.0, 2.0, 3.0]),
+            VALID_CALIBRATION["cameras"]["usb"],
+            {"x": 0.0, "y": 0.0, "z": 7.0},
+        )
+
+        np.testing.assert_allclose(translated, [1.0, 2.0, 1.0])
+
+    def test_usb_points_use_absolute_reference_when_scan_pose_differs(self):
+        calibration = copy.deepcopy(VALID_CALIBRATION)
+        calibration["laser_planes"]["left"].update(
+            {"normal": [1, 0, 0], "offset_mm": -10}
+        )
+        session = self.make_session(
+            calibration=calibration,
+            saved_pose={"x": 0.0, "y": 0.0, "z": 7.0},
+        )
+        session._axis_position.update({"y": 0.0, "z": 8.0})
+        ambient = np.zeros((8, 8, 3), dtype=np.uint8)
+        laser = ambient.copy()
+        laser[:, 2, 2] = 255
+        fake_cv2 = mock.Mock()
+        fake_cv2.IMREAD_COLOR = 1
+        fake_cv2.imdecode.side_effect = [ambient, laser]
+        fake_cv2.undistortPoints.return_value = np.array([[[1.0, 0.0]]])
+
+        with mock.patch("software.api.scanner_engine.cv2", fake_cv2):
+            points = ScanSession._extract_points(
+                session,
+                "usb",
+                "left",
+                b"ambient",
+                b"laser",
+                {"x": 0.0, "y": 0.0, "z": 7.0},
+            )
+
+        self.assertGreater(len(points), 0)
+        for point in points:
+            np.testing.assert_allclose(point, [10.0, 0.0, 8.0])
+
+    def test_lidar_point_uses_absolute_calibration_reference_not_scan_origin(self):
+        session = self.make_session(saved_pose={"x": 0.0, "y": 0.0, "z": 7.0})
+        session._axis_position.update({"y": 0.0, "z": 8.0})
+
+        session._add_lidar_point(
+            100.0,
+            {"x": 0.0, "y": 0.0, "z": 7.0},
+        )
+
+        np.testing.assert_allclose(session._data.points[-1], [0.0, 0.0, 98.0])
+
+    def test_fixed_pi_camera_is_not_translated_or_given_reference_blocker(self):
+        session = self.make_session(saved_pose={"x": 0.0, "y": 0.0, "z": 7.0})
+        session._axis_position["z"] = 8.0
+
+        translated = session._apply_carriage_translation(
+            np.array([1.0, 2.0, 3.0]),
+            VALID_CALIBRATION["cameras"]["pi"],
+            {"x": 0.0, "y": 0.0, "z": 7.0},
+        )
+
+        np.testing.assert_allclose(translated, [1.0, 2.0, 3.0])
+        self.assertFalse(
+            any(
+                "Camera 'pi' reference_axis_position_mm" in blocker
+                for blocker in session.readiness()["blockers"]
+            )
+        )
 
     def test_capture_timeout_forces_lasers_off_and_stops_motors(self):
         cameras = {

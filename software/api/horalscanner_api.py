@@ -317,7 +317,7 @@ geometric_calibration = GeometricCalibrationService(
     cameras={"pi": pi_camera, "usb": usb_camera},
     lidar_driver=lidar_driver,
     hardware_reservation=_scan_hardware_lock,
-    store=AtomicCalibrationStore(config_manager.HARDWARE_CONFIG_PATH),
+    store=AtomicCalibrationStore(config_manager.CALIBRATION_STATE_PATH),
     config=scanner_config.get("geometric_calibration", {}),
     on_saved=_install_geometric_calibration,
 )

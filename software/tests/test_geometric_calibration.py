@@ -126,6 +126,22 @@ class CalibrationMathTests(unittest.TestCase):
         with self.assertRaisesRegex(CalibrationError, "exactly 11x6"):
             validate_calibration_payload(payload)
 
+    def test_payload_requires_reference_for_each_moving_sensor(self):
+        for sensor in ("usb", "lidar"):
+            with self.subTest(sensor=sensor):
+                payload = valid_calibration()
+                target = (
+                    payload["cameras"]["usb"]
+                    if sensor == "usb"
+                    else payload["lidar"]
+                )
+                target["carriage_axis"] = "z"
+                target["carriage_direction"] = [0, 0, 1]
+                with self.assertRaisesRegex(
+                    CalibrationError, "reference_axis_position_mm"
+                ):
+                    validate_calibration_payload(payload)
+
 
 class _FakeCV:
     def __init__(self, rms=0.25):
@@ -499,6 +515,16 @@ class AtomicCalibrationStoreTests(unittest.TestCase):
         restored = self.store.rollback()
         self.assertEqual(restored, {"version": "old"})
         self.assertEqual(json.loads(self.path.read_text())["scan_calibration"], {"version": "old"})
+
+    def test_first_save_creates_runtime_state_without_tracked_config(self):
+        self.path.unlink()
+        calibration = valid_calibration()
+
+        self.store.save(calibration, {"calibration": calibration})
+
+        persisted = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["schema_version"], 1)
+        self.assertEqual(persisted["scan_calibration"], calibration)
 
     def test_validation_failure_never_modifies_config_or_backup(self):
         invalid = valid_calibration()

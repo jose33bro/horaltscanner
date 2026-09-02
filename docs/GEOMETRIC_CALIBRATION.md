@@ -84,3 +84,52 @@ curl -fsS http://127.0.0.1:5000/api/calibration/geometric/report?download=1 \
 The service accepts and atomically installs calibration only after finite,
 invertible transforms and all RMS/residual limits pass. The previous
 configuration is retained for `/api/calibration/geometric/rollback`.
+
+## Durable state and OS upgrades
+
+Measured calibration is stored outside the git checkout at
+`/var/lib/horalscanner/calibration.json`. It is loaded as a validated overlay
+over tracked hardware defaults, so `git pull`, reinstall, and OS repair cannot
+replace it. The systemd service sets `HORALSCANNER_CALIBRATION_STATE` and
+creates the state directory for user `pi`. A valid legacy calibration embedded
+in the tracked hardware config is migrated only when no runtime file exists.
+Existing runtime state is never overwritten by migration.
+
+After a Raspberry Pi OS 64-bit Lite upgrade, run the idempotent repair mode:
+
+```bash
+cd /home/pi/horaltscanner
+sudo bash setup_pi.sh --repair
+curl -fsS http://127.0.0.1:5000/api/status | python3 -m json.tool
+```
+
+This rechecks rpicam/libcamera, Picamera2, OpenCV, Python requirements, groups,
+udev aliases, and systemd. Its health checks do not move an axis or energize a
+laser.
+
+Back up runtime state before an OS reinstall:
+
+```bash
+sudo systemctl stop horalscanner
+sudo tar -C /var/lib/horalscanner -czf "$HOME/horalscanner-calibration.tgz" \
+  calibration.json*
+sudo systemctl start horalscanner
+```
+
+Restore it atomically after setup:
+
+```bash
+mkdir -p "$HOME/horalscanner-calibration-restore"
+tar -C "$HOME/horalscanner-calibration-restore" -xzf "$HOME/horalscanner-calibration.tgz"
+python3 -m json.tool "$HOME/horalscanner-calibration-restore/calibration.json" >/dev/null
+sudo install -o pi -g pi -m 0640 \
+  "$HOME/horalscanner-calibration-restore/calibration.json" \
+  /var/lib/horalscanner/calibration.json.new
+sudo mv /var/lib/horalscanner/calibration.json.new /var/lib/horalscanner/calibration.json
+sudo systemctl restart horalscanner
+```
+
+Never copy the tracked `config/horalscanner_config.json` calibration placeholders
+over this measured runtime file. Moving USB-camera and TF-Luna transforms are
+anchored to their persisted `reference_axis_position_mm`; scan preflight rejects
+missing, non-finite, or out-of-limit references.

@@ -221,6 +221,25 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
             or rotation_rms > maximum_rotation
         ):
             raise CalibrationError(f"{name} camera quality is not accepted")
+        carriage_axis = camera.get("carriage_axis")
+        if carriage_axis is not None:
+            if carriage_axis not in {"x", "y", "z"}:
+                raise CalibrationError(f"{name} carriage axis is invalid")
+            direction = np.asarray(camera.get("carriage_direction"), dtype=float)
+            if (
+                direction.shape != (3,)
+                or not np.isfinite(direction).all()
+                or np.linalg.norm(direction) <= 1e-9
+            ):
+                raise CalibrationError(f"{name} carriage direction is invalid")
+            try:
+                reference = float(camera.get("reference_axis_position_mm", math.nan))
+            except (TypeError, ValueError):
+                reference = math.nan
+            if not math.isfinite(reference):
+                raise CalibrationError(
+                    f"{name} reference_axis_position_mm is required"
+                )
 
     for side in ("left", "right"):
         plane = calibration.get("laser_planes", {}).get(side, {})
@@ -263,6 +282,23 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
         raise CalibrationError("TF-Luna transform is not homogeneous")
     if lidar.get("source") != "operator_measured_origin_direction":
         raise CalibrationError("TF-Luna transform source is not recorded")
+    carriage_axis = lidar.get("carriage_axis")
+    if carriage_axis is not None:
+        if carriage_axis not in {"x", "y", "z"}:
+            raise CalibrationError("TF-Luna carriage axis is invalid")
+        direction = np.asarray(lidar.get("carriage_direction"), dtype=float)
+        if (
+            direction.shape != (3,)
+            or not np.isfinite(direction).all()
+            or np.linalg.norm(direction) <= 1e-9
+        ):
+            raise CalibrationError("TF-Luna carriage direction is invalid")
+        try:
+            reference = float(lidar.get("reference_axis_position_mm", math.nan))
+        except (TypeError, ValueError):
+            reference = math.nan
+        if not math.isfinite(reference):
+            raise CalibrationError("TF-Luna reference_axis_position_mm is required")
     lidar_quality = lidar.get("quality", {})
     lidar_rms = float(lidar_quality.get("rms_mm", math.inf))
     lidar_maximum = float(lidar_quality.get("maximum_rms_mm", math.nan))
@@ -305,13 +341,16 @@ class AtomicCalibrationStore:
         self.backup_path = self.path.with_suffix(self.path.suffix + ".calibration.bak")
         self.report_path = self.path.with_suffix(self.path.suffix + ".calibration-report.json")
 
-    def _read(self, path: Path | None = None) -> dict:
-        with open(path or self.path, encoding="utf-8") as handle:
+    def _read(self, path: Path | None = None, *, missing_ok: bool = False) -> dict:
+        selected = path or self.path
+        if missing_ok and not selected.exists():
+            return {"schema_version": 1}
+        with open(selected, encoding="utf-8") as handle:
             return json.load(handle)
 
     def save(self, calibration: Mapping[str, Any], report: Mapping[str, Any]) -> None:
         validate_calibration_payload(calibration)
-        current = self._read()
+        current = self._read(missing_ok=True)
         updated = copy.deepcopy(current)
         updated["scan_calibration"] = copy.deepcopy(dict(calibration))
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -355,6 +394,8 @@ class AtomicCalibrationStore:
     @staticmethod
     def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
         with open(path, "w", encoding="utf-8") as handle:
+            if hasattr(os, "fchmod"):
+                os.fchmod(handle.fileno(), 0o640)
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.flush()
             os.fsync(handle.fileno())

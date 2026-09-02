@@ -561,6 +561,9 @@ class ScanSession:
                 blockers.append(f"Camera '{name}' carriage_direction calibration is invalid")
             if camera.get("carriage_axis") not in (None, "x", "y", "z"):
                 blockers.append(f"Camera '{name}' carriage_axis calibration is invalid")
+            self._validate_carriage_reference(
+                f"Camera '{name}'", camera, blockers
+            )
         planes = self._calibration.get("laser_planes", {})
         for side in self._LASER_SIDES:
             plane = planes.get(side, {}) if isinstance(planes, Mapping) else {}
@@ -611,6 +614,7 @@ class ScanSession:
             blockers.append("TF-Luna carriage_direction calibration is invalid")
         if lidar.get("carriage_axis") not in (None, "x", "y", "z"):
             blockers.append("TF-Luna carriage_axis calibration is invalid")
+        self._validate_carriage_reference("TF-Luna", lidar, blockers)
         lidar_quality = lidar.get("quality", {})
         if (
             lidar.get("source") != "operator_measured_origin_direction"
@@ -643,6 +647,43 @@ class ScanSession:
         ):
             blockers.append("X scale validation is missing or rejected")
         return blockers
+
+    def _validate_carriage_reference(
+        self,
+        sensor_name: str,
+        sensor_config: Mapping[str, Any],
+        blockers: list[str],
+    ) -> None:
+        axis = sensor_config.get("carriage_axis")
+        if axis not in {"x", "y", "z"}:
+            return
+        reference = sensor_config.get("reference_axis_position_mm")
+        if not self._finite_number(reference):
+            blockers.append(
+                f"{sensor_name} reference_axis_position_mm is required for moving axis {axis.upper()}"
+            )
+            return
+        limits = self._config.get("axis_limits_mm", {})
+        axis_limits = limits.get(axis) if isinstance(limits, Mapping) else None
+        try:
+            low = float(axis_limits["min"])
+            high = float(axis_limits["max"])
+        except (KeyError, TypeError, ValueError):
+            blockers.append(
+                f"{sensor_name} reference cannot be validated because axis {axis.upper()} limits are invalid"
+            )
+            return
+        reference_value = float(reference)
+        if (
+            not math.isfinite(low)
+            or not math.isfinite(high)
+            or high <= low
+            or not low <= reference_value <= high
+        ):
+            blockers.append(
+                f"{sensor_name} reference_axis_position_mm {reference_value:g} is outside "
+                f"axis {axis.upper()} limits [{low:g}, {high:g}]"
+            )
 
     @staticmethod
     def _finite_number(value: Any, *, positive: bool = False) -> bool:
@@ -1295,7 +1336,7 @@ class ScanSession:
         self,
         point: np.ndarray,
         sensor_config: Mapping[str, Any],
-        trajectory_origin: Mapping[str, float],
+        _trajectory_origin: Mapping[str, float],
     ) -> np.ndarray:
         axis = sensor_config.get("carriage_axis")
         if axis not in {"x", "y", "z"}:
@@ -1305,7 +1346,9 @@ class ScanSession:
             dtype=float,
         )
         positions = self._axis_position
-        displacement = positions[axis] - float(trajectory_origin[axis])
+        displacement = positions[axis] - float(
+            sensor_config["reference_axis_position_mm"]
+        )
         return np.array(point, dtype=float) + direction * displacement
 
     def _normalize_turntable_point(

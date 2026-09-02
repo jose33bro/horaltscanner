@@ -38,6 +38,28 @@ HARDWARE_CONFIG_PATH = os.environ.get(
 )
 
 
+def _default_calibration_state_path() -> str:
+    configured = os.environ.get("HORALSCANNER_CALIBRATION_STATE")
+    if configured:
+        return configured
+    system_state = Path("/var/lib/horalscanner")
+    if os.name == "posix" and (
+        (system_state.exists() and os.access(system_state, os.W_OK))
+        or (hasattr(os, "geteuid") and os.geteuid() == 0)
+    ):
+        return str(system_state / "calibration.json")
+    user_state = Path(
+        os.environ.get(
+            "XDG_STATE_HOME",
+            os.environ.get("LOCALAPPDATA", str(Path.home() / ".local" / "state")),
+        )
+    )
+    return str(user_state / "horalscanner" / "calibration.json")
+
+
+CALIBRATION_STATE_PATH = _default_calibration_state_path()
+
+
 def _load_json_config(path: str) -> dict:
     """Load a JSON file from disk and return an empty mapping on failure."""
     try:
@@ -63,8 +85,64 @@ def load() -> dict:
 
 
 def load_hardware_config() -> dict:
-    """Load the hardware configuration describing pins, motors, and MCU transport."""
-    return _load_json_config(HARDWARE_CONFIG_PATH)
+    """Load tracked hardware defaults with validated persistent calibration overlaid."""
+    hardware = _load_json_config(HARDWARE_CONFIG_PATH)
+    state_path = Path(CALIBRATION_STATE_PATH)
+    state = _load_json_config(str(state_path)) if state_path.exists() else {}
+    calibration = state.get("scan_calibration")
+    if calibration is not None:
+        if _calibration_is_valid(calibration):
+            hardware["scan_calibration"] = calibration
+        else:
+            logger.error("Ignoring invalid runtime calibration at %s", state_path)
+        return hardware
+
+    legacy = hardware.get("scan_calibration")
+    if legacy is not None and _calibration_is_valid(legacy):
+        try:
+            document = {"schema_version": 1, "scan_calibration": legacy}
+            _atomic_json_write(state_path, document, overwrite=False)
+            migration_backup = state_path.with_suffix(
+                state_path.suffix + ".migration.bak"
+            )
+            _atomic_json_write(migration_backup, document, overwrite=False)
+            logger.info("Migrated legacy calibration to %s", state_path)
+        except (OSError, FileExistsError):
+            logger.exception("Unable to migrate legacy calibration to %s", state_path)
+    return hardware
+
+
+def _calibration_is_valid(calibration: object) -> bool:
+    try:
+        from software.api.geometric_calibration import validate_calibration_payload
+
+        validate_calibration_payload(calibration)
+        return True
+    except Exception:
+        return False
+
+
+def _atomic_json_write(path: Path, payload: dict, *, overwrite: bool) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not overwrite and path.exists():
+        raise FileExistsError(path)
+    temporary = path.with_suffix(path.suffix + ".new")
+    try:
+        mode = "x" if not temporary.exists() else "w"
+        with open(temporary, mode, encoding="utf-8") as handle:
+            if hasattr(os, "fchmod"):
+                os.fchmod(handle.fileno(), 0o640)
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if not overwrite and path.exists():
+            raise FileExistsError(path)
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def save(config: dict) -> None:

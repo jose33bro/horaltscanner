@@ -129,6 +129,7 @@
         "camera_to_scanner": null,
         "carriage_axis": "z",
         "carriage_direction": [0, 0, 1],
+        "reference_axis_position_mm": null,
         "quality": null
       }
     },
@@ -156,6 +157,7 @@
       "lidar_to_scanner": null,
       "carriage_axis": "z",
       "carriage_direction": [0, 0, 1],
+      "reference_axis_position_mm": null,
       "min_distance_mm": 20,
       "max_distance_mm": 8000,
       "source": null,

@@ -61,6 +61,8 @@ PNP_BOARD_FRAME_ADJUSTMENTS = {
     "rotate_180_about_board_normal": np.diag([-1.0, -1.0, 1.0]),
 }
 MINIMUM_DIRECT_Z_CONTRASTS = 3
+DIRECT_Z_ESTIMATOR = "same_xy_z_contrast_geometric_median"
+RESIDUALIZED_Z_ESTIMATOR = "z_residualized_against_commanded_x_y"
 
 
 def checkerboard_points(
@@ -4213,11 +4215,22 @@ class GeometricCalibrationService:
             direct_spread = float(
                 np.max(np.linalg.norm(direct_array - direct_vector, axis=1))
             )
+            pairwise_spread = max(
+                (
+                    float(np.linalg.norm(direct_array[first] - direct_array[second]))
+                    for first in range(len(direct_array))
+                    for second in range(first + 1, len(direct_array))
+                ),
+                default=0.0,
+            )
             direct_diagnostics = {
                 "method": "widest_same_xy_z_contrast_geometric_median",
                 "pairs": len(direct_contrasts),
                 "median_vector_mm_per_commanded_mm": direct_vector.tolist(),
                 "maximum_vector_deviation_mm_per_commanded_mm": direct_spread,
+                "maximum_pairwise_vector_difference_mm_per_commanded_mm": (
+                    pairwise_spread
+                ),
                 "contrasts": [
                     {
                         "first_view": reported_view_numbers[
@@ -4238,10 +4251,14 @@ class GeometricCalibrationService:
                 "pairs": 0,
                 "median_vector_mm_per_commanded_mm": None,
                 "maximum_vector_deviation_mm_per_commanded_mm": None,
+                "maximum_pairwise_vector_difference_mm_per_commanded_mm": None,
                 "contrasts": [],
             }
 
-        jackknife_vectors = []
+        vector = np.asarray(coefficients[3], dtype=float)
+        estimator = solution["estimator"]
+        jackknife_deviations = []
+        jackknife_fits = 0
         for index in selected_indexes:
             level = all_levels[index]
             if (
@@ -4258,39 +4275,107 @@ class GeometricCalibrationService:
             trial[index] = False
             try:
                 trial_solution = self._translation_regression_solution(
-                    deltas, translations, trial
+                    deltas,
+                    translations,
+                    trial,
+                    estimator=estimator,
                 )
             except CalibrationError:
                 continue
             if trial_solution["observable"]:
-                jackknife_vectors.append(
-                    np.asarray(trial_solution["coefficients"][3], dtype=float)
+                jackknife_deviations.append(
+                    float(
+                        np.linalg.norm(
+                            np.asarray(
+                                trial_solution["coefficients"][3], dtype=float
+                            )
+                            - vector
+                        )
+                    )
+                )
+                jackknife_fits += 1
+
+        level_estimator = estimator
+        level_reference_vector = vector
+        if estimator == DIRECT_Z_ESTIMATOR:
+            try:
+                level_reference_solution = self._translation_regression_solution(
+                    deltas,
+                    translations,
+                    inlier_mask,
+                    estimator=RESIDUALIZED_Z_ESTIMATOR,
+                )
+            except CalibrationError:
+                level_estimator = None
+            else:
+                level_estimator = RESIDUALIZED_Z_ESTIMATOR
+                level_reference_vector = np.asarray(
+                    level_reference_solution["coefficients"][3], dtype=float
                 )
         for level in required_levels:
+            if level_estimator is None:
+                break
             trial = inlier_mask & ~np.isclose(all_levels, level, atol=1e-6)
             if int(trial.sum()) < 4:
                 continue
             try:
                 trial_solution = self._translation_regression_solution(
-                    deltas, translations, trial
+                    deltas,
+                    translations,
+                    trial,
+                    estimator=level_estimator,
                 )
             except CalibrationError:
                 continue
             if trial_solution["observable"]:
-                jackknife_vectors.append(
-                    np.asarray(trial_solution["coefficients"][3], dtype=float)
+                jackknife_deviations.append(
+                    float(
+                        np.linalg.norm(
+                            np.asarray(
+                                trial_solution["coefficients"][3], dtype=float
+                            )
+                            - level_reference_vector
+                        )
+                    )
                 )
-        vector = np.asarray(coefficients[3], dtype=float)
-        jackknife_uncertainty = (
-            max(
-                float(np.linalg.norm(jackknife_vector - vector))
-                for jackknife_vector in jackknife_vectors
-            )
-            if jackknife_vectors
-            else 0.0
-        )
+                jackknife_fits += 1
+
+        if estimator == DIRECT_Z_ESTIMATOR:
+            for contrast in direct_contrasts:
+                trial = inlier_mask.copy()
+                trial[contrast["first_index"]] = False
+                trial[contrast["second_index"]] = False
+                if int(trial.sum()) < 4:
+                    continue
+                try:
+                    trial_solution = self._translation_regression_solution(
+                        deltas,
+                        translations,
+                        trial,
+                        estimator=DIRECT_Z_ESTIMATOR,
+                    )
+                except CalibrationError:
+                    continue
+                if trial_solution["observable"]:
+                    jackknife_deviations.append(
+                        float(
+                            np.linalg.norm(
+                                np.asarray(
+                                    trial_solution["coefficients"][3], dtype=float
+                                )
+                                - vector
+                            )
+                        )
+                    )
+                    jackknife_fits += 1
+
+        jackknife_uncertainty = max(jackknife_deviations, default=0.0)
         direct_uncertainty = (
-            float(direct_diagnostics["maximum_vector_deviation_mm_per_commanded_mm"])
+            float(
+                direct_diagnostics[
+                    "maximum_pairwise_vector_difference_mm_per_commanded_mm"
+                ]
+            )
             if len(direct_contrasts) >= MINIMUM_DIRECT_Z_CONTRASTS
             else 0.0
         )
@@ -4298,7 +4383,7 @@ class GeometricCalibrationService:
         return {
             "coefficients": coefficients,
             "inlier_mask": inlier_mask,
-            "estimator": solution["estimator"],
+            "estimator": estimator,
             "design_condition_number": solution["design_condition_number"],
             "observable": bool(
                 solution["observable"]
@@ -4332,7 +4417,7 @@ class GeometricCalibrationService:
             ],
             "direct_same_xy_z_contrasts": direct_diagnostics,
             "vector_uncertainty_mm_per_commanded_mm": uncertainty,
-            "jackknife_fits": len(jackknife_vectors),
+            "jackknife_fits": jackknife_fits,
         }
 
     @staticmethod
@@ -4340,6 +4425,8 @@ class GeometricCalibrationService:
         deltas: np.ndarray,
         translations: np.ndarray,
         selected: np.ndarray,
+        *,
+        estimator: str | None = None,
     ) -> dict[str, Any]:
         selected_deltas = np.asarray(deltas[selected], dtype=float)
         selected_translations = np.asarray(translations[selected], dtype=float)
@@ -4365,14 +4452,28 @@ class GeometricCalibrationService:
             selected_translations,
             np.arange(len(selected_deltas)),
         )
-        if len(direct_contrasts) >= MINIMUM_DIRECT_Z_CONTRASTS:
+        if estimator not in (
+            None,
+            DIRECT_Z_ESTIMATOR,
+            RESIDUALIZED_Z_ESTIMATOR,
+        ):
+            raise CalibrationError("USB carriage estimator selection is invalid")
+        use_direct = estimator == DIRECT_Z_ESTIMATOR or (
+            estimator is None
+            and len(direct_contrasts) >= MINIMUM_DIRECT_Z_CONTRASTS
+        )
+        if use_direct:
+            if not direct_contrasts:
+                raise CalibrationError(
+                    "USB carriage direct estimator has no same-X/Y Z contrasts"
+                )
             vector = GeometricCalibrationService._geometric_median(
                 np.asarray(
                     [contrast["vector"] for contrast in direct_contrasts],
                     dtype=float,
                 )
             )
-            estimator = "same_xy_z_contrast_geometric_median"
+            selected_estimator = DIRECT_Z_ESTIMATOR
         else:
             nuisance_translation = nuisance @ np.linalg.lstsq(
                 nuisance, selected_translations, rcond=None
@@ -4381,7 +4482,7 @@ class GeometricCalibrationService:
             vector = (
                 residualized_z @ residualized_translation
             ) / residualized_energy
-            estimator = "z_residualized_against_commanded_x_y"
+            selected_estimator = RESIDUALIZED_Z_ESTIMATOR
         nuisance_coefficients = np.linalg.lstsq(
             nuisance,
             selected_translations - commanded_z[:, None] * vector,
@@ -4408,7 +4509,7 @@ class GeometricCalibrationService:
             )
         return {
             "coefficients": coefficients,
-            "estimator": estimator,
+            "estimator": selected_estimator,
             "design_condition_number": condition,
             "observable": rank == 4 and math.isfinite(condition),
             "independent_z_leverage_ratio": leverage["ratio"],

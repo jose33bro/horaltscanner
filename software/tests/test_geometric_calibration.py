@@ -2643,6 +2643,42 @@ class CalibrationServiceTests(unittest.TestCase):
             places=6,
         )
 
+    def test_direct_carriage_fit_rejects_correlated_pair_bias(self):
+        expected = np.array([-0.0117, -0.1742, -0.9370])
+        views, _ = self._synthetic_motion_views(
+            -1.0,
+            0.01,
+            usb_pnp_adjustment="rotate_180_about_board_x",
+            usb_carriage_direction=expected,
+        )
+        self.service._motion_model = self.service._estimate_motion_model(views)
+        candidates = self._usb_extrinsic_candidates(
+            views["usb"], "rotate_180_about_board_x"
+        )
+        for index, offset in ((0, -2.0), (1, 2.0), (3, 2.0), (4, -2.0)):
+            candidates[index][:3, 3] += [0.0, offset, 0.0]
+
+        fit = self.service._fit_usb_carriage(
+            views["usb"], candidates, minimum=6
+        )
+
+        contrasts = fit["direct_same_xy_z_contrasts"]
+        self.assertFalse(fit["accepted"])
+        self.assertLess(
+            contrasts["maximum_vector_deviation_mm_per_commanded_mm"],
+            0.15,
+        )
+        self.assertAlmostEqual(
+            contrasts[
+                "maximum_pairwise_vector_difference_mm_per_commanded_mm"
+            ],
+            0.2,
+            places=6,
+        )
+        self.assertGreater(
+            fit["vector_uncertainty_mm_per_commanded_mm"], 0.15
+        )
+
     def test_carriage_rejection_keeps_original_view_number_after_missing_pnp(self):
         expected = np.array([-0.0117, -0.1742, -0.9370])
         views, _ = self._synthetic_motion_views(

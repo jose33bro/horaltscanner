@@ -63,8 +63,9 @@ and Y mechanism transform has been applied. At each repeated commanded X/Y
 position, the widest 20 mm Z contrast cancels the intercept and X/Y nuisance
 motion exactly. With at least three independent contrasts, their multivariate
 geometric median is the carriage-vector estimator. This gives bounded influence
-to one bad contrast without hiding disagreement: the maximum contrast-vector
-deviation is included in the unchanged 0.15 mm/mm vector-uncertainty gate.
+to one bad contrast without hiding disagreement: the maximum pairwise
+contrast-vector difference is included in the unchanged 0.15 mm/mm
+vector-uncertainty gate.
 Legacy/custom trajectories without three contrasts retain the prior
 Frisch-Waugh-Lovell estimator, which residualizes commanded Z against commanded
 X/Y.
@@ -86,10 +87,10 @@ a view only when another inlier remains at that same Z level. A PnP mask that
 removes a whole Z level fails instead of triggering a biased refit. Calibration
 still requires three Z levels spanning 20 mm, independent-Z leverage ratio at
 least 0.25, condition number at most 50, per-level repeatability at most 5 mm,
-and leave-one-view/leave-one-level/contrast carriage-vector deviation at most
-0.15 mm per commanded mm. Reports include those values, maximum leverage
-fraction, effective sample count, per-level sample/inlier counts, rejected
-views, and direct same-X/same-Y Z contrasts.
+and within-estimator leave-one-view/leave-one-level/leave-one-contrast
+carriage-vector deviation at most 0.15 mm per commanded mm. Reports include
+those values, maximum leverage fraction, effective sample count, per-level
+sample/inlier counts, rejected views, and direct same-X/same-Y Z contrasts.
 
 A configured trajectory whose Z is explained by X/Y is rejected before motion
 begins. A bad USB fit, ambiguous board convention, out-of-tolerance scale,

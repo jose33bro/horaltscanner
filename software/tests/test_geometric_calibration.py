@@ -687,86 +687,188 @@ class CalibrationMathTests(unittest.TestCase):
         report = json.loads(
             RIDGE_BRIDGE_REPORT_FIXTURE.read_text(encoding="utf-8")
         )
-        case = report["left_pi_pose_7"]
-        pitch = float(case["projected_checker_pitch_px_median"])
-        first_boundary = 20.0
-        boundaries = first_boundary + pitch * np.arange(6)
-        corner_grid = np.asarray(
-            [
-                [[80.0 + column * 20.0, boundary] for column in range(11)]
-                for boundary in boundaries
-            ],
-            dtype=float,
-        )
-        coefficients = np.asarray(
-            [case["line_slope_x_per_y"], 200.0], dtype=float
-        )
-        rows = np.arange(
-            int(math.ceil(boundaries[0])),
-            int(math.floor(boundaries[-1])) + 1,
-            2,
-            dtype=float,
-        )
-        missing = (
-            (rows >= boundaries[1]) & (rows < boundaries[2])
-        )
-        selected_rows = rows[~missing]
-        selected_columns = np.polyval(coefficients, selected_rows)
-        local_slope_delta = 0.08
-        selected_columns[selected_rows < boundaries[1]] += (
-            local_slope_delta
-            * (selected_rows[selected_rows < boundaries[1]] - boundaries[1])
-        )
-        selected_columns[selected_rows >= boundaries[2]] += (
-            local_slope_delta
-            * (selected_rows[selected_rows >= boundaries[2]] - boundaries[2])
-        )
-        selected = np.column_stack(
-            (
-                selected_columns,
-                selected_rows,
-            )
-        )
-        height, width = 320, 400
-        ambient = np.full((height, width), 130.0, dtype=float)
-        ridge_response = np.zeros((height, width), dtype=float)
-        fine_response = np.zeros((height, width), dtype=float)
-        chromatic_response = np.zeros((height, width), dtype=float)
-        for cell in (1,):
-            start = int(math.ceil(boundaries[cell]))
-            stop = int(math.floor(boundaries[cell + 1]))
-            ambient[start:stop] = 30.0
+        for case in report["left_pi"]:
+            with self.subTest(pose_index=case["pose_index"]):
+                pitch = float(case["projected_checker_pitch_px_median"])
+                boundaries = 20.0 + pitch * np.arange(6)
+                corner_grid = np.asarray(
+                    [
+                        [
+                            [80.0 + column * 20.0, boundary]
+                            for column in range(11)
+                        ]
+                        for boundary in boundaries
+                    ],
+                    dtype=float,
+                )
+                rows = np.arange(
+                    math.ceil(boundaries[0]),
+                    math.floor(boundaries[-1]) + 1,
+                    2,
+                    dtype=float,
+                )
+                missing = np.zeros(len(rows), dtype=bool)
+                for cell in (1, 3):
+                    missing |= (
+                        (rows >= boundaries[cell] - 1.0)
+                        & (rows < boundaries[cell + 1] + 4.0)
+                    )
+                selected_rows = rows[~missing]
+                curvature = np.square(
+                    selected_rows - float(np.mean(selected_rows))
+                )
+                curvature -= np.polyval(
+                    np.polyfit(selected_rows, curvature, 1),
+                    selected_rows,
+                )
+                curvature *= case["line_residual_rms_px"] / float(
+                    np.sqrt(np.mean(np.square(curvature)))
+                )
+                selected_columns = (
+                    case["line_slope_x_per_y"] * selected_rows
+                    + 200.0
+                    + curvature
+                )
+                selected = np.column_stack(
+                    (selected_columns, selected_rows)
+                )
+                coefficients = np.polyfit(
+                    selected_rows, selected_columns, 1
+                )
+                split_indexes = np.flatnonzero(
+                    np.diff(selected_rows)
+                    > case["strict_unexplained_gap_limit_px"]
+                )
+                starts = np.concatenate(([0], split_indexes + 1))
+                stops = np.concatenate(
+                    (split_indexes + 1, [len(selected_rows)])
+                )
+                for gap, cell in enumerate((1, 3)):
+                    left = slice(starts[gap], stops[gap])
+                    right = slice(starts[gap + 1], stops[gap + 1])
+                    left_fit = np.polyfit(
+                        selected_rows[left], selected_columns[left], 1
+                    )
+                    right_fit = np.polyfit(
+                        selected_rows[right], selected_columns[right], 1
+                    )
+                    legacy_boundary_error = max(
+                        abs(
+                            float(
+                                np.polyval(left_fit, boundaries[cell])
+                                - np.polyval(
+                                    coefficients, boundaries[cell]
+                                )
+                            )
+                        ),
+                        abs(
+                            float(
+                                np.polyval(
+                                    right_fit, boundaries[cell + 1]
+                                )
+                                - np.polyval(
+                                    coefficients,
+                                    boundaries[cell + 1],
+                                )
+                            )
+                        ),
+                    )
+                    paired_rows = np.concatenate(
+                        (selected_rows[left], selected_rows[right])
+                    )
+                    paired_columns = np.concatenate(
+                        (
+                            selected_columns[left],
+                            selected_columns[right],
+                        )
+                    )
+                    paired_fit = np.polyfit(
+                        paired_rows, paired_columns, 1
+                    )
+                    paired_residuals = paired_columns - np.polyval(
+                        paired_fit, paired_rows
+                    )
+                    left_count = int(stops[gap] - starts[gap])
+                    self.assertGreater(legacy_boundary_error, 2.0)
+                    self.assertLess(
+                        float(
+                            np.sqrt(
+                                np.mean(np.square(paired_residuals))
+                            )
+                        ),
+                        2.0,
+                    )
+                    self.assertLess(
+                        max(
+                            abs(float(paired_residuals[left_count - 1])),
+                            abs(float(paired_residuals[left_count])),
+                        ),
+                        2.0,
+                    )
+                height, width = 320, 400
+                ambient = np.full((height, width), 130.0, dtype=float)
+                for cell in (1, 3):
+                    start = int(math.ceil(boundaries[cell]))
+                    stop = int(math.floor(boundaries[cell + 1]))
+                    ambient[start:stop] = 30.0
+                empty_response = np.zeros((height, width), dtype=float)
 
-        diagnostic = _classify_checker_gaps(
-            corner_grid=corner_grid,
-            selected=selected,
-            coefficients=coefficients,
-            row_stride=2,
-            strict_gap_limit=case["strict_unexplained_gap_limit_px"],
-            maximum_residual=2.0,
-            maximum_width=12.0,
-            minimum_prominence=16.0,
-            minimum_chromatic_support=7.0,
-            minimum_sharpness_ratio=0.2,
-            ridge_response=ridge_response,
-            fine_response=fine_response,
-            chromatic_response=chromatic_response,
-            ambient_luminance=ambient,
-            reference_luminance=130.0,
-        )
+                diagnostic = _classify_checker_gaps(
+                    corner_grid=corner_grid,
+                    selected=selected,
+                    coefficients=coefficients,
+                    row_stride=2,
+                    strict_gap_limit=case[
+                        "strict_unexplained_gap_limit_px"
+                    ],
+                    maximum_residual=2.0,
+                    maximum_width=12.0,
+                    minimum_prominence=16.0,
+                    minimum_chromatic_support=7.0,
+                    minimum_sharpness_ratio=0.2,
+                    ridge_response=empty_response,
+                    fine_response=empty_response,
+                    chromatic_response=empty_response,
+                    ambient_luminance=ambient,
+                    reference_luminance=130.0,
+                )
 
-        self.assertEqual(
-            case["checker_gap_rejection_counts"],
-            {"noncoherent_endpoints": 2},
-        )
-        self.assertGreaterEqual(diagnostic["raw_max_gap_px"], 44.0)
-        self.assertLessEqual(diagnostic["raw_max_gap_px"], 54.0)
-        self.assertEqual(diagnostic["bridged_checker_gaps"], 1)
-        self.assertEqual(diagnostic["checker_gap_rejection_counts"], {})
-        self.assertLessEqual(
-            diagnostic["unexplained_max_gap_px"],
-            case["strict_unexplained_gap_limit_px"],
-        )
+                self.assertIn(
+                    "noncoherent_endpoints",
+                    case["checker_gap_rejection_counts"],
+                )
+                self.assertAlmostEqual(
+                    float(
+                        np.sqrt(
+                            np.mean(
+                                np.square(
+                                    selected_columns
+                                    - np.polyval(
+                                        coefficients, selected_rows
+                                    )
+                                )
+                            )
+                        )
+                    ),
+                    case["line_residual_rms_px"],
+                )
+                self.assertGreaterEqual(
+                    diagnostic["raw_max_gap_px"], 52.0
+                )
+                self.assertLessEqual(
+                    diagnostic["raw_max_gap_px"],
+                    case["raw_max_gap_px"],
+                )
+                self.assertEqual(
+                    diagnostic["bridged_checker_gaps"], 2
+                )
+                self.assertEqual(
+                    diagnostic["checker_gap_rejection_counts"], {}
+                )
+                self.assertLessEqual(
+                    diagnostic["unexplained_max_gap_px"],
+                    case["strict_unexplained_gap_limit_px"],
+                )
 
     @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
     def test_laser_extraction_bridges_periodic_dark_checker_gaps(self):

@@ -497,10 +497,40 @@ def _classify_checker_gaps(
                 reject("noncoherent_endpoints")
                 continue
 
+            paired_points = np.vstack(
+                (
+                    ordered[left_segment["start"] : left_segment["stop"]],
+                    ordered[right_segment["start"] : right_segment["stop"]],
+                )
+            )
+            paired_coefficients = np.polyfit(
+                paired_points[:, 1], paired_points[:, 0], 1
+            )
+            paired_residuals = paired_points[:, 0] - np.polyval(
+                paired_coefficients, paired_points[:, 1]
+            )
+            paired_rms = float(
+                np.sqrt(np.mean(np.square(paired_residuals)))
+            )
+            left_count = left_segment["stop"] - left_segment["start"]
+            endpoint_residuals = (
+                abs(float(paired_residuals[left_count - 1])),
+                abs(float(paired_residuals[left_count])),
+            )
+            if (
+                paired_rms > maximum_residual
+                or max(endpoint_residuals) > maximum_residual
+            ):
+                reject("noncoherent_endpoints")
+                continue
+
+            paired_crossings = _checker_row_crossings(
+                corner_grid, paired_coefficients
+            )
             aligned_pair = None
-            for boundary_index in range(len(crossings) - 1):
-                first_boundary = float(crossings[boundary_index])
-                second_boundary = float(crossings[boundary_index + 1])
+            for boundary_index in range(len(paired_crossings) - 1):
+                first_boundary = float(paired_crossings[boundary_index])
+                second_boundary = float(paired_crossings[boundary_index + 1])
                 pitch_y = second_boundary - first_boundary
                 pitch = pitch_y * path_scale
                 alignment_tolerance = max(
@@ -521,27 +551,6 @@ def _classify_checker_gaps(
                 continue
 
             first_boundary, second_boundary, pitch_y, pitch = aligned_pair
-            boundary_errors = (
-                abs(
-                    float(
-                        np.polyval(
-                            left_segment["coefficients"], first_boundary
-                        )
-                        - np.polyval(coefficients, first_boundary)
-                    )
-                ),
-                abs(
-                    float(
-                        np.polyval(
-                            right_segment["coefficients"], second_boundary
-                        )
-                        - np.polyval(coefficients, second_boundary)
-                    )
-                ),
-            )
-            if max(boundary_errors) > maximum_residual:
-                reject("noncoherent_endpoints")
-                continue
             minimum_adjacent_span = max(
                 row_stride * 3.0 * path_scale,
                 pitch * 0.35,
@@ -555,7 +564,7 @@ def _classify_checker_gaps(
 
             missing_response = _sample_line_band_max(
                 ridge_response,
-                coefficients,
+                paired_coefficients,
                 missing_start,
                 missing_stop,
                 max(1, int(math.ceil(maximum_width * 2.0))),
@@ -574,28 +583,28 @@ def _classify_checker_gaps(
                 core_radius = max(1, int(math.ceil(maximum_width * 0.5)))
                 core_response = _sample_line_band_max(
                     ridge_response,
-                    coefficients,
+                    paired_coefficients,
                     missing_start,
                     missing_stop,
                     core_radius,
                 )
                 core_fine_response = _sample_line_band_max(
                     fine_response,
-                    coefficients,
+                    paired_coefficients,
                     missing_start,
                     missing_stop,
                     core_radius,
                 )
                 core_chromatic_response = _sample_line_band_max(
                     chromatic_response,
-                    coefficients,
+                    paired_coefficients,
                     missing_start,
                     missing_stop,
                     core_radius,
                 )
                 off_axis_response = _sample_line_band_max(
                     ridge_response,
-                    coefficients,
+                    paired_coefficients,
                     missing_start,
                     missing_stop,
                     max(core_radius + 1, int(math.ceil(maximum_width * 2.0))),
@@ -646,13 +655,13 @@ def _classify_checker_gaps(
             window = max(2.0, pitch_y * 0.18)
             first_context = _sample_along_line(
                 ambient_luminance,
-                coefficients,
+                paired_coefficients,
                 first_boundary - 2.0 * window,
                 first_boundary + 2.0 * window,
             )
             second_context = _sample_along_line(
                 ambient_luminance,
-                coefficients,
+                paired_coefficients,
                 second_boundary - 2.0 * window,
                 second_boundary + 2.0 * window,
             )
@@ -667,19 +676,19 @@ def _classify_checker_gaps(
             )
             gap_reflectance = _sample_along_line(
                 ambient_luminance,
-                coefficients,
+                paired_coefficients,
                 first_boundary + row_stride,
                 second_boundary - row_stride,
             )
             before_reflectance = _sample_along_line(
                 ambient_luminance,
-                coefficients,
+                paired_coefficients,
                 first_boundary - pitch_y + row_stride,
                 first_boundary - row_stride,
             )
             after_reflectance = _sample_along_line(
                 ambient_luminance,
-                coefficients,
+                paired_coefficients,
                 second_boundary + row_stride,
                 second_boundary + pitch_y - row_stride,
             )

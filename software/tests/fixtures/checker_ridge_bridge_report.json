@@ -1,15 +1,35 @@
 {
-  "schema_version": 1,
-  "source": "Sanitized diagnostics from geometric-report-retest-15pct.json (SHA-256 dc2adde4b8230f6d588f879e9740c77422e113506751030253998512acb74d61)",
-  "left_pi_pose_7": {
-    "line_slope_x_per_y": -0.055976703993731225,
-    "line_residual_rms_px": 1.7825373872075911,
-    "p90_local_width_px": 5.279578726800764,
-    "raw_max_gap_px": 54.0,
-    "strict_unexplained_gap_limit_px": 32.29398801269531,
-    "projected_checker_pitch_px_median": 46.18931152525486,
-    "checker_gap_rejection_counts": {
-      "noncoherent_endpoints": 2
+  "schema_version": 2,
+  "source": "Sanitized diagnostics from geometric-report-pr109-280mm.json (SHA-256 9a55e1991f07a4af66caf364ec8f9be4824631cdece4e3a533daa5e09f78bb39)",
+  "left_pi": [
+    {
+      "pose_index": 6,
+      "line_slope_x_per_y": -0.05545470220351425,
+      "line_residual_rms_px": 1.7812307439760668,
+      "p90_local_width_px": 4.812071149472787,
+      "raw_max_gap_px": 54.0,
+      "strict_unexplained_gap_limit_px": 32.298666210937505,
+      "projected_checker_pitch_px_median": 46.33684186427385,
+      "observed_line_segments": 3,
+      "sufficiently_long_line_segments": 2,
+      "checker_gap_rejection_counts": {
+        "noncoherent_endpoints": 2
+      }
+    },
+    {
+      "pose_index": 7,
+      "line_slope_x_per_y": -0.059673787146239686,
+      "line_residual_rms_px": 1.6383967469967906,
+      "p90_local_width_px": 5.1932491270390875,
+      "raw_max_gap_px": 54.0,
+      "strict_unexplained_gap_limit_px": 32.29860424804687,
+      "projected_checker_pitch_px_median": 46.314678666536444,
+      "observed_line_segments": 3,
+      "sufficiently_long_line_segments": 3,
+      "checker_gap_rejection_counts": {
+        "noncoherent_endpoints": 1,
+        "ridge_response_not_low": 1
+      }
     }
-  }
+  ]
 }

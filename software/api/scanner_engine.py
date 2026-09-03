@@ -583,12 +583,79 @@ class ScanSession:
             if not self._finite_number(plane.get("offset_mm")):
                 blockers.append(f"Laser '{side}' calibrated plane offset_mm is missing")
             quality = plane.get("quality", {})
+            inlier_points = (
+                quality.get("inlier_points_per_pose")
+                if isinstance(quality, Mapping)
+                else None
+            )
+            minimum_points_per_view = (
+                quality.get("minimum_points_per_view")
+                if isinstance(quality, Mapping)
+                else None
+            )
+            inlier_points_valid = (
+                isinstance(inlier_points, list)
+                and self._finite_number(
+                    minimum_points_per_view, positive=True
+                )
+                and self._finite_number(quality.get("views"), positive=True)
+                and len(inlier_points) == int(float(quality["views"]))
+                and len(
+                    {
+                        entry.get("pose_index")
+                        for entry in inlier_points
+                        if isinstance(entry, Mapping)
+                    }
+                )
+                == len(inlier_points)
+                and all(
+                    isinstance(entry, Mapping)
+                    and self._finite_number(entry.get("points"), positive=True)
+                    and float(entry["points"])
+                    >= float(minimum_points_per_view)
+                    for entry in inlier_points
+                )
+            )
+            provenance_valid = (
+                plane.get("source") == "pi_checkerboard_structured_light"
+                and isinstance(quality, Mapping)
+                and quality.get("primary_camera") == "pi"
+                and self._finite_number(quality.get("views"), positive=True)
+                and self._finite_number(
+                    quality.get("minimum_views"), positive=True
+                )
+                and float(quality["minimum_views"]) >= 3
+                and float(quality["views"]) >= float(quality["minimum_views"])
+                and self._finite_number(
+                    quality.get("independent_board_orientations"),
+                    positive=True,
+                )
+                and self._finite_number(
+                    quality.get("minimum_board_orientations"),
+                    positive=True,
+                )
+                and float(quality["minimum_board_orientations"]) >= 3
+                and float(quality["independent_board_orientations"])
+                >= float(quality["minimum_board_orientations"])
+                and self._finite_number(
+                    quality.get("plane_spread_ratio"), positive=True
+                )
+                and self._finite_number(
+                    quality.get("minimum_plane_spread_ratio"), positive=True
+                )
+                and float(quality["plane_spread_ratio"])
+                >= float(quality["minimum_plane_spread_ratio"])
+                and inlier_points_valid
+            )
             if (
                 not isinstance(quality, Mapping)
+                or not provenance_valid
                 or not quality.get("accepted")
                 or not self._finite_number(quality.get("rms_mm"))
                 or not self._finite_number(quality.get("maximum_rms_mm"), positive=True)
+                or float(quality.get("maximum_rms_mm", math.inf)) > 2.0
                 or float(quality["rms_mm"]) > float(quality["maximum_rms_mm"])
+                or float(quality["rms_mm"]) > 2.0
             ):
                 blockers.append(f"Laser '{side}' calibration quality is missing or rejected")
         turntable = self._calibration.get("turntable", {})
@@ -653,6 +720,41 @@ class ScanSession:
             blockers.append("TF-Luna carriage_direction calibration is invalid")
         if lidar.get("carriage_axis") not in (None, "x", "y", "z"):
             blockers.append("TF-Luna carriage_axis calibration is invalid")
+        lidar_direction = (
+            np.asarray(lidar.get("carriage_direction"), dtype=float)
+            if self._vector_valid(lidar.get("carriage_direction"), nonzero=True)
+            else np.asarray([], dtype=float)
+        )
+        lidar_scale = lidar.get("carriage_scale_mm_per_commanded_mm")
+        if lidar_scale is not None and (
+            not self._finite_number(lidar_scale, positive=True)
+            or lidar_direction.shape != (3,)
+            or not math.isclose(
+                float(lidar_scale),
+                float(np.linalg.norm(lidar_direction)),
+                rel_tol=1e-6,
+                abs_tol=1e-6,
+            )
+        ):
+            blockers.append("TF-Luna carriage scale is inconsistent with its vector")
+        usb = self._calibration.get("cameras", {}).get("usb", {})
+        usb_direction = (
+            np.asarray(usb.get("carriage_direction"), dtype=float)
+            if self._vector_valid(usb.get("carriage_direction"), nonzero=True)
+            else np.asarray([], dtype=float)
+        )
+        if (
+            lidar.get("carriage_axis") == "z"
+            and usb.get("carriage_axis") == "z"
+            and lidar_direction.shape == (3,)
+            and usb_direction.shape == (3,)
+            and not np.allclose(
+                lidar_direction, usb_direction, rtol=1e-8, atol=1e-8
+            )
+        ):
+            blockers.append(
+                "TF-Luna carriage direction does not match the measured USB carriage fit"
+            )
         self._validate_carriage_reference("TF-Luna", lidar, blockers)
         lidar_quality = lidar.get("quality", {})
         if (

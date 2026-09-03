@@ -1,6 +1,7 @@
 import copy
 import json
 import math
+import os
 import shutil
 import threading
 import time
@@ -9,6 +10,11 @@ from pathlib import Path
 from unittest import mock
 
 import numpy as np
+
+try:
+    import cv2
+except ImportError:  # pragma: no cover - optional in non-vision test environments
+    cv2 = None
 
 from software.api.geometric_calibration import (
     AtomicCalibrationStore,
@@ -21,6 +27,7 @@ from software.api.geometric_calibration import (
     PNP_BOARD_FRAME_ADJUSTMENTS,
     checkerboard_view_metrics,
     checkerboard_points,
+    extract_laser_line_pixels,
     fit_plane_robust,
     transform_from_beam,
     validate_calibration_payload,
@@ -50,7 +57,25 @@ def valid_calibration():
     plane = {
         "normal": [1, 0, 0],
         "offset_mm": -20,
-        "quality": {"accepted": True, "rms_mm": 0.2, "maximum_rms_mm": 2.0},
+        "source": "pi_checkerboard_structured_light",
+        "quality": {
+            "accepted": True,
+            "rms_mm": 0.2,
+            "maximum_rms_mm": 2.0,
+            "primary_camera": "pi",
+            "views": 3,
+            "minimum_views": 3,
+            "independent_board_orientations": 3,
+            "minimum_board_orientations": 3,
+            "plane_spread_ratio": 0.5,
+            "minimum_plane_spread_ratio": 0.001,
+            "minimum_points_per_view": 10,
+            "inlier_points_per_pose": [
+                {"pose_index": 0, "points": 10},
+                {"pose_index": 1, "points": 10},
+                {"pose_index": 2, "points": 10},
+            ],
+        },
     }
     return {
         "checkerboard": {
@@ -140,6 +165,20 @@ class CalibrationMathTests(unittest.TestCase):
         self.assertLess(quality["inliers"], quality["samples"])
         self.assertLess(quality["rms_mm"], 0.01)
 
+    def test_robust_plane_fit_rejects_collinear_points(self):
+        points = np.array([[float(index), 0.0, 0.0] for index in range(30)])
+        with self.assertRaisesRegex(CalibrationError, "2D conditioning"):
+            fit_plane_robust(points, minimum_points=20)
+
+    def test_robust_plane_fit_rejects_nearly_collinear_spread(self):
+        x = np.linspace(0.0, 100.0, 30)
+        points = np.column_stack(
+            (x, np.where(np.arange(30) % 2, 0.0001, -0.0001), np.zeros(30))
+        )
+
+        with self.assertRaisesRegex(CalibrationError, "spread ratio"):
+            fit_plane_robust(points, minimum_points=20)
+
     def test_lidar_transform_requires_explicit_finite_nonzero_direction(self):
         with self.assertRaises(CalibrationError):
             transform_from_beam([0, 0, 0], [0, 0, 0])
@@ -195,6 +234,123 @@ class CalibrationMathTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(CalibrationError, "carriage scale"):
             validate_calibration_payload(payload)
+
+    def test_payload_requires_lidar_to_share_usb_carriage_vector(self):
+        payload = valid_calibration()
+        payload["cameras"]["usb"].update(
+            carriage_axis="z",
+            carriage_direction=[-0.0117, -0.1742, -0.9370],
+            reference_axis_position_mm=20.0,
+        )
+        payload["lidar"].update(
+            carriage_axis="z",
+            carriage_direction=[0.0, 0.0, 1.0],
+            reference_axis_position_mm=20.0,
+        )
+        with self.assertRaisesRegex(
+            CalibrationError, "must match the measured USB carriage fit"
+        ):
+            validate_calibration_payload(payload)
+
+    def test_payload_rejects_legacy_laser_plane_without_pi_provenance(self):
+        payload = valid_calibration()
+        payload["laser_planes"]["left"].pop("source")
+
+        with self.assertRaisesRegex(CalibrationError, "laser plane quality"):
+            validate_calibration_payload(payload)
+
+    def test_payload_never_accepts_laser_plane_limit_above_two_mm(self):
+        payload = valid_calibration()
+        payload["laser_planes"]["left"]["quality"].update(
+            rms_mm=3.0,
+            maximum_rms_mm=4.0,
+        )
+
+        with self.assertRaisesRegex(CalibrationError, "laser plane quality"):
+            validate_calibration_payload(payload)
+
+    def test_payload_requires_per_pose_inliers_and_plane_conditioning(self):
+        for mutate in (
+            lambda quality: quality["inlier_points_per_pose"][1].update(
+                points=1
+            ),
+            lambda quality: quality.update(plane_spread_ratio=1e-6),
+        ):
+            with self.subTest(mutate=mutate):
+                payload = valid_calibration()
+                mutate(payload["laser_planes"]["left"]["quality"])
+                with self.assertRaisesRegex(
+                    CalibrationError, "laser plane quality"
+                ):
+                    validate_calibration_payload(payload)
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_ignores_off_board_reflections(self):
+        ambient, laser, corners = self._synthetic_laser_images()
+        cv2.line(laser, (8, 0), (22, 239), (0, 0, 255), 8)
+        cv2.rectangle(laser, (270, 10), (319, 230), (0, 0, 255), -1)
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertTrue(diagnostic["accepted"], diagnostic)
+        self.assertGreater(len(pixels), 100)
+        self.assertTrue(all(145 <= point[0] <= 175 for point in pixels))
+        self.assertLess(diagnostic["line_residual_rms_px"], 1.0)
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_absent_and_board_edge_lines(self):
+        ambient, absent, corners = self._synthetic_laser_images(draw_line=False)
+        edge = absent.copy()
+        cv2.line(edge, (61, 40), (61, 200), (0, 0, 255), 3)
+        short_reflection = absent.copy()
+        cv2.rectangle(short_reflection, (145, 100), (175, 115), (0, 0, 255), -1)
+
+        for name, image in (
+            ("absent", absent),
+            ("edge", edge),
+            ("short-on-board-reflection", short_reflection),
+        ):
+            with self.subTest(candidate=name):
+                pixels, diagnostic = extract_laser_line_pixels(
+                    cv2,
+                    ambient,
+                    image,
+                    corners,
+                    config={
+                        "board_columns": 11,
+                        "board_rows": 6,
+                        "laser_row_stride": 1,
+                    },
+                )
+                self.assertEqual(pixels, [])
+                self.assertFalse(diagnostic["accepted"])
+
+    @staticmethod
+    def _synthetic_laser_images(*, draw_line=True):
+        ambient = np.full((240, 320, 3), 40, dtype=np.uint8)
+        corners = np.array(
+            [
+                [60 + column * 20, 40 + row * 32]
+                for row in range(6)
+                for column in range(11)
+            ],
+            dtype=np.float32,
+        )
+        cv2.circle(ambient, (160, 120), 4, (255, 255, 255), -1)
+        laser = ambient.copy()
+        if draw_line:
+            cv2.line(laser, (156, 45), (164, 195), (0, 0, 255), 3)
+        return ambient, laser, corners
 
 
 class _FakeCV:
@@ -1076,7 +1232,7 @@ class CalibrationServiceTests(unittest.TestCase):
 
     def test_usb_joint_fit_selects_planar_normal_and_signed_carriage_vector(self):
         self.service._config["minimum_views"] = 6
-        expected_carriage = np.array([0.025, -0.035, -1.02])
+        expected_carriage = np.array([-0.0117, -0.1742, -0.9370])
         cases = (
             ("identity", True),
             ("rotate_180_about_board_x", False),
@@ -1128,6 +1284,17 @@ class CalibrationServiceTests(unittest.TestCase):
                     adjustment_name,
                 )
                 self.assertTrue(result["quality"]["carriage_fit"]["accepted"])
+                self.assertAlmostEqual(
+                    result["quality"]["carriage_fit"]["vertical_alignment_deg"],
+                    10.557,
+                    delta=0.01,
+                )
+                self.assertEqual(
+                    result["quality"]["carriage_fit"][
+                        "maximum_vertical_alignment_deg"
+                    ],
+                    12.0,
+                )
                 self.assertAlmostEqual(
                     np.linalg.det(
                         np.asarray(
@@ -1324,6 +1491,409 @@ class CalibrationServiceTests(unittest.TestCase):
                 {"origin_mm": [0, 0, 0], "direction": [0, 0, 1]},
             )
 
+    def test_lidar_uses_and_persists_validated_usb_carriage_vector_once(self):
+        poses = [
+            {"x": 195.0, "y": 0.0, "z": 20.0},
+            {"x": 195.0, "y": 0.0, "z": 30.0},
+            {"x": 195.0, "y": 0.0, "z": 40.0},
+        ]
+        carriage = np.array([-0.0117, -0.1742, -0.9370])
+        calibration = {
+            "cameras": {
+                "usb": {
+                    "carriage_axis": "z",
+                    "carriage_direction": carriage.tolist(),
+                }
+            }
+        }
+        current_pose = poses[0]
+        self.service._move_to = lambda pose: current_pose.update(pose)
+        board = np.eye(4)
+        board[:3, 2] = [0.0, 1.0, 0.0]
+        board[:3, 3] = [0.0, 200.0, 0.0]
+        self.service._board_to_scanner = lambda _pose: board.copy()
+        self.service._lidar.read_distance_mm = lambda: (
+            200.0 - carriage[1] * (current_pose["z"] - 20.0)
+        )
+        self.service._config["maximum_lidar_rms_mm"] = 0.01
+
+        result = self.service._calibrate_lidar(
+            poses,
+            calibration,
+            {
+                "origin_mm": [0.0, 0.0, 0.0],
+                "direction": [0.0, 1.0, 0.0],
+                "reference_z_mm": 20.0,
+            },
+        )
+
+        np.testing.assert_allclose(result["carriage_direction"], carriage)
+        self.assertAlmostEqual(
+            result["carriage_scale_mm_per_commanded_mm"],
+            float(np.linalg.norm(carriage)),
+        )
+        self.assertEqual(
+            result["quality"]["carriage_source"],
+            "validated_usb_carriage_fit",
+        )
+        self.assertLess(result["quality"]["rms_mm"], 1e-9)
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_synthetic_checkerboard_lines_recover_true_laser_plane(self):
+        self.service._cv = cv2
+        self.service._reference_pose = {"x": 195.0, "y": 0.0, "z": 20.0}
+        self.service._motion_model.update(
+            x_mm_per_commanded_mm=1.0,
+            y_radians_per_commanded_mm=0.01,
+        )
+        self.service._config.update(
+            laser_row_stride=1,
+            minimum_laser_line_rows=20,
+            minimum_laser_points_per_view=20,
+        )
+        intrinsic = np.array(
+            [[300.0, 0.0, 160.0], [0.0, 300.0, 120.0], [0.0, 0.0, 1.0]]
+        )
+        camera_to_scanner = np.eye(4)
+        camera_to_scanner[:3, :3] = BOARD_TO_SCANNER_AT_REFERENCE
+        camera_to_scanner[:3, 3] = [-300.0, 0.0, 0.0]
+        calibration = {
+            "cameras": {
+                "pi": {
+                    "intrinsic_matrix": intrinsic.tolist(),
+                    "distortion_coefficients": [0, 0, 0, 0, 0],
+                    "camera_to_scanner": camera_to_scanner.tolist(),
+                }
+            }
+        }
+        expected_normal = np.array([-0.2, 1.0, 0.0])
+        expected_normal /= np.linalg.norm(expected_normal)
+        expected_offset = -10.0 / np.linalg.norm([-0.2, 1.0, 0.0])
+        points = []
+        poses = [
+            {"x": 195.0, "y": 0.0, "z": 20.0},
+            {"x": 185.0, "y": 10.0, "z": 20.0},
+            {"x": 175.0, "y": 20.0, "z": 20.0},
+        ]
+        for pose in poses:
+            board = self.service._board_to_scanner(pose)
+            board_points = checkerboard_points().astype(float)
+            scanner_corners = (
+                board[:3, :3] @ board_points.T
+            ).T + board[:3, 3]
+            camera_corners = (
+                camera_to_scanner[:3, :3].T
+                @ (scanner_corners - camera_to_scanner[:3, 3]).T
+            ).T
+            image_corners = np.column_stack(
+                (
+                    intrinsic[0, 0] * camera_corners[:, 0] / camera_corners[:, 2]
+                    + intrinsic[0, 2],
+                    intrinsic[1, 1] * camera_corners[:, 1] / camera_corners[:, 2]
+                    + intrinsic[1, 2],
+                )
+            )
+            tangent = board[:3, 0]
+            board_center = board[:3, 3]
+            local_u = -(
+                float(np.dot(expected_normal, board_center)) + expected_offset
+            ) / float(np.dot(expected_normal, tangent))
+            endpoints = np.array(
+                [
+                    board_center + tangent * local_u + board[:3, 1] * vertical
+                    for vertical in (-30.0, 30.0)
+                ]
+            )
+            camera_endpoints = (
+                camera_to_scanner[:3, :3].T
+                @ (endpoints - camera_to_scanner[:3, 3]).T
+            ).T
+            image_endpoints = np.column_stack(
+                (
+                    intrinsic[0, 0]
+                    * camera_endpoints[:, 0]
+                    / camera_endpoints[:, 2]
+                    + intrinsic[0, 2],
+                    intrinsic[1, 1]
+                    * camera_endpoints[:, 1]
+                    / camera_endpoints[:, 2]
+                    + intrinsic[1, 2],
+                )
+            )
+            ambient = np.full((240, 320, 3), 40, dtype=np.uint8)
+            laser = ambient.copy()
+            cv2.line(
+                laser,
+                tuple(np.rint(image_endpoints[0]).astype(int)),
+                tuple(np.rint(image_endpoints[1]).astype(int)),
+                (0, 0, 255),
+                3,
+            )
+            cv2.line(laser, (5, 0), (25, 239), (0, 0, 255), 8)
+            _, ambient_jpeg = cv2.imencode(".jpg", ambient)
+            _, laser_jpeg = cv2.imencode(".jpg", laser)
+            extracted = self.service._laser_board_points(
+                "pi",
+                "left",
+                ambient_jpeg.tobytes(),
+                laser_jpeg.tobytes(),
+                pose,
+                calibration,
+                checkerboard_view={
+                    "corners": image_corners.astype(np.float32),
+                    "jpeg": b"cached",
+                },
+            )
+            self.assertTrue(extracted["diagnostic"]["accepted"], extracted)
+            points.extend(extracted["points"])
+
+        normal, offset, quality = fit_plane_robust(points, minimum_points=30)
+        if np.dot(normal, expected_normal) < 0:
+            normal, offset = -normal, -offset
+        np.testing.assert_allclose(normal, expected_normal, atol=0.01)
+        self.assertAlmostEqual(offset, expected_offset, delta=0.5)
+        self.assertLess(quality["rms_mm"], 0.5)
+
+    def test_laser_plane_fit_rejects_insufficient_independent_views(self):
+        poses = [
+            {"x": 195.0, "y": 0.0, "z": 20.0},
+            {"x": 185.0, "y": 10.0, "z": 30.0},
+            {"x": 175.0, "y": 20.0, "z": 40.0},
+        ]
+        self.service._move_to = lambda _pose: None
+        self.service._capture = lambda _name: b"jpeg"
+        pose_index = {pose["x"]: index for index, pose in enumerate(poses)}
+
+        def extract(name, _side, _ambient, _laser, pose, _calibration, **_kwargs):
+            accepted = name == "usb" or pose_index[pose["x"]] < 2
+            return {
+                "points": (
+                    [[float(index), float(index % 5), 0.0] for index in range(20)]
+                    if accepted
+                    else []
+                ),
+                "diagnostic": {
+                    "accepted": accepted,
+                    "reason": None if accepted else "no board intersection",
+                },
+            }
+
+        self.service._laser_board_points = extract
+        views = {
+            name: [
+                {"pose": dict(pose), "corners": np.zeros((66, 2))}
+                for pose in poses
+            ]
+            for name in ("pi", "usb")
+        }
+        with self.assertRaisesRegex(
+            CalibrationError, "insufficient valid Pi-camera checkerboard intersections"
+        ):
+            self.service._calibrate_lasers(
+                poses, {"cameras": {}}, checkerboard_views=views
+            )
+        status = self.service.status()
+        self.assertEqual(len(status["laser_views"]["left"]["pi"]), 3)
+        self.assertEqual(len(status["laser_views"]["right"]["usb"]), 3)
+
+    def test_robust_laser_fit_requires_minimum_inliers_in_each_pose(self):
+        poses = [
+            {"x": 195.0, "y": 0.0, "z": 20.0},
+            {"x": 185.0, "y": 10.0, "z": 30.0},
+            {"x": 175.0, "y": 20.0, "z": 40.0},
+        ]
+        first_pose = [
+            [float(x), float(y), 0.0]
+            for x in range(6)
+            for y in range(5)
+        ]
+        points = first_pose + [[20.0, 20.0, 0.0], [30.0, 30.0, 0.0]]
+        pose_indexes = [0] * 30 + [1, 2]
+
+        with self.assertRaisesRegex(
+            CalibrationError, "retains only 1 Pi poses"
+        ):
+            self.service._fit_laser_plane_views(
+                points,
+                pose_indexes,
+                poses,
+                minimum_points=30,
+                minimum_points_per_view=10,
+                minimum_views=3,
+                minimum_orientations=3,
+            )
+
+    def test_robust_laser_fit_converges_after_more_than_pose_count_passes(self):
+        poses = [
+            {"x": 195.0, "y": 0.0, "z": 20.0},
+            {"x": 185.0, "y": 10.0, "z": 30.0},
+            {"x": 175.0, "y": 20.0, "z": 40.0},
+        ]
+        points = [
+            [float(pose_index * 20 + index), float(index % 7), 0.0]
+            for pose_index in range(3)
+            for index in range(20)
+        ]
+        pose_indexes = [
+            pose_index for pose_index in range(3) for _ in range(20)
+        ]
+        calls = 0
+
+        def slowly_converging_fit(values, **_kwargs):
+            nonlocal calls
+            calls += 1
+            mask = np.ones(len(values), dtype=bool)
+            if calls <= 4:
+                mask[-1] = False
+            return (
+                np.array([0.0, 0.0, 1.0]),
+                0.0,
+                {
+                    "accepted": True,
+                    "rms_mm": 0.1,
+                    "inliers": int(mask.sum()),
+                    "samples": len(values),
+                    "plane_spread_ratio": 0.5,
+                    "minimum_plane_spread_ratio": 0.001,
+                    "inlier_mask": mask.tolist(),
+                },
+            )
+
+        with mock.patch(
+            "software.api.geometric_calibration.fit_plane_robust",
+            side_effect=slowly_converging_fit,
+        ):
+            _, _, quality = self.service._fit_laser_plane_views(
+                points,
+                pose_indexes,
+                poses,
+                minimum_points=30,
+                minimum_points_per_view=10,
+                minimum_views=3,
+                minimum_orientations=3,
+            )
+
+        self.assertEqual(calls, 5)
+        self.assertEqual(quality["views"], 3)
+
+    def test_usb_laser_cross_validation_never_replaces_or_blocks_pi_plane(self):
+        poses = [
+            {"x": 195.0, "y": 0.0, "z": 20.0},
+            {"x": 185.0, "y": 10.0, "z": 30.0},
+            {"x": 175.0, "y": 20.0, "z": 40.0},
+        ]
+        self.service._move_to = lambda _pose: None
+        self.service._capture = lambda _name: b"jpeg"
+        pose_index = {pose["x"]: index for index, pose in enumerate(poses)}
+
+        def extract(name, _side, _ambient, _laser, pose, _calibration, **_kwargs):
+            z = 0.0 if name == "pi" else 10.0
+            x = float(pose_index[pose["x"]] * 10)
+            return {
+                "points": [[x, float(index), z] for index in range(15)],
+                "diagnostic": {"accepted": True, "reason": None},
+            }
+
+        self.service._laser_board_points = extract
+        views = {
+            name: [
+                {"pose": dict(pose), "corners": np.zeros((66, 2))}
+                for pose in poses
+            ]
+            for name in ("pi", "usb")
+        }
+
+        result = self.service._calibrate_lasers(
+            poses, {"cameras": {}}, checkerboard_views=views
+        )
+
+        for side in ("left", "right"):
+            self.assertAlmostEqual(abs(result[side]["normal"][2]), 1.0)
+            cross_validation = result[side]["quality"]["usb_cross_validation"]
+            self.assertTrue(cross_validation["performed"])
+            self.assertFalse(cross_validation["accepted"])
+            self.assertIn("Pi plane remains authoritative", cross_validation["reason"])
+
+    def test_optional_usb_capture_failure_does_not_abort_pi_plane_fit(self):
+        poses = [
+            {"x": 195.0, "y": 0.0, "z": 20.0},
+            {"x": 185.0, "y": 10.0, "z": 30.0},
+            {"x": 175.0, "y": 20.0, "z": 40.0},
+        ]
+        self.service._move_to = lambda _pose: None
+        pose_index = {pose["x"]: index for index, pose in enumerate(poses)}
+
+        def capture(name):
+            if name == "usb":
+                raise CalibrationError("USB unavailable")
+            return b"jpeg"
+
+        def extract(_name, _side, _ambient, _laser, pose, _calibration, **_kwargs):
+            x = float(pose_index[pose["x"]] * 10)
+            return {
+                "points": [[x, float(index), 0.0] for index in range(15)],
+                "diagnostic": {"accepted": True, "reason": None},
+            }
+
+        self.service._capture = capture
+        self.service._laser_board_points = extract
+        views = {
+            name: [
+                {"pose": dict(pose), "corners": np.zeros((66, 2))}
+                for pose in poses
+            ]
+            for name in ("pi", "usb")
+        }
+
+        result = self.service._calibrate_lasers(
+            poses, {"cameras": {}}, checkerboard_views=views
+        )
+
+        self.assertEqual(result["left"]["quality"]["primary_camera"], "pi")
+        usb_diagnostics = self.service.status()["laser_views"]["left"]["usb"]
+        self.assertEqual(len(usb_diagnostics), 3)
+        self.assertTrue(
+            all("USB ambient capture failed" in item["reason"] for item in usb_diagnostics)
+        )
+
+    def test_missing_cached_pose_is_rejected_without_ambient_redetection(self):
+        poses = [
+            {"x": 195.0, "y": 0.0, "z": 20.0},
+            {"x": 185.0, "y": 10.0, "z": 30.0},
+            {"x": 175.0, "y": 20.0, "z": 40.0},
+        ]
+        self.service._move_to = lambda _pose: None
+        self.service._capture = lambda name: (
+            b"jpeg" if name == "pi" else (_ for _ in ()).throw(
+                CalibrationError("USB unavailable")
+            )
+        )
+        extraction = mock.Mock(
+            return_value={
+                "points": [[float(x), float(y), 0.0] for x in range(5) for y in range(5)],
+                "diagnostic": {"accepted": True, "reason": None},
+            }
+        )
+        self.service._laser_board_points = extraction
+        views = {
+            "pi": [
+                {"pose": dict(pose), "corners": np.zeros((66, 2))}
+                for pose in poses[:2]
+            ],
+            "usb": [],
+        }
+
+        with self.assertRaisesRegex(CalibrationError, "insufficient valid Pi-camera"):
+            self.service._calibrate_lasers(
+                poses, {"cameras": {}}, checkerboard_views=views
+            )
+
+        self.assertEqual(extraction.call_count, 4)
+        missing = self.service.status()["laser_views"]["left"]["pi"][-1]
+        self.assertEqual(
+            missing["reason"], "no accepted exact-pose checkerboard view"
+        )
+
     def test_laser_capture_error_always_forces_both_lasers_off(self):
         self.service._move_to = lambda _pose: None
         self.service._capture = lambda _name: b"jpeg"
@@ -1336,6 +1906,139 @@ class CalibrationServiceTests(unittest.TestCase):
         self.assertFalse(any(self.gpio.state.values()))
         self.assertIn(("on", "left"), self.gpio.calls)
         self.assertIn(("off", "left"), self.gpio.calls)
+
+    def test_cancel_waits_for_inflight_enable_and_prevents_future_enable(self):
+        entered = threading.Event()
+        release = threading.Event()
+        cancel_returned = threading.Event()
+
+        def delayed_on(side):
+            entered.set()
+            release.wait(1)
+            self.gpio.state[side] = True
+            self.gpio.calls.append(("on", side))
+            return True
+
+        self.gpio.laser_on = delayed_on
+        enable_thread = threading.Thread(
+            target=lambda: self.service._laser("left", True)
+        )
+        enable_thread.start()
+        self.assertTrue(entered.wait(0.5))
+
+        def cancel():
+            self.service.cancel()
+            cancel_returned.set()
+
+        cancel_thread = threading.Thread(target=cancel)
+        cancel_thread.start()
+        self.assertFalse(cancel_returned.wait(0.05))
+        release.set()
+        enable_thread.join(0.5)
+        cancel_thread.join(0.5)
+
+        self.assertTrue(cancel_returned.is_set())
+        self.assertFalse(any(self.gpio.state.values()))
+        with self.assertRaises(CalibrationCancelled):
+            self.service._laser("right", True)
+
+    def test_commit_boundary_rejects_early_cancel_and_defers_late_cancel(self):
+        self.service._cancel.set()
+        with self.assertRaises(CalibrationCancelled):
+            self.service._begin_commit()
+        self.assertFalse(self.service._commit_in_progress)
+
+        self.service._cancel = threading.Event()
+        self.service._active = True
+        self.service._begin_commit()
+        status = self.service.cancel()
+        self.assertTrue(self.service._commit_in_progress)
+        self.assertFalse(self.service._cancel.is_set())
+        self.assertEqual(status["phase"], "persisting")
+        self.assertIn("Finishing atomic", status["step"])
+        self.assertTrue(
+            self.service._finish_commit({"generation": "committed"})
+        )
+        self.assertTrue(self.service._cancel.is_set())
+        self.assertEqual(self.service.status()["phase"], "complete")
+        self.assertFalse(self.service.active)
+
+    def test_cancel_during_save_finishes_activation_without_cancelled_outcome(self):
+        entered = threading.Event()
+        release = threading.Event()
+        errors = []
+        real_save = self.service._store.save
+        activated = []
+
+        def blocking_save(calibration, report):
+            entered.set()
+            release.wait(1)
+            return real_save(calibration, report)
+
+        self.service._store.save = blocking_save
+        self.service._on_saved = lambda calibration: activated.append(
+            copy.deepcopy(dict(calibration))
+        )
+        self.service._active = True
+        self.service._begin_commit()
+
+        def save_and_activate():
+            try:
+                self.service._save_and_activate(
+                    valid_calibration(), {"generation": "new"}
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=save_and_activate)
+        thread.start()
+        self.assertTrue(entered.wait(0.5))
+        status = self.service.cancel()
+        self.assertEqual(status["phase"], "persisting")
+        self.assertNotEqual(status["phase"], "cancelled")
+        self.assertFalse(self.service._cancel.is_set())
+        release.set()
+        thread.join(1)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(activated, [valid_calibration()])
+        self.assertTrue(self.service._finish_commit({"generation": "new"}))
+        self.assertEqual(self.service.status()["phase"], "complete")
+        self.assertNotEqual(self.service.status()["phase"], "cancelled")
+        self.service.cancel()
+        self.assertEqual(self.service.status()["phase"], "complete")
+        persisted = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["scan_calibration"], valid_calibration())
+
+    def test_activation_failure_restores_persistent_and_runtime_calibration(self):
+        previous_disk = {"version": "disk-old"}
+        previous_runtime = {"version": "runtime-old"}
+        self.config_path.write_text(
+            json.dumps({"scan_calibration": previous_disk}), encoding="utf-8"
+        )
+        before = self.config_path.read_bytes()
+        runtime = {"calibration": copy.deepcopy(previous_runtime)}
+
+        def activate(calibration):
+            runtime["calibration"] = copy.deepcopy(dict(calibration))
+            if calibration.get("checkerboard"):
+                raise RuntimeError("activation failed")
+
+        self.service._on_saved = activate
+        self.service._get_current_calibration = lambda: copy.deepcopy(
+            runtime["calibration"]
+        )
+        with self.assertRaisesRegex(
+            CalibrationError, "previous persistent and runtime calibration restored"
+        ):
+            self.service._save_and_activate(
+                valid_calibration(), {"generation": "new"}
+            )
+
+        self.assertEqual(self.config_path.read_bytes(), before)
+        self.assertEqual(runtime["calibration"], previous_runtime)
+        self.assertFalse(self.service._store.backup_path.exists())
+        self.assertFalse(self.service._store.report_path.exists())
 
     def test_cancellation_during_blocked_hardware_call_is_bounded_and_cleans_up(self):
         entered = threading.Event()
@@ -1425,6 +2128,111 @@ class AtomicCalibrationStoreTests(unittest.TestCase):
                 self.store.save(valid_calibration(), {"calibration": valid_calibration()})
         self.assertEqual(self.path.read_bytes(), before)
         self.assertFalse(self.path.with_suffix(".json.new").exists())
+
+    def test_sidecar_failures_never_partially_activate_or_persist(self):
+        self.store.save(valid_calibration(), {"generation": "old"})
+        paths = (self.path, self.store.backup_path, self.store.report_path)
+        before = {path: path.read_bytes() for path in paths}
+        real_replace = os.replace
+
+        for failure_call in (1, 2, 3):
+            with self.subTest(failure_call=failure_call):
+                calls = 0
+
+                def fail_once(source, destination):
+                    nonlocal calls
+                    calls += 1
+                    if calls == failure_call:
+                        raise OSError(f"replace {failure_call} failed")
+                    return real_replace(source, destination)
+
+                with (
+                    mock.patch(
+                        "software.api.geometric_calibration.os.replace",
+                        side_effect=fail_once,
+                    ),
+                    self.assertRaisesRegex(OSError, f"replace {failure_call} failed"),
+                ):
+                    self.store.save(
+                        valid_calibration(), {"generation": f"new-{failure_call}"}
+                    )
+                for path in paths:
+                    self.assertEqual(path.read_bytes(), before[path])
+
+    def test_save_fsyncs_sidecars_before_active_config(self):
+        events = []
+        real_replace = os.replace
+
+        def replace(source, destination):
+            events.append(("replace", Path(destination).name))
+            return real_replace(source, destination)
+
+        def fsync_directory(path):
+            events.append(("fsync-directory", Path(path).name))
+
+        with (
+            mock.patch(
+                "software.api.geometric_calibration.os.replace",
+                side_effect=replace,
+            ),
+            mock.patch.object(
+                self.store,
+                "_fsync_directory",
+                side_effect=fsync_directory,
+            ),
+        ):
+            self.store.save(valid_calibration(), {"generation": "new"})
+
+        self.assertEqual(
+            events,
+            [
+                ("replace", self.store.report_path.name),
+                ("replace", self.store.backup_path.name),
+                ("fsync-directory", self.path.parent.name),
+                ("replace", self.path.name),
+                ("fsync-directory", self.path.parent.name),
+            ],
+        )
+
+    def test_active_config_fsync_failure_restores_entire_generation(self):
+        self.store.save(valid_calibration(), {"generation": "old"})
+        paths = (self.path, self.store.backup_path, self.store.report_path)
+        before = {path: path.read_bytes() for path in paths}
+
+        with (
+            mock.patch.object(
+                self.store,
+                "_fsync_directory",
+                side_effect=[
+                    None,
+                    CalibrationError("active directory fsync failed"),
+                    None,
+                    None,
+                ],
+            ),
+            self.assertRaisesRegex(
+                CalibrationError, "active directory fsync failed"
+            ),
+        ):
+            self.store.save(valid_calibration(), {"generation": "new"})
+
+        for path in paths:
+            self.assertEqual(path.read_bytes(), before[path])
+
+    def test_directory_fsync_failure_is_explicit_on_supported_platforms(self):
+        with (
+            mock.patch(
+                "software.api.geometric_calibration.os.name", "posix"
+            ),
+            mock.patch(
+                "software.api.geometric_calibration.os.open",
+                side_effect=OSError("fsync unavailable"),
+            ),
+            self.assertRaisesRegex(
+                CalibrationError, "failed to fsync calibration directory"
+            ),
+        ):
+            self.store._fsync_directory(self.path.parent)
 
 
 if __name__ == "__main__":

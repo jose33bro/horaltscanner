@@ -64,6 +64,47 @@ trajectory-origin X center. This prevents pivot warp when automatic centering
 moves X from 195 mm to 97.5 mm and also keeps future per-frame X trajectory
 changes registered. Missing or inconsistent signed-X/reference metadata blocks
 physical scans.
+
+The moving USB fit preserves its complete signed carriage vector rather than
+reducing it to a nominal Z direction. On the measured machine the live fit was
+approximately `[-0.0117, -0.1742, -0.9370]` mm per commanded Z millimeter
+(magnitude `0.953`, vertical alignment `10.557°`). The default vertical
+alignment acceptance limit is therefore a measured-machine tolerance of
+**12°**; the near-unit scale, regression observability/condition, 5 mm
+translation residual, and 3° rotation residual checks remain unchanged.
+TF-Luna is mounted to the same carriage. Its expected calibration readings and
+persisted runtime correction use that validated signed USB vector exactly once.
+
+Laser-plane calibration reuses the accepted checkerboard corners for each exact
+camera/pose pair. Red delta is considered only inside an eroded inner-corner
+polygon; ambient saturated spots are excluded, and a camera/laser observation
+is accepted only when row peaks form one thin, continuous line with sufficient
+span and low image-line residual. Reflections on the wall, platform, mount, or
+laser housing are never intersected with the board plane. Missing and edge-only
+hits are recorded and skipped. Because both laser modules are physically on the
+Pi Camera V3 NoIR side, each laser plane is fitted only from valid Pi-camera
+on-board lines. USB observations retain the same strict diagnostics and, when
+they independently satisfy all point/view/orientation requirements, cross-check
+the Pi plane without contributing samples to it. Each laser must still provide
+at least the configured number of Pi points across three valid poses and three
+independently oriented board views before the robust plane fit, and both the
+plane RMS and optional USB cross-validation RMS limits remain **2 mm**. Laser
+drive remains the existing binary full-power on/off path; no PWM interface is
+assumed.
+
+Calibration payload validation requires this Pi-authoritative provenance and
+its surviving robust-fit per-pose point counts, view/orientation counts, and
+two-dimensional spread condition. A pose that retains fewer than the configured
+points after robust rejection is removed before the plane is refitted. A legacy
+laser plane without that evidence is intentionally rejected and must be
+recalibrated; it is not silently trusted after upgrade. Persistence prepares
+the report and rollback backup, renames them, and syncs the parent directory
+before atomically switching the active calibration file and syncing the
+directory again. Runtime installation is part of the same non-cancellable
+transaction; an installation failure restores both the complete previous disk
+generation and runtime calibration. Cancellation is checked immediately before
+this transaction and a later request waits for activation rather than reporting
+a false cancelled outcome.
 The workflow suspends TF-Luna ranging output once before checkerboard camera
 capture, waits for the optical spot to clear, and restores ranging output in a
 `finally` guard before any LiDAR measurements. Cancellation and failure paths

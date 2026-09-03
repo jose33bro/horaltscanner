@@ -231,7 +231,303 @@ def validate_view_diversity(
     return metrics
 
 
-def fit_plane_robust(points: Any, *, minimum_points: int = 20) -> tuple[np.ndarray, float, dict]:
+def extract_laser_line_pixels(
+    cv: Any,
+    ambient: np.ndarray,
+    laser: np.ndarray,
+    corners: Any,
+    *,
+    config: Mapping[str, Any],
+) -> tuple[list[list[float]], dict[str, Any]]:
+    """Extract one coherent laser ridge inside the checkerboard safe interior."""
+    diagnostic: dict[str, Any] = {"accepted": False}
+    if (
+        ambient is None
+        or laser is None
+        or ambient.shape != laser.shape
+        or ambient.ndim != 3
+        or ambient.shape[2] < 3
+    ):
+        diagnostic["reason"] = "ambient and laser frames must be matching color images"
+        return [], diagnostic
+
+    columns = int(config.get("board_columns", BOARD_COLUMNS))
+    rows = int(config.get("board_rows", BOARD_ROWS))
+    try:
+        board_corners = np.asarray(corners, dtype=float).reshape(-1, 2)
+    except (TypeError, ValueError):
+        diagnostic["reason"] = "checkerboard corners are missing or invalid"
+        return [], diagnostic
+    if (
+        columns < 2
+        or rows < 2
+        or len(board_corners) != columns * rows
+        or not np.isfinite(board_corners).all()
+    ):
+        diagnostic["reason"] = "checkerboard corners are missing or invalid"
+        return [], diagnostic
+
+    erode_fraction = float(config.get("laser_roi_erode_fraction", 0.06))
+    row_stride = int(config.get("laser_row_stride", 2))
+    delta_threshold = float(config.get("laser_delta_threshold", 35))
+    excess_threshold = float(
+        config.get("laser_excess_threshold", max(12.0, delta_threshold / 2.0))
+    )
+    minimum_rows = int(config.get("minimum_laser_line_rows", 12))
+    minimum_span_fraction = float(
+        config.get("minimum_laser_line_span_fraction", 0.20)
+    )
+    minimum_continuity = float(
+        config.get("minimum_laser_line_continuity", 0.45)
+    )
+    maximum_residual = float(
+        config.get("maximum_laser_line_residual_px", 2.0)
+    )
+    maximum_width = float(config.get("maximum_laser_line_width_px", 12.0))
+    maximum_gap_fraction = float(
+        config.get("maximum_laser_line_gap_fraction", 0.12)
+    )
+    if (
+        not 0 < erode_fraction < 0.5
+        or row_stride <= 0
+        or delta_threshold <= 0
+        or excess_threshold <= 0
+        or minimum_rows < 2
+        or not 0 < minimum_span_fraction <= 1
+        or not 0 < minimum_continuity <= 1
+        or maximum_residual <= 0
+        or maximum_width <= 0
+        or not 0 < maximum_gap_fraction <= 1
+    ):
+        raise CalibrationError("laser extraction thresholds are invalid")
+
+    corner_grid = board_corners.reshape(rows, columns, 2)
+    polygon = np.asarray(
+        (
+            corner_grid[0, 0],
+            corner_grid[0, -1],
+            corner_grid[-1, -1],
+            corner_grid[-1, 0],
+        ),
+        dtype=float,
+    )
+    center = polygon.mean(axis=0)
+    safe_polygon = center + (polygon - center) * (1.0 - erode_fraction)
+    height, width = ambient.shape[:2]
+    if (
+        np.any(safe_polygon[:, 0] < 0)
+        or np.any(safe_polygon[:, 0] >= width)
+        or np.any(safe_polygon[:, 1] < 0)
+        or np.any(safe_polygon[:, 1] >= height)
+    ):
+        diagnostic["reason"] = "checkerboard safe interior falls outside the frame"
+        return [], diagnostic
+
+    roi = np.zeros((height, width), dtype=np.uint8)
+    cv.fillConvexPoly(roi, np.rint(safe_polygon).astype(np.int32), 255)
+    roi_rows, roi_columns = np.where(roi > 0)
+    if not len(roi_rows):
+        diagnostic["reason"] = "checkerboard safe interior is empty"
+        return [], diagnostic
+    board_height = float(np.ptp(safe_polygon[:, 1]))
+
+    ambient_peak = ambient[:, :, :3].max(axis=2)
+    saturated = (ambient_peak >= 245).astype(np.uint8)
+    saturation_radius = int(config.get("laser_ambient_saturation_radius_px", 4))
+    if saturation_radius < 0:
+        raise CalibrationError("laser ambient saturation radius must be non-negative")
+    if saturation_radius:
+        size = saturation_radius * 2 + 1
+        saturated = cv.dilate(
+            saturated,
+            np.ones((size, size), dtype=np.uint8),
+            iterations=1,
+        )
+
+    ambient_red = ambient[:, :, 2].astype(np.int16)
+    laser_red = laser[:, :, 2].astype(np.int16)
+    delta = laser_red - ambient_red
+    excess = laser_red - np.maximum(
+        laser[:, :, 1], laser[:, :, 0]
+    ).astype(np.int16)
+    candidate_mask = (
+        (delta >= delta_threshold)
+        & (excess >= excess_threshold)
+        & (roi > 0)
+        & (saturated == 0)
+    )
+    response = delta.astype(float) + 0.5 * np.maximum(excess, 0)
+    diagnostic.update(
+        roi_area_px=int(np.count_nonzero(roi)),
+        roi_erode_fraction=erode_fraction,
+        excluded_ambient_saturated_px=int(
+            np.count_nonzero((saturated > 0) & (roi > 0))
+        ),
+        candidate_pixels=int(np.count_nonzero(candidate_mask)),
+    )
+
+    candidates: list[tuple[float, float, float, float]] = []
+    maximum_peaks_per_row = int(config.get("maximum_laser_peaks_per_row", 4))
+    if maximum_peaks_per_row <= 0:
+        raise CalibrationError("maximum_laser_peaks_per_row must be positive")
+    for row in range(int(roi_rows.min()), int(roi_rows.max()) + 1, row_stride):
+        active = np.flatnonzero(candidate_mask[row])
+        if not active.size:
+            continue
+        split_at = np.flatnonzero(np.diff(active) > 1) + 1
+        runs = np.split(active, split_at)
+        peaks = []
+        for run in runs:
+            scores = response[row, run]
+            peak_index = int(np.argmax(scores))
+            weights = np.maximum(scores - min(delta_threshold, excess_threshold), 1.0)
+            peaks.append(
+                (
+                    float(np.average(run, weights=weights)),
+                    float(row),
+                    float(scores[peak_index]),
+                    float(len(run)),
+                )
+            )
+        candidates.extend(
+            sorted(peaks, key=lambda item: item[2], reverse=True)[
+                :maximum_peaks_per_row
+            ]
+        )
+
+    candidate_rows = sorted({int(item[1]) for item in candidates})
+    diagnostic["candidate_rows"] = len(candidate_rows)
+    if len(candidate_rows) < minimum_rows:
+        diagnostic["reason"] = (
+            f"laser ridge has {len(candidate_rows)} candidate rows; "
+            f"{minimum_rows} required"
+        )
+        return [], diagnostic
+
+    values = np.asarray(candidates, dtype=float)
+    row_span = float(np.ptp(values[:, 1]))
+    minimum_span = max(float(row_stride * (minimum_rows - 1)), board_height * minimum_span_fraction)
+    top = values[values[:, 1] <= values[:, 1].min() + row_span * 0.35]
+    bottom = values[values[:, 1] >= values[:, 1].max() - row_span * 0.35]
+    top = top[np.argsort(top[:, 2])[-48:]]
+    bottom = bottom[np.argsort(bottom[:, 2])[-48:]]
+    inlier_tolerance = max(maximum_residual * 2.0, 2.5)
+    by_row: dict[int, np.ndarray] = {}
+    for row in candidate_rows:
+        by_row[row] = values[values[:, 1] == row]
+
+    best: tuple[tuple[float, float, float, float], np.ndarray] | None = None
+    for first in top:
+        for last in bottom:
+            delta_row = float(last[1] - first[1])
+            if delta_row < minimum_span:
+                continue
+            slope = float((last[0] - first[0]) / delta_row)
+            intercept = float(first[0] - slope * first[1])
+            selected = []
+            for row, row_values in by_row.items():
+                residual = np.abs(
+                    row_values[:, 0] - (slope * float(row) + intercept)
+                )
+                eligible = np.flatnonzero(residual <= inlier_tolerance)
+                if eligible.size:
+                    index = min(
+                        eligible,
+                        key=lambda item: (
+                            float(residual[item]),
+                            -float(row_values[item, 2]),
+                        ),
+                    )
+                    selected.append(row_values[index])
+            if len(selected) < minimum_rows:
+                continue
+            selected_values = np.asarray(selected, dtype=float)
+            residuals = selected_values[:, 0] - (
+                slope * selected_values[:, 1] + intercept
+            )
+            score = (
+                float(len(selected_values)),
+                float(np.ptp(selected_values[:, 1])),
+                -float(np.sqrt(np.mean(residuals**2))),
+                float(selected_values[:, 2].sum()),
+            )
+            if best is None or score > best[0]:
+                best = score, selected_values
+
+    if best is None:
+        diagnostic["reason"] = "no coherent laser ridge spans the checkerboard interior"
+        return [], diagnostic
+
+    selected = best[1]
+    for _ in range(2):
+        coefficients = np.polyfit(selected[:, 1], selected[:, 0], 1)
+        residuals = selected[:, 0] - np.polyval(coefficients, selected[:, 1])
+        keep = np.abs(residuals) <= inlier_tolerance
+        selected = selected[keep]
+        if len(selected) < minimum_rows:
+            diagnostic["reason"] = (
+                f"laser ridge retains {len(selected)} rows after line fitting; "
+                f"{minimum_rows} required"
+            )
+            return [], diagnostic
+
+    coefficients = np.polyfit(selected[:, 1], selected[:, 0], 1)
+    residuals = selected[:, 0] - np.polyval(coefficients, selected[:, 1])
+    residual_rms = float(np.sqrt(np.mean(residuals**2)))
+    line_rows = np.sort(selected[:, 1])
+    line_span = float(np.ptp(line_rows))
+    continuity = float(
+        len(line_rows) * row_stride / max(line_span + row_stride, row_stride)
+    )
+    maximum_gap = float(np.max(np.diff(line_rows))) if len(line_rows) > 1 else math.inf
+    median_width = float(np.median(selected[:, 3]))
+    maximum_gap = max(maximum_gap, 0.0)
+    diagnostic.update(
+        line_rows=int(len(selected)),
+        line_span_px=line_span,
+        line_span_fraction=line_span / max(board_height, 1.0),
+        line_continuity=continuity,
+        maximum_row_gap_px=maximum_gap,
+        line_residual_rms_px=residual_rms,
+        median_line_width_px=median_width,
+        line_slope_x_per_y=float(coefficients[0]),
+    )
+    failures = []
+    if len(selected) < minimum_rows:
+        failures.append(f"rows {len(selected)} < {minimum_rows}")
+    if line_span < minimum_span:
+        failures.append(f"span {line_span:.1f}px < {minimum_span:.1f}px")
+    if continuity < minimum_continuity:
+        failures.append(
+            f"continuity {continuity:.3f} < {minimum_continuity:.3f}"
+        )
+    if maximum_gap > max(row_stride * 2.0, board_height * maximum_gap_fraction):
+        failures.append("row continuity gap is too large")
+    if residual_rms > maximum_residual:
+        failures.append(
+            f"line residual {residual_rms:.2f}px > {maximum_residual:.2f}px"
+        )
+    if median_width > maximum_width:
+        failures.append(
+            f"median line width {median_width:.1f}px > {maximum_width:.1f}px"
+        )
+    if failures:
+        diagnostic["reason"] = "; ".join(failures)
+        return [], diagnostic
+
+    diagnostic["accepted"] = True
+    diagnostic["reason"] = None
+    pixels = selected[np.argsort(selected[:, 1]), :2].tolist()
+    return pixels, diagnostic
+
+
+def fit_plane_robust(
+    points: Any,
+    *,
+    minimum_points: int = 20,
+    minimum_spread_ratio: float = 1e-3,
+    return_inlier_mask: bool = False,
+) -> tuple[np.ndarray, float, dict]:
     """Fit ``normal dot point + offset = 0`` with two MAD rejection passes."""
     values = np.asarray(points, dtype=float)
     if values.ndim != 2 or values.shape[1] != 3 or len(values) < minimum_points:
@@ -243,7 +539,8 @@ def fit_plane_robust(points: Any, *, minimum_points: int = 20) -> tuple[np.ndarr
     radial_median = float(np.median(radial))
     radial_mad = float(np.median(np.abs(radial - radial_median)))
     radial_limit = radial_median + 6.0 * max(radial_mad, 0.25)
-    inliers = values[radial <= radial_limit]
+    inlier_indexes = np.flatnonzero(radial <= radial_limit)
+    inliers = values[inlier_indexes]
     if len(inliers) < minimum_points:
         raise CalibrationError("robust laser plane fit rejected too many spatial outliers")
     for _ in range(2):
@@ -258,20 +555,44 @@ def fit_plane_robust(points: Any, *, minimum_points: int = 20) -> tuple[np.ndarr
         selected = inliers[distances <= threshold]
         if len(selected) < minimum_points:
             raise CalibrationError("robust laser plane fit rejected too many points")
+        inlier_indexes = inlier_indexes[distances <= threshold]
         inliers = selected
     center = inliers.mean(axis=0)
-    _, _, vh = np.linalg.svd(inliers - center, full_matrices=False)
+    _, singular_values, vh = np.linalg.svd(inliers - center, full_matrices=False)
+    spread_ratio = (
+        float(singular_values[1] / singular_values[0])
+        if len(singular_values) >= 2 and singular_values[0] > 1e-12
+        else 0.0
+    )
+    if (
+        len(singular_values) < 2
+        or not math.isfinite(minimum_spread_ratio)
+        or not 0 < minimum_spread_ratio < 1
+        or spread_ratio < minimum_spread_ratio
+    ):
+        raise CalibrationError(
+            "laser plane points have insufficient 2D conditioning after robust "
+            f"rejection (spread ratio {spread_ratio:.3g} < "
+            f"{minimum_spread_ratio:.3g})"
+        )
     normal = vh[-1]
     normal /= np.linalg.norm(normal)
     offset = -float(np.dot(normal, center))
     residuals = inliers @ normal + offset
     rms = float(np.sqrt(np.mean(residuals ** 2)))
-    return normal, offset, {
+    quality = {
         "accepted": True,
         "rms_mm": rms,
         "inliers": int(len(inliers)),
         "samples": int(len(values)),
+        "plane_spread_ratio": spread_ratio,
+        "minimum_plane_spread_ratio": minimum_spread_ratio,
     }
+    if return_inlier_mask:
+        mask = np.zeros(len(values), dtype=bool)
+        mask[inlier_indexes] = True
+        quality["inlier_mask"] = mask.tolist()
+    return normal, offset, quality
 
 
 def transform_from_beam(origin_mm: Any, direction: Any) -> np.ndarray:
@@ -298,6 +619,13 @@ def transform_from_beam(origin_mm: Any, direction: Any) -> np.ndarray:
 
 def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
     """Validate the persisted geometry and its evidence metadata."""
+
+    def finite_at_least(value: Any, minimum: float) -> bool:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return False
+        return math.isfinite(number) and number >= minimum
 
     def matrix(value: Any, shape: tuple[int, int], label: str) -> np.ndarray:
         result = np.asarray(value, dtype=float)
@@ -417,12 +745,79 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
         quality = plane.get("quality", {})
         rms = float(quality.get("rms_mm", math.inf))
         maximum = float(quality.get("maximum_rms_mm", math.nan))
+        try:
+            views = float(quality.get("views", math.nan))
+            minimum_views = float(quality.get("minimum_views", math.nan))
+            orientations = float(
+                quality.get("independent_board_orientations", math.nan)
+            )
+            minimum_orientations = float(
+                quality.get("minimum_board_orientations", math.nan)
+            )
+            spread_ratio = float(
+                quality.get("plane_spread_ratio", math.nan)
+            )
+            minimum_spread_ratio = float(
+                quality.get("minimum_plane_spread_ratio", math.nan)
+            )
+            minimum_points_per_view = float(
+                quality.get("minimum_points_per_view", math.nan)
+            )
+        except (TypeError, ValueError):
+            views = minimum_views = orientations = minimum_orientations = math.nan
+            spread_ratio = minimum_spread_ratio = minimum_points_per_view = math.nan
+        inlier_points = quality.get("inlier_points_per_pose")
+        inlier_points_valid = (
+            isinstance(inlier_points, list)
+            and math.isfinite(views)
+            and math.isfinite(minimum_points_per_view)
+            and len(inlier_points) == int(views)
+            and len(
+                {
+                    entry.get("pose_index")
+                    for entry in inlier_points
+                    if isinstance(entry, Mapping)
+                }
+            )
+            == len(inlier_points)
+            and all(
+                isinstance(entry, Mapping)
+                and finite_at_least(
+                    entry.get("points"), minimum_points_per_view
+                )
+                for entry in inlier_points
+            )
+        )
         if (
-            not quality.get("accepted")
+            plane.get("source") != "pi_checkerboard_structured_light"
+            or not quality.get("accepted")
+            or quality.get("primary_camera") != "pi"
             or not math.isfinite(rms)
             or not math.isfinite(maximum)
             or maximum <= 0
+            or maximum > 2.0
             or rms > maximum
+            or rms > 2.0
+            or not all(
+                math.isfinite(value)
+                for value in (
+                    views,
+                    minimum_views,
+                    orientations,
+                    minimum_orientations,
+                    spread_ratio,
+                    minimum_spread_ratio,
+                    minimum_points_per_view,
+                )
+            )
+            or minimum_views < 3
+            or views < minimum_views
+            or minimum_orientations < 3
+            or orientations < minimum_orientations
+            or minimum_spread_ratio <= 0
+            or spread_ratio < minimum_spread_ratio
+            or minimum_points_per_view <= 0
+            or not inlier_points_valid
         ):
             raise CalibrationError(f"{side} laser plane quality is not accepted")
 
@@ -490,6 +885,35 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
             reference = math.nan
         if not math.isfinite(reference):
             raise CalibrationError("TF-Luna reference_axis_position_mm is required")
+        scale = lidar.get("carriage_scale_mm_per_commanded_mm")
+        if scale is not None:
+            try:
+                scale = float(scale)
+            except (TypeError, ValueError):
+                scale = math.nan
+            if (
+                not math.isfinite(scale)
+                or scale <= 0
+                or not math.isclose(
+                    scale,
+                    float(np.linalg.norm(direction)),
+                    rel_tol=1e-6,
+                    abs_tol=1e-6,
+                )
+            ):
+                raise CalibrationError(
+                    "TF-Luna carriage scale is inconsistent with carriage direction"
+                )
+        usb = cameras.get("usb", {})
+        usb_direction = np.asarray(usb.get("carriage_direction"), dtype=float)
+        if (
+            usb.get("carriage_axis") == carriage_axis
+            and usb_direction.shape == (3,)
+            and not np.allclose(direction, usb_direction, rtol=1e-8, atol=1e-8)
+        ):
+            raise CalibrationError(
+                "TF-Luna carriage direction must match the measured USB carriage fit"
+            )
     lidar_quality = lidar.get("quality", {})
     lidar_rms = float(lidar_quality.get("rms_mm", math.inf))
     lidar_maximum = float(lidar_quality.get("maximum_rms_mm", math.nan))
@@ -544,7 +968,9 @@ class AtomicCalibrationStore:
         with open(selected, encoding="utf-8") as handle:
             return json.load(handle)
 
-    def save(self, calibration: Mapping[str, Any], report: Mapping[str, Any]) -> None:
+    def save(
+        self, calibration: Mapping[str, Any], report: Mapping[str, Any]
+    ) -> dict[str, Any]:
         validate_calibration_payload(calibration)
         current = self._read(missing_ok=True)
         updated = copy.deepcopy(current)
@@ -553,28 +979,83 @@ class AtomicCalibrationStore:
         backup_tmp = self.backup_path.with_suffix(self.backup_path.suffix + ".new")
         config_tmp = self.path.with_suffix(self.path.suffix + ".new")
         report_tmp = self.report_path.with_suffix(self.report_path.suffix + ".new")
+        snapshots = {
+            destination: destination.read_bytes() if destination.exists() else None
+            for destination in (self.path, self.backup_path, self.report_path)
+        }
+        installed: list[Path] = []
         try:
             self._write_json(backup_tmp, current)
             self._write_json(config_tmp, updated)
             self._write_json(report_tmp, dict(report))
-            os.replace(backup_tmp, self.backup_path)
-            os.replace(config_tmp, self.path)
             os.replace(report_tmp, self.report_path)
+            installed.append(self.report_path)
+            os.replace(backup_tmp, self.backup_path)
+            installed.append(self.backup_path)
+            self._fsync_directory(self.path.parent)
+            os.replace(config_tmp, self.path)
+            installed.append(self.path)
+            self._fsync_directory(self.path.parent)
+        except Exception as exc:
+            try:
+                self._restore_snapshots(snapshots, installed)
+            except Exception as restore_error:
+                raise CalibrationError(
+                    "calibration persistence failed and durable rollback also "
+                    f"failed: {restore_error}"
+                ) from exc
+            raise
         finally:
-            for temporary in (backup_tmp, config_tmp, report_tmp):
+            for temporary in (
+                backup_tmp,
+                config_tmp,
+                report_tmp,
+                self.path.with_suffix(self.path.suffix + ".restore"),
+                self.backup_path.with_suffix(self.backup_path.suffix + ".restore"),
+                self.report_path.with_suffix(self.report_path.suffix + ".restore"),
+            ):
                 try:
                     temporary.unlink()
                 except FileNotFoundError:
                     pass
+        return {
+            "snapshots": snapshots,
+            "previous_calibration": copy.deepcopy(
+                current.get("scan_calibration", {})
+            ),
+        }
+
+    def restore(self, transaction: Mapping[str, Any]) -> dict:
+        snapshots = transaction.get("snapshots")
+        if not isinstance(snapshots, Mapping):
+            raise CalibrationError("calibration transaction snapshot is invalid")
+        expected = (self.path, self.backup_path, self.report_path)
+        if set(snapshots) != set(expected):
+            raise CalibrationError("calibration transaction snapshot is incomplete")
+        self._restore_snapshots(snapshots, list(expected))
+        return copy.deepcopy(dict(transaction.get("previous_calibration", {})))
 
     def rollback(self) -> dict:
         if not self.backup_path.exists():
             raise CalibrationError("no calibration backup is available")
         backup = self._read(self.backup_path)
         temporary = self.path.with_suffix(self.path.suffix + ".rollback")
+        snapshot = {
+            self.path: self.path.read_bytes() if self.path.exists() else None
+        }
         try:
             self._write_json(temporary, backup)
             os.replace(temporary, self.path)
+            self._fsync_directory(self.path.parent)
+        except Exception as exc:
+            try:
+                self._restore_snapshots(snapshot, [self.path])
+            except Exception as restore_error:
+                raise CalibrationError(
+                    "calibration rollback failed and previous active config "
+                    f"could not be restored: {restore_error}"
+                ) from exc
+            raise
         finally:
             try:
                 temporary.unlink()
@@ -595,6 +1076,125 @@ class AtomicCalibrationStore:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.flush()
             os.fsync(handle.fileno())
+
+    @staticmethod
+    def _write_bytes(path: Path, payload: bytes) -> None:
+        with open(path, "wb") as handle:
+            if hasattr(os, "fchmod"):
+                os.fchmod(handle.fileno(), 0o640)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    def _restore_snapshots(
+        self,
+        snapshots: Mapping[Path, bytes | None],
+        destinations: list[Path],
+    ) -> None:
+        restore_errors = []
+        sidecars = [
+            destination
+            for destination in (self.report_path, self.backup_path)
+            if destination in destinations
+        ]
+
+        def restore_one(destination: Path) -> None:
+            previous = snapshots[destination]
+            try:
+                if previous is None:
+                    try:
+                        destination.unlink()
+                    except FileNotFoundError:
+                        pass
+                else:
+                    restore_tmp = destination.with_suffix(
+                        destination.suffix + ".restore"
+                    )
+                    self._write_bytes(restore_tmp, previous)
+                    os.replace(restore_tmp, destination)
+            except Exception as exc:
+                restore_errors.append(f"{destination.name}: {exc}")
+
+        for destination in sidecars:
+            restore_one(destination)
+        if sidecars:
+            try:
+                self._fsync_directory(self.path.parent)
+            except Exception as exc:
+                restore_errors.append(f"sidecar directory: {exc}")
+        if self.path in destinations:
+            restore_one(self.path)
+            try:
+                self._fsync_directory(self.path.parent)
+            except Exception as exc:
+                restore_errors.append(f"active-config directory: {exc}")
+        if restore_errors:
+            raise CalibrationError(
+                "failed to restore calibration transaction ("
+                + "; ".join(restore_errors)
+                + ")"
+            )
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            create_file = kernel32.CreateFileW
+            create_file.argtypes = [
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.LPVOID,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.HANDLE,
+            ]
+            create_file.restype = wintypes.HANDLE
+            flush_file_buffers = kernel32.FlushFileBuffers
+            flush_file_buffers.argtypes = [wintypes.HANDLE]
+            flush_file_buffers.restype = wintypes.BOOL
+            close_handle = kernel32.CloseHandle
+            close_handle.argtypes = [wintypes.HANDLE]
+            close_handle.restype = wintypes.BOOL
+            handle = create_file(
+                str(path),
+                0x40000000,
+                0x00000001 | 0x00000002 | 0x00000004,
+                None,
+                3,
+                0x02000000,
+                None,
+            )
+            if handle == ctypes.c_void_p(-1).value:
+                error = ctypes.get_last_error()
+                raise CalibrationError(
+                    f"failed to open calibration directory {path} for flush "
+                    f"(Windows error {error})"
+                )
+            try:
+                if not flush_file_buffers(handle):
+                    error = ctypes.get_last_error()
+                    raise CalibrationError(
+                        f"failed to flush calibration directory {path} "
+                        f"(Windows error {error})"
+                    )
+            finally:
+                close_handle(handle)
+            return
+        flags = os.O_RDONLY | int(getattr(os, "O_DIRECTORY", 0))
+        try:
+            descriptor = os.open(str(path), flags)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        except OSError as exc:
+            raise CalibrationError(
+                f"failed to fsync calibration directory {path}: {exc}"
+            ) from exc
 
 
 class GeometricCalibrationService:
@@ -625,6 +1225,7 @@ class GeometricCalibrationService:
         store: AtomicCalibrationStore,
         config: Mapping[str, Any],
         on_saved: Callable[[Mapping[str, Any]], None] | None = None,
+        get_current_calibration: Callable[[], Mapping[str, Any]] | None = None,
         cv_module: Any = None,
         sleep: Callable[[float], None] = time.sleep,
     ):
@@ -636,12 +1237,15 @@ class GeometricCalibrationService:
         self._store = store
         self._config = dict(config)
         self._on_saved = on_saved
+        self._get_current_calibration = get_current_calibration
         self._cv = cv_module if cv_module is not None else _cv2
         self._sleep = sleep
         self._lock = threading.RLock()
         self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
         self._active = False
+        self._commit_in_progress = False
+        self._cancel_after_commit = False
         self._lidar_output_restore_required = False
         self._status = self._new_status()
         self._report: dict[str, Any] = {}
@@ -671,6 +1275,10 @@ class GeometricCalibrationService:
             "view_diversity": {},
             "pnp_views": {"pi": [], "usb": []},
             "axis_model_candidates": {},
+            "laser_views": {
+                side: {name: [] for name in ("pi", "usb")}
+                for side in ("left", "right")
+            },
         }
 
     def status(self) -> dict:
@@ -839,6 +1447,8 @@ class GeometricCalibrationService:
                 raise CalibrationError("scanner hardware is busy")
             self._active = True
             self._cancel = threading.Event()
+            self._commit_in_progress = False
+            self._cancel_after_commit = False
             self._status = self._new_status()
             self._status.update(active=True, phase="preflight", step="Checking safety guards")
             thread = threading.Thread(
@@ -858,8 +1468,14 @@ class GeometricCalibrationService:
 
     def cancel(self) -> dict:
         with self._lock:
-            self._cancel.set()
-            if self._active:
+            if self._active and self._commit_in_progress:
+                self._cancel_after_commit = True
+                self._status["step"] = (
+                    "Finishing atomic calibration activation before stopping"
+                )
+            else:
+                self._cancel.set()
+            if self._active and not self._commit_in_progress:
                 self._status["phase"] = "cancelling"
                 self._status["step"] = "Stopping motors and forcing lasers off"
         self._safe_outputs()
@@ -893,7 +1509,9 @@ class GeometricCalibrationService:
             calibration["checkerboard"] = self._board_contract()
             calibration["x_scale_validation"] = self._validate_x_scale()
             calibration["turntable"] = self._turntable_calibration()
-            calibration["laser_planes"] = self._calibrate_lasers(poses, calibration)
+            calibration["laser_planes"] = self._calibrate_lasers(
+                poses, calibration, views
+            )
             calibration["lidar"] = self._calibrate_lidar(poses, calibration, options["lidar"])
             self._set_phase("validation", "Validating all numeric and residual checks", 92)
             validate_calibration_payload(calibration)
@@ -910,17 +1528,15 @@ class GeometricCalibrationService:
                         "view_diversity",
                         "pnp_views",
                         "axis_model_candidates",
+                        "laser_views",
                     )
                 },
             }
-            self._set_phase("persisting", "Writing atomic configuration and backup", 97)
-            self._store.save(calibration, report)
-            if self._on_saved:
-                self._on_saved(calibration)
-            self._report = report
             if start_positions is not None:
                 self._move_to(start_positions)
-            self._set_phase("complete", "Calibration saved", 100)
+            self._begin_commit()
+            self._save_and_activate(calibration, report)
+            self._finish_commit(report)
         except CalibrationCancelled:
             self._set_error("cancelled", "Calibration cancelled")
             self._report = self._failure_report("Calibration cancelled")
@@ -930,9 +1546,80 @@ class GeometricCalibrationService:
         finally:
             self._safe_outputs()
             with self._lock:
+                self._commit_in_progress = False
                 self._active = False
                 self._status["active"] = False
             self._reservation.release()
+
+    def _begin_commit(self) -> None:
+        with self._lock:
+            self._check_cancelled()
+            self._commit_in_progress = True
+            self._status.update(
+                phase="persisting",
+                step="Writing and activating atomic calibration",
+                progress=97.0,
+            )
+
+    def _finish_commit(self, report: Mapping[str, Any]) -> bool:
+        with self._lock:
+            late_cancellation = self._cancel_after_commit
+            self._cancel_after_commit = False
+            if late_cancellation:
+                self._cancel.set()
+            self._report = copy.deepcopy(dict(report))
+            self._status.update(
+                active=False,
+                phase="complete",
+                step=(
+                    "Calibration saved; cancellation arrived during activation"
+                    if late_cancellation
+                    else "Calibration saved"
+                ),
+                progress=100.0,
+            )
+            self._active = False
+            self._commit_in_progress = False
+            return late_cancellation
+
+    def _save_and_activate(
+        self,
+        calibration: Mapping[str, Any],
+        report: Mapping[str, Any],
+    ) -> None:
+        previous_runtime = None
+        if self._get_current_calibration is not None:
+            previous_runtime = copy.deepcopy(
+                dict(self._get_current_calibration())
+            )
+        transaction = self._store.save(calibration, report)
+        if self._on_saved is None:
+            return
+        try:
+            self._on_saved(calibration)
+        except Exception as activation_error:
+            previous_disk = copy.deepcopy(
+                transaction.get("previous_calibration", {})
+            )
+            if previous_runtime is None:
+                previous_runtime = copy.deepcopy(previous_disk)
+            rollback_errors = []
+            try:
+                self._store.restore(transaction)
+            except Exception as exc:
+                rollback_errors.append(f"persistent state: {exc}")
+            try:
+                self._on_saved(previous_runtime)
+            except Exception as exc:
+                rollback_errors.append(f"runtime state: {exc}")
+            detail = (
+                "; rollback failures: " + "; ".join(rollback_errors)
+                if rollback_errors
+                else "; previous persistent and runtime calibration restored"
+            )
+            raise CalibrationError(
+                f"calibration runtime activation failed: {activation_error}{detail}"
+            ) from activation_error
 
     def _failure_report(self, error: str) -> dict:
         with self._lock:
@@ -951,6 +1638,7 @@ class GeometricCalibrationService:
                         "view_diversity",
                         "pnp_views",
                         "axis_model_candidates",
+                        "laser_views",
                     )
                 },
             }
@@ -2171,7 +2859,7 @@ class GeometricCalibrationService:
             self._config.get("usb_z_scale_tolerance_fraction", 0.15)
         )
         maximum_vertical_alignment = float(
-            self._config.get("maximum_usb_z_vertical_alignment_deg", 10.0)
+            self._config.get("maximum_usb_z_vertical_alignment_deg", 12.0)
         )
         maximum_condition = float(
             self._config.get("maximum_carriage_fit_condition_number", 50.0)
@@ -2434,17 +3122,38 @@ class GeometricCalibrationService:
         }
 
     def _calibrate_lasers(
-        self, poses: list[dict[str, float]], calibration: Mapping[str, Any]
+        self,
+        poses: list[dict[str, float]],
+        calibration: Mapping[str, Any],
+        checkerboard_views: Mapping[str, list[dict]] | None = None,
     ) -> dict:
         self._set_phase("laser-planes", "Fitting left and right laser planes", 68)
-        samples: dict[str, list[list[float]]] = {"left": [], "right": []}
+        samples: dict[str, dict[str, list[list[float]]]] = {
+            side: {name: [] for name in ("pi", "usb")}
+            for side in ("left", "right")
+        }
+        sample_pose_indexes: dict[str, dict[str, list[int]]] = {
+            side: {name: [] for name in ("pi", "usb")}
+            for side in ("left", "right")
+        }
+        accepted_pose_indexes: dict[str, dict[str, set[int]]] = {
+            side: {name: set() for name in ("pi", "usb")}
+            for side in ("left", "right")
+        }
         try:
-            for pose in poses:
+            for pose_index, pose in enumerate(poses):
                 self._check_cancelled()
                 self._move_to(pose)
                 self._sleep_interruptible(float(self._config.get("settle_s", 0.25)))
                 self._lasers_off()
-                ambient = {name: self._capture(name) for name in ("pi", "usb")}
+                ambient = {"pi": self._capture("pi")}
+                usb_ambient_error = None
+                try:
+                    ambient["usb"] = self._capture("usb")
+                except CalibrationCancelled:
+                    raise
+                except Exception as exc:
+                    usb_ambient_error = str(exc)
                 for side in ("left", "right"):
                     self._laser(side, True)
                     try:
@@ -2452,38 +3161,342 @@ class GeometricCalibrationService:
                             float(self._config.get("laser_settle_s", 0.1))
                         )
                         for name in ("pi", "usb"):
-                            laser = self._capture(name)
-                            samples[side].extend(
-                                self._laser_board_points(
-                                    name, side, ambient[name], laser, pose, calibration
-                                )
+                            checkerboard_view = self._checkerboard_view_for_pose(
+                                checkerboard_views, name, pose
                             )
+                            unavailable_reason = None
+                            if checkerboard_views is not None and checkerboard_view is None:
+                                unavailable_reason = (
+                                    "no accepted exact-pose checkerboard view"
+                                )
+                            if name == "usb" and usb_ambient_error is not None:
+                                unavailable_reason = (
+                                    f"optional USB ambient capture failed: "
+                                    f"{usb_ambient_error}"
+                                )
+                            if unavailable_reason is not None:
+                                extracted = {
+                                    "points": [],
+                                    "diagnostic": {
+                                        "accepted": False,
+                                        "reason": unavailable_reason,
+                                    },
+                                }
+                            else:
+                                try:
+                                    laser = self._capture(name)
+                                    extracted = self._laser_board_points(
+                                        name,
+                                        side,
+                                        ambient[name],
+                                        laser,
+                                        pose,
+                                        calibration,
+                                        checkerboard_view=checkerboard_view,
+                                    )
+                                except CalibrationCancelled:
+                                    raise
+                                except Exception as exc:
+                                    if name == "pi":
+                                        raise
+                                    extracted = {
+                                        "points": [],
+                                        "diagnostic": {
+                                            "accepted": False,
+                                            "reason": (
+                                                "optional USB laser observation "
+                                                f"failed: {exc}"
+                                            ),
+                                        },
+                                    }
+                            diagnostic = copy.deepcopy(extracted["diagnostic"])
+                            diagnostic.update(
+                                pose_index=pose_index,
+                                pose=copy.deepcopy(dict(pose)),
+                                camera=name,
+                                side=side,
+                                fit_role=(
+                                    "primary"
+                                    if name == "pi"
+                                    else "optional_cross_validation"
+                                ),
+                                checkerboard_source=(
+                                    "cached"
+                                    if checkerboard_view is not None
+                                    else "missing-cache"
+                                    if checkerboard_views is not None
+                                    else diagnostic.get(
+                                        "checkerboard_source", "ambient-detection"
+                                    )
+                                ),
+                            )
+                            with self._lock:
+                                self._status["laser_views"][side][name].append(
+                                    diagnostic
+                                )
+                            if diagnostic["accepted"]:
+                                samples[side][name].extend(extracted["points"])
+                                sample_pose_indexes[side][name].extend(
+                                    [pose_index] * len(extracted["points"])
+                                )
+                                accepted_pose_indexes[side][name].add(pose_index)
                     finally:
                         self._laser(side, False)
         finally:
             self._lasers_off()
         result = {}
-        maximum_rms = float(self._config.get("maximum_laser_plane_rms_mm", 2.0))
-        for side in ("left", "right"):
-            normal, offset, quality = fit_plane_robust(
-                samples[side],
-                minimum_points=int(self._config.get("minimum_laser_points", 30)),
+        maximum_rms = min(
+            float(self._config.get("maximum_laser_plane_rms_mm", 2.0)),
+            2.0,
+        )
+        if not math.isfinite(maximum_rms) or maximum_rms <= 0:
+            raise CalibrationError(
+                "maximum laser plane RMS must be finite, positive, and no "
+                "greater than 2mm"
             )
-            quality["views"] = len(poses)
+        minimum_points = int(self._config.get("minimum_laser_points", 30))
+        minimum_points_per_view = int(
+            self._config.get("minimum_laser_points_per_view", 10)
+        )
+        minimum_views = int(self._config.get("minimum_laser_views", 3))
+        minimum_orientations = int(
+            self._config.get("minimum_laser_board_orientations", 3)
+        )
+        for side in ("left", "right"):
+            pi_poses = [
+                poses[index]
+                for index in sorted(accepted_pose_indexes[side]["pi"])
+            ]
+            orientation_count = self._independent_board_orientation_count(
+                pi_poses
+            )
+            sufficiency = {
+                "accepted": False,
+                "primary_camera": "pi",
+                "points": len(samples[side]["pi"]),
+                "accepted_camera_views": len(
+                    accepted_pose_indexes[side]["pi"]
+                ),
+                "accepted_poses": len(pi_poses),
+                "independent_board_orientations": orientation_count,
+                "minimum_points": minimum_points,
+                "minimum_views": minimum_views,
+                "minimum_board_orientations": minimum_orientations,
+            }
+            if (
+                len(samples[side]["pi"]) < minimum_points
+                or len(pi_poses) < minimum_views
+                or orientation_count < minimum_orientations
+            ):
+                with self._lock:
+                    self._status["metrics"][f"laser_{side}"] = copy.deepcopy(
+                        sufficiency
+                    )
+                raise CalibrationError(
+                    f"{side} laser has insufficient valid Pi-camera checkerboard "
+                    f"intersections: {len(samples[side]['pi'])} points, "
+                    f"{len(pi_poses)} poses, "
+                    f"{orientation_count} independent orientations; requires "
+                    f"{minimum_points} points, {minimum_views} poses, "
+                    f"{minimum_orientations} orientations"
+                )
+            normal, offset, quality = self._fit_laser_plane_views(
+                samples[side]["pi"],
+                sample_pose_indexes[side]["pi"],
+                poses,
+                minimum_points=minimum_points,
+                minimum_points_per_view=minimum_points_per_view,
+                minimum_views=minimum_views,
+                minimum_orientations=minimum_orientations,
+            )
+            quality.update(
+                primary_camera="pi",
+                camera_views=len(accepted_pose_indexes[side]["pi"]),
+                rejected_camera_views=len(poses)
+                - len(accepted_pose_indexes[side]["pi"]),
+            )
             quality["maximum_rms_mm"] = maximum_rms
             if quality["rms_mm"] > maximum_rms:
+                quality["accepted"] = False
+                with self._lock:
+                    self._status["metrics"][f"laser_{side}"] = copy.deepcopy(
+                        quality
+                    )
                 raise CalibrationError(
                     f"{side} laser plane RMS {quality['rms_mm']:.2f}mm exceeds "
                     f"{maximum_rms:.2f}mm"
                 )
+            usb_poses = [
+                poses[index]
+                for index in sorted(accepted_pose_indexes[side]["usb"])
+            ]
+            usb_orientations = self._independent_board_orientation_count(
+                usb_poses
+            )
+            usb_cross_validation = {
+                "performed": False,
+                "accepted": None,
+                "points": len(samples[side]["usb"]),
+                "views": len(usb_poses),
+                "independent_board_orientations": usb_orientations,
+            }
+            if (
+                len(samples[side]["usb"]) >= minimum_points
+                and len(usb_poses) >= minimum_views
+                and usb_orientations >= minimum_orientations
+            ):
+                usb_values = np.asarray(samples[side]["usb"], dtype=float)
+                usb_residual = float(
+                    np.sqrt(np.mean((usb_values @ normal + offset) ** 2))
+                )
+                usb_cross_validation.update(
+                    performed=True,
+                    accepted=usb_residual <= maximum_rms,
+                    rms_mm=usb_residual,
+                    maximum_rms_mm=maximum_rms,
+                )
+                if usb_residual > maximum_rms:
+                    usb_cross_validation["reason"] = (
+                        f"optional USB cross-validation RMS {usb_residual:.2f}mm "
+                        f"exceeds {maximum_rms:.2f}mm; Pi plane remains authoritative"
+                    )
+            quality["usb_cross_validation"] = usb_cross_validation
             result[side] = {
                 "normal": normal.tolist(),
                 "offset_mm": offset,
+                "source": "pi_checkerboard_structured_light",
                 "quality": quality,
             }
             with self._lock:
                 self._status["metrics"][f"laser_{side}"] = copy.deepcopy(quality)
         return result
+
+    def _fit_laser_plane_views(
+        self,
+        points: list[list[float]],
+        pose_indexes: list[int],
+        poses: list[Mapping[str, float]],
+        *,
+        minimum_points: int,
+        minimum_points_per_view: int,
+        minimum_views: int,
+        minimum_orientations: int,
+    ) -> tuple[np.ndarray, float, dict[str, Any]]:
+        values = np.asarray(points, dtype=float)
+        labels = np.asarray(pose_indexes, dtype=int)
+        if len(values) != len(labels):
+            raise CalibrationError("laser point and pose labels differ")
+        if minimum_points_per_view <= 0:
+            raise CalibrationError(
+                "minimum laser points per view must be positive"
+            )
+        spread_ratio = float(
+            self._config.get("minimum_laser_plane_spread_ratio", 1e-3)
+        )
+        eligible = np.ones(len(values), dtype=bool)
+        for _ in range(len(values) + 1):
+            eligible_indexes = np.flatnonzero(eligible)
+            normal, offset, quality = fit_plane_robust(
+                values[eligible_indexes],
+                minimum_points=minimum_points,
+                minimum_spread_ratio=spread_ratio,
+                return_inlier_mask=True,
+            )
+            local_mask = np.asarray(quality.pop("inlier_mask"), dtype=bool)
+            robust_mask = np.zeros(len(values), dtype=bool)
+            robust_mask[eligible_indexes[local_mask]] = True
+            surviving_counts = {
+                int(index): int(np.count_nonzero(robust_mask & (labels == index)))
+                for index in np.unique(labels[robust_mask])
+            }
+            retained_indexes = sorted(
+                index
+                for index, count in surviving_counts.items()
+                if count >= minimum_points_per_view
+            )
+            retained_mask = robust_mask & np.isin(labels, retained_indexes)
+            if np.array_equal(retained_mask, eligible):
+                retained_poses = [poses[index] for index in retained_indexes]
+                orientation_count = self._independent_board_orientation_count(
+                    retained_poses
+                )
+                quality.update(
+                    views=len(retained_indexes),
+                    independent_board_orientations=orientation_count,
+                    minimum_views=minimum_views,
+                    minimum_board_orientations=minimum_orientations,
+                    minimum_points_per_view=minimum_points_per_view,
+                    inlier_points_per_pose=[
+                        {
+                            "pose_index": index,
+                            "points": surviving_counts[index],
+                        }
+                        for index in retained_indexes
+                    ],
+                )
+                if (
+                    len(retained_indexes) < minimum_views
+                    or orientation_count < minimum_orientations
+                ):
+                    raise CalibrationError(
+                        "laser robust fit retains only "
+                        f"{len(retained_indexes)} Pi poses and "
+                        f"{orientation_count} independent orientations after "
+                        f"requiring {minimum_points_per_view} inlier points per "
+                        f"pose; requires {minimum_views} poses and "
+                        f"{minimum_orientations} orientations"
+                    )
+                return normal, offset, quality
+            eligible = retained_mask
+        raise CalibrationError("laser robust per-view rejection did not converge")
+
+    @staticmethod
+    def _checkerboard_view_for_pose(
+        checkerboard_views: Mapping[str, list[dict]] | None,
+        camera_name: str,
+        pose: Mapping[str, float],
+    ) -> dict | None:
+        if checkerboard_views is None:
+            return None
+        for view in checkerboard_views.get(camera_name, []):
+            view_pose = view.get("pose", {})
+            if all(
+                math.isclose(
+                    float(view_pose.get(axis, math.nan)),
+                    float(pose[axis]),
+                    rel_tol=0,
+                    abs_tol=1e-6,
+                )
+                for axis in ("x", "y", "z")
+            ):
+                return view
+        return None
+
+    def _independent_board_orientation_count(
+        self, poses: list[Mapping[str, float]]
+    ) -> int:
+        minimum_separation = float(
+            self._config.get("minimum_laser_orientation_separation_deg", 4.0)
+        )
+        if not math.isfinite(minimum_separation) or minimum_separation <= 0:
+            raise CalibrationError(
+                "minimum laser orientation separation must be finite and positive"
+            )
+        selected: list[np.ndarray] = []
+        for pose in poses:
+            normal = self._board_to_scanner(pose)[:3, 2]
+            normal = normal / np.linalg.norm(normal)
+            if all(
+                math.degrees(
+                    math.acos(
+                        np.clip(abs(float(np.dot(normal, prior))), 0.0, 1.0)
+                    )
+                )
+                >= minimum_separation
+                for prior in selected
+            ):
+                selected.append(normal)
+        return len(selected)
 
     def _laser_board_points(
         self,
@@ -2493,24 +3506,43 @@ class GeometricCalibrationService:
         laser_jpeg: bytes,
         pose: Mapping[str, float],
         calibration: Mapping[str, Any],
-    ) -> list[list[float]]:
+        *,
+        checkerboard_view: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         ambient = self._cv.imdecode(np.frombuffer(ambient_jpeg, np.uint8), self._cv.IMREAD_COLOR)
         laser = self._cv.imdecode(np.frombuffer(laser_jpeg, np.uint8), self._cv.IMREAD_COLOR)
         if ambient is None or laser is None or ambient.shape != laser.shape:
-            return []
-        delta = laser[:, :, 2].astype(np.int16) - ambient[:, :, 2].astype(np.int16)
-        excess = laser[:, :, 2].astype(np.int16) - np.maximum(
-            laser[:, :, 1], laser[:, :, 0]
-        ).astype(np.int16)
-        threshold = int(self._config.get("laser_delta_threshold", 35))
-        mask = (delta >= threshold) & (excess >= threshold // 2)
-        pixels = []
-        for row in range(0, mask.shape[0], int(self._config.get("laser_row_stride", 4))):
-            columns = np.flatnonzero(mask[row])
-            if columns.size:
-                pixels.append([float(np.median(columns)), float(row)])
+            return {
+                "points": [],
+                "diagnostic": {
+                    "accepted": False,
+                    "reason": "camera frames could not be decoded consistently",
+                },
+            }
+        checkerboard_source = "cached"
+        if checkerboard_view is None:
+            checkerboard_source = "ambient-detection"
+            try:
+                checkerboard_view = self._detect_checkerboard(ambient_jpeg, pose)
+            except (CheckerboardDetectionRejected, CheckerboardDetectionTimeout) as exc:
+                return {
+                    "points": [],
+                    "diagnostic": {
+                        "accepted": False,
+                        "reason": f"ambient checkerboard detection failed: {exc}",
+                        "checkerboard_source": "ambient-detection",
+                    },
+                }
+        pixels, diagnostic = extract_laser_line_pixels(
+            self._cv,
+            ambient,
+            laser,
+            checkerboard_view.get("corners"),
+            config=self._config,
+        )
+        diagnostic["checkerboard_source"] = checkerboard_source
         if not pixels:
-            return []
+            return {"points": [], "diagnostic": diagnostic}
         camera = calibration["cameras"][camera_name]
         intrinsic = np.asarray(camera["intrinsic_matrix"], dtype=float)
         distortion = np.asarray(camera["distortion_coefficients"], dtype=float)
@@ -2531,16 +3563,37 @@ class GeometricCalibrationService:
         plane_point = board_transform[:3, 3]
         plane_normal = board_transform[:3, 2]
         result = []
+        rejected_rays = 0
         for x, y in normalized:
             direction = transform[:3, :3] @ np.array([x, y, 1.0])
             direction /= np.linalg.norm(direction)
             denominator = float(np.dot(plane_normal, direction))
             if abs(denominator) <= 1e-9:
+                rejected_rays += 1
                 continue
             distance = float(np.dot(plane_normal, plane_point - origin) / denominator)
             if 0 < distance <= float(self._config.get("maximum_ray_distance_mm", 2000)):
                 result.append((origin + direction * distance).tolist())
-        return result
+            else:
+                rejected_rays += 1
+        minimum_points = int(
+            self._config.get(
+                "minimum_laser_points_per_view",
+                min(10, int(self._config.get("minimum_laser_line_rows", 12))),
+            )
+        )
+        diagnostic.update(points=len(result), rejected_rays=rejected_rays)
+        if len(result) < minimum_points:
+            diagnostic.update(
+                accepted=False,
+                reason=(
+                    f"only {len(result)} valid board-plane intersections; "
+                    f"{minimum_points} required"
+                ),
+            )
+            return {"points": [], "diagnostic": diagnostic}
+        diagnostic["accepted"] = True
+        return {"points": result, "diagnostic": diagnostic}
 
     def _calibrate_lidar(
         self,
@@ -2553,6 +3606,25 @@ class GeometricCalibrationService:
         reference_z = float(
             inputs.get("reference_z_mm", self._reference_pose["z"])
         )
+        usb = calibration.get("cameras", {}).get("usb", {})
+        if usb.get("carriage_axis") != "z":
+            raise CalibrationError(
+                "TF-Luna carriage correction is not observable without the "
+                "validated USB Z carriage fit"
+            )
+        carriage_direction = np.asarray(
+            usb.get("carriage_direction"), dtype=float
+        )
+        if (
+            carriage_direction.shape != (3,)
+            or not np.isfinite(carriage_direction).all()
+            or np.linalg.norm(carriage_direction) <= 1e-9
+        ):
+            raise CalibrationError(
+                "TF-Luna carriage correction is not observable because the "
+                "validated USB carriage vector is missing"
+            )
+        carriage_scale = float(np.linalg.norm(carriage_direction))
         residuals = []
         readings = []
         for pose in poses:
@@ -2571,7 +3643,7 @@ class GeometricCalibrationService:
                 continue
             measured = float(np.median(values))
             current = transform.copy()
-            current[:3, 3] += np.array([0.0, 0.0, pose["z"] - reference_z])
+            current[:3, 3] += carriage_direction * (pose["z"] - reference_z)
             board = self._board_to_scanner(pose)
             origin, direction = current[:3, 3], current[:3, 2]
             denominator = float(np.dot(board[:3, 2], direction))
@@ -2602,7 +3674,8 @@ class GeometricCalibrationService:
         return {
             "lidar_to_scanner": transform.tolist(),
             "carriage_axis": "z",
-            "carriage_direction": [0.0, 0.0, 1.0],
+            "carriage_direction": carriage_direction.tolist(),
+            "carriage_scale_mm_per_commanded_mm": carriage_scale,
             "reference_axis_position_mm": reference_z,
             "min_distance_mm": float(inputs.get("min_distance_mm", 20)),
             "max_distance_mm": float(inputs.get("max_distance_mm", 8000)),
@@ -2614,6 +3687,7 @@ class GeometricCalibrationService:
                 "poses": len(residuals),
                 "readings": readings,
                 "ir_spot_used": False,
+                "carriage_source": "validated_usb_carriage_fit",
             },
         }
 
@@ -2786,19 +3860,25 @@ class GeometricCalibrationService:
         return frame
 
     def _laser(self, side: str, enabled: bool) -> None:
-        method = self._gpio.laser_on if enabled else self._gpio.laser_off
-        if not method(side):
-            raise CalibrationError(f"failed to turn laser {side} {'on' if enabled else 'off'}")
+        with self._lock:
+            if enabled:
+                self._check_cancelled()
+            method = self._gpio.laser_on if enabled else self._gpio.laser_off
+            if not method(side):
+                raise CalibrationError(
+                    f"failed to turn laser {side} {'on' if enabled else 'off'}"
+                )
 
     def _lasers_off(self) -> None:
         failures = []
-        if self._gpio is not None:
-            for side in ("left", "right"):
-                try:
-                    if not self._gpio.laser_off(side):
+        with self._lock:
+            if self._gpio is not None:
+                for side in ("left", "right"):
+                    try:
+                        if not self._gpio.laser_off(side):
+                            failures.append(side)
+                    except Exception:
                         failures.append(side)
-                except Exception:
-                    failures.append(side)
         if failures:
             raise CalibrationError(f"failed to force lasers off: {', '.join(failures)}")
 

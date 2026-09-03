@@ -211,8 +211,52 @@ VALID_CALIBRATION = {
         },
     },
     "laser_planes": {
-        "left": {"normal": [0, 0, 1], "offset_mm": -100, "quality": {"accepted": True, "rms_mm": 0.1, "maximum_rms_mm": 2.0}},
-        "right": {"normal": [0, 0, 1], "offset_mm": -100, "quality": {"accepted": True, "rms_mm": 0.1, "maximum_rms_mm": 2.0}},
+        "left": {
+            "normal": [0, 0, 1],
+            "offset_mm": -100,
+            "source": "pi_checkerboard_structured_light",
+            "quality": {
+                "accepted": True,
+                "rms_mm": 0.1,
+                "maximum_rms_mm": 2.0,
+                "primary_camera": "pi",
+                "views": 3,
+                "minimum_views": 3,
+                "independent_board_orientations": 3,
+                "minimum_board_orientations": 3,
+                "plane_spread_ratio": 0.5,
+                "minimum_plane_spread_ratio": 0.001,
+                "minimum_points_per_view": 10,
+                "inlier_points_per_pose": [
+                    {"pose_index": 0, "points": 10},
+                    {"pose_index": 1, "points": 10},
+                    {"pose_index": 2, "points": 10},
+                ],
+            },
+        },
+        "right": {
+            "normal": [0, 0, 1],
+            "offset_mm": -100,
+            "source": "pi_checkerboard_structured_light",
+            "quality": {
+                "accepted": True,
+                "rms_mm": 0.1,
+                "maximum_rms_mm": 2.0,
+                "primary_camera": "pi",
+                "views": 3,
+                "minimum_views": 3,
+                "independent_board_orientations": 3,
+                "minimum_board_orientations": 3,
+                "plane_spread_ratio": 0.5,
+                "minimum_plane_spread_ratio": 0.001,
+                "minimum_points_per_view": 10,
+                "inlier_points_per_pose": [
+                    {"pose_index": 0, "points": 10},
+                    {"pose_index": 1, "points": 10},
+                    {"pose_index": 2, "points": 10},
+                ],
+            },
+        },
     },
     "turntable": {
         "center_mm": [0, 0, 0],
@@ -559,6 +603,29 @@ class RealScanSessionTests(unittest.TestCase):
                     any("reference_axis_position_mm" in blocker for blocker in blockers)
                 )
 
+    def test_lidar_carriage_vector_must_match_usb_fit(self):
+        calibration = copy.deepcopy(VALID_CALIBRATION)
+        calibration["lidar"]["carriage_direction"] = [0.0, 0.0, -1.0]
+
+        blockers = self.make_session(calibration=calibration).readiness()["blockers"]
+
+        self.assertTrue(
+            any("does not match the measured USB carriage fit" in item for item in blockers)
+        )
+
+    def test_runtime_never_accepts_laser_plane_limit_above_two_mm(self):
+        calibration = copy.deepcopy(VALID_CALIBRATION)
+        calibration["laser_planes"]["left"]["quality"].update(
+            rms_mm=3.0,
+            maximum_rms_mm=4.0,
+        )
+
+        blockers = self.make_session(calibration=calibration).readiness()["blockers"]
+
+        self.assertTrue(
+            any("Laser 'left' calibration quality" in item for item in blockers)
+        )
+
     def test_usb_translation_uses_absolute_calibration_reference_not_scan_origin(self):
         session = self.make_session(saved_pose={"x": 0.0, "y": 0.0, "z": 7.0})
         session._axis_position["z"] = 8.0
@@ -589,6 +656,28 @@ class RealScanSessionTests(unittest.TestCase):
         )
 
         np.testing.assert_allclose(translated, [1.075, 1.895, -0.06])
+
+    def test_lidar_translation_applies_shared_carriage_vector_once(self):
+        calibration = copy.deepcopy(VALID_CALIBRATION)
+        carriage = np.array([-0.0117, -0.1742, -0.9370])
+        calibration["cameras"]["usb"]["carriage_direction"] = carriage.tolist()
+        calibration["lidar"].update(
+            carriage_direction=carriage.tolist(),
+            carriage_scale_mm_per_commanded_mm=float(np.linalg.norm(carriage)),
+        )
+        session = self.make_session(calibration=calibration)
+        session._axis_position["z"] = 15.0
+
+        translated = session._apply_carriage_translation(
+            np.array([10.0, 20.0, 30.0]),
+            calibration["lidar"],
+            {"x": 0.0, "y": 0.0, "z": 7.0},
+        )
+
+        np.testing.assert_allclose(
+            translated,
+            np.array([10.0, 20.0, 30.0]) + carriage * 5.0,
+        )
 
     def test_usb_points_use_absolute_reference_when_scan_pose_differs(self):
         calibration = copy.deepcopy(VALID_CALIBRATION)

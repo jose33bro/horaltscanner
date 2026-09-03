@@ -3,6 +3,7 @@ Camera Driver - PiCam (CSI) + Logitech (USB) capture
 """
 
 import base64
+from contextlib import contextmanager
 import glob
 import io
 import logging
@@ -14,6 +15,14 @@ from pathlib import Path
 from software.api.checkerboard_detector import find_checkerboard_bounded
 
 logger = logging.getLogger(__name__)
+
+
+class PhotometricControlError(RuntimeError):
+    """Raised when matched camera photometry cannot be guaranteed."""
+
+
+class PhotometricControlUnsupported(PhotometricControlError):
+    """Raised when a camera lacks controls required for matched captures."""
 
 # ---------------------------------------------------------------------------
 # Optional imports – gracefully degrade when not on Pi hardware
@@ -272,14 +281,107 @@ class LogitechCamera:
 # PiCam (CSI via libcamera / picamera2)
 # ---------------------------------------------------------------------------
 
+class PiPhotometricCaptureSession:
+    """Exclusive Pi capture token whose frames are verified against one lock."""
+
+    CONTROL_CONFIRMATION_FRAMES = 3
+
+    def __init__(self, camera, token: object):
+        self._camera = camera
+        self._token = token
+        self._locked_controls: dict | None = None
+
+    def capture_metadata(self) -> dict:
+        return self._camera._capture_metadata(self._token)
+
+    def lock_from_metadata(self, metadata: dict) -> dict:
+        controls = self._camera._locked_photometric_controls(metadata)
+        self._camera._set_session_controls(
+            self._token, controls, "locking ambient photometry"
+        )
+        self._locked_controls = controls
+        return self.controls
+
+    def confirm_locked_controls(self) -> dict:
+        if self._locked_controls is None:
+            raise PhotometricControlError(
+                "Pi Camera photometric controls must be locked before confirmation"
+            )
+        latest = {}
+        for _ in range(self.CONTROL_CONFIRMATION_FRAMES):
+            latest = self.capture_metadata()
+            if self._camera._photometric_controls_match(
+                latest, self._locked_controls
+            ) and latest.get("AwbEnable") is False:
+                return self.metadata_for_report(latest)
+        raise PhotometricControlError(
+            "Pi Camera did not apply stable matched photometric controls"
+        )
+
+    def capture_jpeg(self) -> tuple[bytes, dict]:
+        if self._locked_controls is None:
+            raise PhotometricControlError(
+                "Pi Camera photometric session was captured before controls were locked"
+            )
+        jpeg, metadata = self._camera._capture_jpeg_with_metadata(self._token)
+        if not self._camera._photometric_controls_match(
+            metadata, self._locked_controls
+        ):
+            raise PhotometricControlError(
+                "Pi Camera frame metadata does not match locked ambient photometry"
+            )
+        if metadata.get("AwbEnable") is not False:
+            raise PhotometricControlError(
+                "Pi Camera frame metadata does not confirm white balance is locked"
+            )
+        return jpeg, metadata
+
+    @property
+    def controls(self) -> dict | None:
+        if self._locked_controls is None:
+            return None
+        return {
+            "ExposureTime": int(self._locked_controls["ExposureTime"]),
+            "AnalogueGain": float(self._locked_controls["AnalogueGain"]),
+            "ColourGains": [
+                float(value) for value in self._locked_controls["ColourGains"]
+            ],
+        }
+
+    @staticmethod
+    def metadata_for_report(metadata: dict) -> dict:
+        result = {
+            "ExposureTime": int(metadata["ExposureTime"]),
+            "AnalogueGain": float(metadata["AnalogueGain"]),
+            "ColourGains": [
+                float(value) for value in metadata["ColourGains"]
+            ],
+        }
+        if "AwbEnable" in metadata:
+            result["AwbEnable"] = bool(metadata["AwbEnable"])
+        return result
+
+
 class PiCamera:
     """Captures frames from the Raspberry Pi camera module."""
 
     LOCK_WAIT_SECONDS = 0.25
+    PHOTOMETRIC_CONTROL_NAMES = (
+        "AeEnable",
+        "AwbEnable",
+        "ExposureTime",
+        "AnalogueGain",
+        "ColourGains",
+    )
 
     def __init__(self):
         self._cam = None
         self._lock = threading.Lock()
+        self._active_session_token: object | None = None
+        self._requested_photometric_controls = {
+            "AeEnable": True,
+            "AwbEnable": True,
+        }
         self.last_error: str | None = None
 
     def _acquire(self, operation: str) -> bool:
@@ -305,6 +407,10 @@ class PiCamera:
             )
             self._cam.configure(config)
             self._cam.start()
+            self._requested_photometric_controls = {
+                "AeEnable": True,
+                "AwbEnable": True,
+            }
             self.last_error = None
             return True
         except Exception as exc:
@@ -322,14 +428,19 @@ class PiCamera:
     def close(self) -> None:
         if not self._acquire("la fermeture"):
             return
-        if self._cam:
-            try:
-                self._cam.stop()
-                self._cam.close()
-            except Exception as exc:
-                logger.warning("PiCam close failed: %s", exc)
-            self._cam = None
-        self._lock.release()
+        try:
+            if self._active_session_token is not None:
+                self.last_error = "Pi Camera occupee par une capture photometrique."
+                return
+            if self._cam:
+                try:
+                    self._cam.stop()
+                    self._cam.close()
+                except Exception as exc:
+                    logger.warning("PiCam close failed: %s", exc)
+                self._cam = None
+        finally:
+            self._lock.release()
 
     @property
     def is_open(self) -> bool:
@@ -338,28 +449,280 @@ class PiCamera:
     def capture_jpeg(self) -> bytes | None:
         if not self.is_open:
             return None
-        if not self._acquire("la capture"):
-            return None
         try:
-            from PIL import Image
-            array = self._cam.capture_array()
-            # picamera2's "RGB888" configuration actually delivers pixels in
-            # BGR memory order (a well-known libcamera/DRM naming quirk: see
-            # https://github.com/raspberrypi/picamera2/issues/848). Reverse
-            # the channel axis so the array is true RGB before handing it to
-            # PIL, otherwise captured frames (and downstream red-channel
-            # laser-line detection) have red/blue swapped.
-            array = array[:, :, ::-1]
-            img = Image.fromarray(array)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG")
-            return buf.getvalue()
+            jpeg, _metadata = self._capture_jpeg_with_metadata(None)
+            return jpeg
         except Exception as exc:
             logger.error("PiCam capture failed: %s", exc)
             self.last_error = f"Capture Pi Camera impossible: {exc}"
             return None
+
+    def _capture_jpeg_with_metadata(
+        self, session_token: object | None
+    ) -> tuple[bytes, dict]:
+        if not self._acquire("la capture"):
+            raise PhotometricControlError(self.last_error)
+        try:
+            self._require_session_token(session_token)
+            from PIL import Image
+            arrays, metadata = self._cam.capture_arrays(["main"])
+            if (
+                not isinstance(arrays, (list, tuple))
+                or len(arrays) != 1
+                or not isinstance(metadata, dict)
+            ):
+                raise PhotometricControlError(
+                    "Pi Camera returned an invalid frame/metadata pair"
+                )
+            # Picamera2's RGB888 stream is delivered in BGR memory order.
+            array = arrays[0][:, :, ::-1]
+            img = Image.fromarray(array)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG")
+            return buf.getvalue(), metadata
         finally:
             self._lock.release()
+
+    def matched_photometric_controls_supported(self) -> tuple[bool, list[str]]:
+        """Report whether the active camera exposes all required public controls."""
+        if not self.is_open:
+            return False, ["camera is not open"]
+        controls = getattr(self._cam, "camera_controls", None)
+        if not isinstance(controls, dict):
+            return False, ["camera_controls"]
+        missing = [
+            name for name in self.PHOTOMETRIC_CONTROL_NAMES if name not in controls
+        ]
+        return not missing, missing
+
+    @contextmanager
+    def matched_photometric_controls(self):
+        """Reserve exclusive matched capture and restore tracked prior controls."""
+        supported, missing = self.matched_photometric_controls_supported()
+        if not supported:
+            raise PhotometricControlUnsupported(
+                "Pi Camera cannot guarantee matched photometry; missing public "
+                f"controls: {', '.join(missing)}"
+            )
+        token = object()
+        if not self._acquire("la reservation photometrique"):
+            raise PhotometricControlError(self.last_error)
+        restore_controls = dict(self._requested_photometric_controls)
+        try:
+            if self._active_session_token is not None:
+                raise PhotometricControlError(
+                    "Pi Camera already has an active photometric capture session"
+                )
+            self._active_session_token = token
+            self._apply_photometric_controls(
+                {"AeEnable": True, "AwbEnable": True}
+            )
+        except Exception:
+            if self._active_session_token is token:
+                self._active_session_token = None
+            raise
+        finally:
+            self._lock.release()
+
+        body_failed = False
+        try:
+            yield PiPhotometricCaptureSession(self, token)
+        except BaseException:
+            body_failed = True
+            raise
+        finally:
+            try:
+                self._restore_photometric_session(token, restore_controls)
+            except Exception:
+                if not body_failed:
+                    raise
+                logger.exception(
+                    "PiCam restoration failed while preserving the original "
+                    "photometric session error"
+                )
+
+    def _capture_metadata(self, session_token: object) -> dict:
+        if not self._acquire("la lecture des controles photometriques"):
+            raise PhotometricControlError(self.last_error)
+        try:
+            self._require_session_token(session_token)
+            metadata = self._cam.capture_metadata()
+            if not isinstance(metadata, dict):
+                raise PhotometricControlError(
+                    "Pi Camera returned invalid ambient metadata"
+                )
+            return metadata
+        finally:
+            self._lock.release()
+
+    def _set_session_controls(
+        self,
+        session_token: object,
+        controls: dict,
+        operation: str,
+    ) -> None:
+        if not self._acquire(operation):
+            raise PhotometricControlError(self.last_error)
+        try:
+            self._require_session_token(session_token)
+            self._apply_photometric_controls(controls)
+        finally:
+            self._lock.release()
+
+    def set_photometric_controls(self, controls: dict) -> None:
+        """Set tracked Pi controls outside an active matched capture session."""
+        unknown = set(controls) - set(self.PHOTOMETRIC_CONTROL_NAMES)
+        if unknown:
+            raise PhotometricControlError(
+                "Unsupported Pi photometric controls: "
+                + ", ".join(sorted(unknown))
+            )
+        if not self._acquire("la configuration photometrique"):
+            raise PhotometricControlError(self.last_error)
+        try:
+            self._require_session_token(None)
+            self._apply_photometric_controls(controls)
+        finally:
+            self._lock.release()
+
+    def _apply_photometric_controls(self, controls: dict) -> None:
+        self._cam.set_controls(controls)
+        updated = dict(self._requested_photometric_controls)
+        updated.update(controls)
+        if updated.get("AeEnable") is True:
+            updated.pop("ExposureTime", None)
+            updated.pop("AnalogueGain", None)
+        if updated.get("AwbEnable") is True:
+            updated.pop("ColourGains", None)
+        self._requested_photometric_controls = updated
+
+    def _restore_photometric_session(
+        self,
+        session_token: object,
+        restore_controls: dict,
+    ) -> None:
+        if not self._acquire("la restauration photometrique"):
+            try:
+                self._apply_photometric_controls(restore_controls)
+            except Exception as exc:
+                logger.error(
+                    "PiCam could not queue photometric restoration: %s", exc
+                )
+                raise PhotometricControlError(
+                    "Pi Camera could not queue restoration behind an in-flight "
+                    f"capture: {exc}"
+                ) from exc
+            self._restore_photometric_session_when_available(
+                session_token
+            )
+            raise PhotometricControlError(
+                "Pi Camera controls were restored but capture quarantine is "
+                "pending behind an in-flight request"
+            )
+        try:
+            self._require_session_token(session_token)
+            self._apply_photometric_controls(restore_controls)
+            self._active_session_token = None
+        except Exception as exc:
+            logger.error("PiCam photometric control restoration failed: %s", exc)
+            raise PhotometricControlError(
+                f"Pi Camera failed to restore prior photometric controls: {exc}"
+            ) from exc
+        finally:
+            self._lock.release()
+
+    def _restore_photometric_session_when_available(
+        self,
+        session_token: object,
+    ) -> None:
+        def release_quarantine() -> None:
+            with self._lock:
+                if self._active_session_token is not session_token:
+                    return
+                self._active_session_token = None
+
+        threading.Thread(
+            target=release_quarantine,
+            name="picamera-photometric-restore",
+            daemon=True,
+        ).start()
+
+    def _require_session_token(self, session_token: object | None) -> None:
+        if self._active_session_token is not None:
+            if session_token is not self._active_session_token:
+                raise PhotometricControlError(
+                    "Pi Camera is reserved by a matched photometric capture"
+                )
+        elif session_token is not None:
+            raise PhotometricControlError(
+                "Pi Camera photometric capture session is no longer active"
+            )
+
+    @staticmethod
+    def _locked_photometric_controls(metadata: dict) -> dict:
+        missing = [
+            name
+            for name in ("ExposureTime", "AnalogueGain", "ColourGains")
+            if name not in metadata
+        ]
+        if missing:
+            raise PhotometricControlError(
+                "Pi Camera ambient metadata is missing: " + ", ".join(missing)
+            )
+        exposure = int(metadata["ExposureTime"])
+        gain = float(metadata["AnalogueGain"])
+        colour_gains = tuple(float(value) for value in metadata["ColourGains"])
+        if (
+            exposure <= 0
+            or not math.isfinite(gain)
+            or gain <= 0
+            or len(colour_gains) != 2
+            or not all(math.isfinite(value) and value > 0 for value in colour_gains)
+        ):
+            raise PhotometricControlError(
+                "Pi Camera ambient photometric metadata contains invalid values"
+            )
+        return {
+            "AeEnable": False,
+            "AwbEnable": False,
+            "ExposureTime": exposure,
+            "AnalogueGain": gain,
+            "ColourGains": colour_gains,
+        }
+
+    @staticmethod
+    def _photometric_controls_match(metadata: dict, locked: dict) -> bool:
+        try:
+            actual_colour_gains = tuple(metadata["ColourGains"])
+            expected_colour_gains = tuple(locked["ColourGains"])
+            if len(actual_colour_gains) != 2 or len(expected_colour_gains) != 2:
+                return False
+            exposure_matches = math.isclose(
+                float(metadata["ExposureTime"]),
+                float(locked["ExposureTime"]),
+                rel_tol=0.02,
+                abs_tol=1.0,
+            )
+            gain_matches = math.isclose(
+                float(metadata["AnalogueGain"]),
+                float(locked["AnalogueGain"]),
+                rel_tol=0.02,
+                abs_tol=0.01,
+            )
+            colour_matches = all(
+                math.isclose(
+                    float(actual),
+                    float(expected),
+                    rel_tol=0.02,
+                    abs_tol=0.01,
+                )
+                for actual, expected in zip(
+                    actual_colour_gains, expected_colour_gains
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
+        return exposure_matches and gain_matches and colour_matches
 
     def capture_jpeg_b64(self) -> str | None:
         jpeg = self.capture_jpeg()

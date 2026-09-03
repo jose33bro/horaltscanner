@@ -1365,6 +1365,12 @@ class GeometricCalibrationService:
             camera = self._cameras.get(name)
             if camera is None:
                 blockers.append(f"camera '{name}' is unavailable")
+            elif name == "pi" and not callable(
+                getattr(camera, "matched_photometric_controls", None)
+            ):
+                blockers.append(
+                    "Pi Camera cannot guarantee matched ambient/laser photometry"
+                )
             elif probe_devices:
                 try:
                     timeout = float(self._config.get("capture_timeout_s", 5.0))
@@ -1383,6 +1389,19 @@ class GeometricCalibrationService:
                     )
                     if not frame:
                         raise CalibrationError("no fresh frame")
+                    if name == "pi":
+                        support_probe = getattr(
+                            camera,
+                            "matched_photometric_controls_supported",
+                            None,
+                        )
+                        if callable(support_probe):
+                            supported, missing = support_probe()
+                            if not supported:
+                                raise CalibrationError(
+                                    "matched photometric controls unavailable: "
+                                    + ", ".join(missing)
+                                )
                 except Exception as exc:
                     blockers.append(f"camera '{name}' preflight failed: {exc}")
         if self._lidar is None:
@@ -3146,45 +3165,94 @@ class GeometricCalibrationService:
                 self._move_to(pose)
                 self._sleep_interruptible(float(self._config.get("settle_s", 0.25)))
                 self._lasers_off()
-                ambient = {"pi": self._capture("pi")}
-                usb_ambient_error = None
-                try:
-                    ambient["usb"] = self._capture("usb")
-                except CalibrationCancelled:
-                    raise
-                except Exception as exc:
-                    usb_ambient_error = str(exc)
-                for side in ("left", "right"):
-                    self._laser(side, True)
-                    try:
-                        self._sleep_interruptible(
-                            float(self._config.get("laser_settle_s", 0.1))
-                        )
-                        for name in ("pi", "usb"):
-                            checkerboard_view = self._checkerboard_view_for_pose(
-                                checkerboard_views, name, pose
+                pi_camera = self._cameras["pi"]
+                pi_photometric_context = getattr(
+                    pi_camera, "matched_photometric_controls", None
+                )
+                if not callable(pi_photometric_context):
+                    raise CalibrationError(
+                        "Pi Camera cannot guarantee matched ambient/laser photometry"
+                    )
+                settle_s = float(
+                    self._config.get("laser_photometric_settle_s", 1.0)
+                )
+                if not math.isfinite(settle_s) or settle_s < 0:
+                    raise CalibrationError(
+                        "laser photometric settle time must be finite and non-negative"
+                    )
+                with pi_photometric_context() as pi_session:
+                    self._sleep_interruptible(settle_s)
+                    settled_metadata = self._hardware_call(
+                        "Pi Camera settled ambient metadata",
+                        pi_session.capture_metadata,
+                        float(self._config.get("capture_timeout_s", 5.0)),
+                    )
+                    pi_photometry = self._hardware_call(
+                        "Pi Camera ambient photometric lock",
+                        lambda: pi_session.lock_from_metadata(
+                            settled_metadata
+                        ),
+                        float(self._config.get("capture_timeout_s", 5.0)),
+                    )
+                    self._hardware_call(
+                        "Pi Camera ambient photometric confirmation",
+                        pi_session.confirm_locked_controls,
+                        float(self._config.get("capture_timeout_s", 5.0)),
+                    )
+                    ambient_pi, ambient_metadata = self._capture_matched_pi(
+                        pi_session
+                    )
+                    ambient = {"pi": ambient_pi}
+                    ambient_photometry = pi_session.metadata_for_report(
+                        ambient_metadata
+                    )
+                    usb_unavailable = (
+                        "camera 'usb' has no verified matched-photometry "
+                        "capture path"
+                    )
+                    for side in ("left", "right"):
+                        self._laser(side, True)
+                        try:
+                            self._sleep_interruptible(
+                                float(self._config.get("laser_settle_s", 0.1))
                             )
-                            unavailable_reason = None
-                            if checkerboard_views is not None and checkerboard_view is None:
-                                unavailable_reason = (
-                                    "no accepted exact-pose checkerboard view"
+                            for name in ("pi", "usb"):
+                                checkerboard_view = (
+                                    self._checkerboard_view_for_pose(
+                                        checkerboard_views, name, pose
+                                    )
                                 )
-                            if name == "usb" and usb_ambient_error is not None:
-                                unavailable_reason = (
-                                    f"optional USB ambient capture failed: "
-                                    f"{usb_ambient_error}"
-                                )
-                            if unavailable_reason is not None:
-                                extracted = {
-                                    "points": [],
-                                    "diagnostic": {
-                                        "accepted": False,
-                                        "reason": unavailable_reason,
-                                    },
-                                }
-                            else:
-                                try:
-                                    laser = self._capture(name)
+                                unavailable_reason = None
+                                if (
+                                    checkerboard_views is not None
+                                    and checkerboard_view is None
+                                ):
+                                    unavailable_reason = (
+                                        "no accepted exact-pose checkerboard view"
+                                    )
+                                if name == "usb":
+                                    unavailable_reason = (
+                                        "optional USB matched photometry/capture "
+                                        f"unavailable: {usb_unavailable}"
+                                    )
+                                if unavailable_reason is not None:
+                                    laser_photometry = None
+                                    extracted = {
+                                        "points": [],
+                                        "diagnostic": {
+                                            "accepted": False,
+                                            "reason": unavailable_reason,
+                                        },
+                                    }
+                                else:
+                                    laser, laser_metadata = (
+                                        self._capture_matched_pi(pi_session)
+                                    )
+                                    laser_photometry = (
+                                        pi_session.metadata_for_report(
+                                            laser_metadata
+                                        )
+                                    )
                                     extracted = self._laser_board_points(
                                         name,
                                         side,
@@ -3194,54 +3262,58 @@ class GeometricCalibrationService:
                                         calibration,
                                         checkerboard_view=checkerboard_view,
                                     )
-                                except CalibrationCancelled:
-                                    raise
-                                except Exception as exc:
-                                    if name == "pi":
-                                        raise
-                                    extracted = {
-                                        "points": [],
-                                        "diagnostic": {
-                                            "accepted": False,
-                                            "reason": (
-                                                "optional USB laser observation "
-                                                f"failed: {exc}"
-                                            ),
-                                        },
-                                    }
-                            diagnostic = copy.deepcopy(extracted["diagnostic"])
-                            diagnostic.update(
-                                pose_index=pose_index,
-                                pose=copy.deepcopy(dict(pose)),
-                                camera=name,
-                                side=side,
-                                fit_role=(
-                                    "primary"
-                                    if name == "pi"
-                                    else "optional_cross_validation"
-                                ),
-                                checkerboard_source=(
-                                    "cached"
-                                    if checkerboard_view is not None
-                                    else "missing-cache"
-                                    if checkerboard_views is not None
-                                    else diagnostic.get(
-                                        "checkerboard_source", "ambient-detection"
+                                diagnostic = copy.deepcopy(
+                                    extracted["diagnostic"]
+                                )
+                                diagnostic.update(
+                                    pose_index=pose_index,
+                                    pose=copy.deepcopy(dict(pose)),
+                                    camera=name,
+                                    side=side,
+                                    fit_role=(
+                                        "primary"
+                                        if name == "pi"
+                                        else "optional_cross_validation"
+                                    ),
+                                    photometric_controls=copy.deepcopy(
+                                        pi_photometry if name == "pi" else None
+                                    ),
+                                    photometry_matched=(name == "pi"),
+                                    ambient_photometric_metadata=(
+                                        copy.deepcopy(ambient_photometry)
+                                        if name == "pi"
+                                        else None
+                                    ),
+                                    laser_photometric_metadata=copy.deepcopy(
+                                        laser_photometry
+                                    ),
+                                    checkerboard_source=(
+                                        "cached"
+                                        if checkerboard_view is not None
+                                        else "missing-cache"
+                                        if checkerboard_views is not None
+                                        else diagnostic.get(
+                                            "checkerboard_source",
+                                            "ambient-detection",
+                                        )
+                                    ),
+                                )
+                                with self._lock:
+                                    self._status["laser_views"][side][
+                                        name
+                                    ].append(diagnostic)
+                                if diagnostic["accepted"]:
+                                    samples[side][name].extend(
+                                        extracted["points"]
                                     )
-                                ),
-                            )
-                            with self._lock:
-                                self._status["laser_views"][side][name].append(
-                                    diagnostic
-                                )
-                            if diagnostic["accepted"]:
-                                samples[side][name].extend(extracted["points"])
-                                sample_pose_indexes[side][name].extend(
-                                    [pose_index] * len(extracted["points"])
-                                )
-                                accepted_pose_indexes[side][name].add(pose_index)
-                    finally:
-                        self._laser(side, False)
+                                    sample_pose_indexes[side][name].extend(
+                                        [pose_index] * len(extracted["points"])
+                                    )
+                                    accepted_pose_indexes[side][name].add(
+                                        pose_index
+                                    )
+                        finally:
+                            self._laser(side, False)
         finally:
             self._lasers_off()
         result = {}
@@ -3857,6 +3929,23 @@ class GeometricCalibrationService:
         )
         if not frame:
             raise CalibrationError(f"camera '{name}' returned no fresh frame")
+        return frame
+
+    def _capture_matched_pi(self, session: Any) -> tuple[bytes, dict]:
+        frame = self._hardware_call(
+            "Pi Camera matched photometric capture",
+            session.capture_jpeg,
+            float(self._config.get("capture_timeout_s", 5.0)),
+        )
+        if (
+            not isinstance(frame, tuple)
+            or len(frame) != 2
+            or not frame[0]
+            or not isinstance(frame[1], dict)
+        ):
+            raise CalibrationError(
+                "Pi Camera returned no verified matched photometric frame"
+            )
         return frame
 
     def _laser(self, side: str, enabled: bool) -> None:

@@ -1,5 +1,6 @@
 import io
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -302,6 +303,22 @@ class FakePicamera2:
         self.started = False
         self.stopped = False
         self.closed = False
+        self.camera_controls = {
+            name: (None, None, None)
+            for name in camera_driver.PiCamera.PHOTOMETRIC_CONTROL_NAMES
+        }
+        self.current_controls = {
+            "AeEnable": True,
+            "AwbEnable": True,
+            "ExposureTime": 12000,
+            "AnalogueGain": 2.5,
+            "ColourGains": (1.4, 1.8),
+        }
+        self.control_calls = []
+        self.capture_controls = []
+        self._pending_controls = {}
+        self._pending_delay = 0
+        self.manual_control_delay_frames = 0
 
     def create_still_configuration(self, **_kwargs):
         return {}
@@ -312,8 +329,27 @@ class FakePicamera2:
     def start(self):
         self.started = True
 
-    def capture_array(self):
-        return self._array
+    def _apply_pending_controls(self):
+        if self._pending_delay > 0:
+            self._pending_delay -= 1
+            return
+        self.current_controls.update(self._pending_controls)
+        self._pending_controls = {}
+
+    def capture_arrays(self, _names):
+        self._apply_pending_controls()
+        self.capture_controls.append(dict(self.current_controls))
+        return [self._array], dict(self.current_controls)
+
+    def capture_metadata(self):
+        self._apply_pending_controls()
+        return dict(self.current_controls)
+
+    def set_controls(self, controls):
+        self.control_calls.append(dict(controls))
+        self._pending_controls.update(controls)
+        if controls.get("AeEnable") is False:
+            self._pending_delay = self.manual_control_delay_frames
 
     def stop(self):
         self.stopped = True
@@ -353,10 +389,13 @@ class PiCameraCaptureTests(unittest.TestCase):
         release = threading.Event()
 
         class BlockingPicamera:
-            def capture_array(self):
+            def capture_arrays(self, _names):
                 started.set()
                 release.wait(1)
-                return np.zeros((4, 4, 3), dtype=np.uint8)
+                return (
+                    [np.zeros((4, 4, 3), dtype=np.uint8)],
+                    {},
+                )
 
         camera = camera_driver.PiCamera()
         camera._cam = BlockingPicamera()
@@ -371,6 +410,246 @@ class PiCameraCaptureTests(unittest.TestCase):
         release.set()
         capture_thread.join(1)
         self.assertFalse(capture_thread.is_alive())
+
+
+class PiCameraPhotometricControlTests(unittest.TestCase):
+    def setUp(self):
+        self.raw_frame = np.zeros((4, 4, 3), dtype=np.uint8)
+        self.fake_cam = FakePicamera2(self.raw_frame)
+        self.camera = camera_driver.PiCamera()
+        self.camera._cam = self.fake_cam
+
+    def test_matched_context_uses_identical_controls_and_restores_auto(self):
+        with self.camera.matched_photometric_controls() as session:
+            controls = session.lock_from_metadata(session.capture_metadata())
+            session.confirm_locked_controls()
+            self.assertIsNotNone(session.capture_jpeg()[0])
+            self.assertIsNotNone(session.capture_jpeg()[0])
+
+        self.assertEqual(
+            controls,
+            {
+                "ExposureTime": 12000,
+                "AnalogueGain": 2.5,
+                "ColourGains": [1.4, 1.8],
+            },
+        )
+        self.assertEqual(len(self.fake_cam.capture_controls), 2)
+        self.assertEqual(
+            self.fake_cam.capture_controls[0],
+            self.fake_cam.capture_controls[1],
+        )
+        self.assertFalse(self.fake_cam.capture_controls[0]["AeEnable"])
+        self.assertFalse(self.fake_cam.capture_controls[0]["AwbEnable"])
+        self.assertEqual(
+            self.fake_cam.control_calls[-1],
+            {"AeEnable": True, "AwbEnable": True},
+        )
+        self.fake_cam.capture_metadata()
+        self.assertTrue(self.fake_cam.current_controls["AeEnable"])
+        self.assertTrue(self.fake_cam.current_controls["AwbEnable"])
+
+    def test_matched_context_restores_controls_after_capture_error(self):
+        with self.assertRaisesRegex(RuntimeError, "capture failed"):
+            with self.camera.matched_photometric_controls():
+                raise RuntimeError("capture failed")
+
+        self.fake_cam.capture_metadata()
+        self.assertTrue(self.fake_cam.current_controls["AeEnable"])
+        self.assertTrue(self.fake_cam.current_controls["AwbEnable"])
+
+    def test_matched_context_restores_controls_when_body_is_cancelled(self):
+        class Cancelled(RuntimeError):
+            pass
+
+        with self.assertRaisesRegex(Cancelled, "cancelled"):
+            with self.camera.matched_photometric_controls():
+                raise Cancelled("cancelled")
+
+        self.fake_cam.capture_metadata()
+        self.assertTrue(self.fake_cam.current_controls["AeEnable"])
+        self.assertTrue(self.fake_cam.current_controls["AwbEnable"])
+
+    def test_matched_context_restores_prior_manual_controls(self):
+        self.fake_cam.current_controls.update({
+            "AeEnable": False,
+            "AwbEnable": False,
+            "ExposureTime": 7000,
+            "AnalogueGain": 1.75,
+            "ColourGains": (1.1, 1.3),
+        })
+        self.camera.set_photometric_controls(
+            dict(self.fake_cam.current_controls)
+        )
+        self.fake_cam.capture_metadata()
+
+        with self.camera.matched_photometric_controls():
+            pass
+
+        self.assertEqual(
+            self.fake_cam.control_calls[-1],
+            {
+                "AeEnable": False,
+                "AwbEnable": False,
+                "ExposureTime": 7000,
+                "AnalogueGain": 1.75,
+                "ColourGains": (1.1, 1.3),
+            },
+        )
+
+    def test_external_capture_is_rejected_during_matched_session(self):
+        with self.camera.matched_photometric_controls() as session:
+            session.lock_from_metadata(session.capture_metadata())
+            self.assertIsNone(self.camera.capture_jpeg())
+            self.assertIn("reserved", self.camera.last_error)
+
+    def test_competing_context_does_not_clear_active_session_token(self):
+        with self.camera.matched_photometric_controls() as winning_session:
+            winning_token = self.camera._active_session_token
+            with self.assertRaisesRegex(
+                camera_driver.PhotometricControlError,
+                "already has an active",
+            ):
+                with self.camera.matched_photometric_controls():
+                    self.fail("competing context must not yield")
+            self.assertIs(self.camera._active_session_token, winning_token)
+            winning_session.lock_from_metadata(
+                winning_session.capture_metadata()
+            )
+            self.assertIsNotNone(winning_session.capture_jpeg()[0])
+
+    def test_confirmation_discards_stale_post_lock_requests(self):
+        self.fake_cam.manual_control_delay_frames = 2
+        with self.camera.matched_photometric_controls() as session:
+            session.lock_from_metadata(session.capture_metadata())
+            confirmed = session.confirm_locked_controls()
+            _jpeg, ambient_metadata = session.capture_jpeg()
+
+        self.assertEqual(confirmed["ExposureTime"], 12000)
+        self.assertFalse(ambient_metadata["AeEnable"])
+        self.assertFalse(ambient_metadata["AwbEnable"])
+
+    def test_frame_metadata_mismatch_fails_and_restores_controls(self):
+        original_capture = self.fake_cam.capture_arrays
+
+        def mismatched_capture(names):
+            arrays, metadata = original_capture(names)
+            metadata["AnalogueGain"] = 9.0
+            return arrays, metadata
+
+        self.fake_cam.capture_arrays = mismatched_capture
+        with self.assertRaisesRegex(
+            camera_driver.PhotometricControlError,
+            "does not match",
+        ):
+            with self.camera.matched_photometric_controls() as session:
+                session.lock_from_metadata(session.capture_metadata())
+                session.capture_jpeg()
+
+        self.assertEqual(
+            self.fake_cam.control_calls[-1],
+            {"AeEnable": True, "AwbEnable": True},
+        )
+
+    def test_restore_failure_is_explicit_after_success(self):
+        original_set = self.fake_cam.set_controls
+
+        def fail_second_auto_restore(controls):
+            if (
+                controls == {"AeEnable": True, "AwbEnable": True}
+                and any(
+                    call.get("AeEnable") is False
+                    for call in self.fake_cam.control_calls
+                )
+            ):
+                raise RuntimeError("restore failed")
+            original_set(controls)
+
+        self.fake_cam.set_controls = fail_second_auto_restore
+        with self.assertRaisesRegex(
+            camera_driver.PhotometricControlError,
+            "failed to restore",
+        ):
+            with self.camera.matched_photometric_controls() as session:
+                session.lock_from_metadata(session.capture_metadata())
+
+        self.assertIsNotNone(self.camera._active_session_token)
+
+    def test_restore_failure_preserves_cancellation_exception(self):
+        class Cancelled(RuntimeError):
+            pass
+
+        original_set = self.fake_cam.set_controls
+
+        def fail_restore(controls):
+            if len(self.fake_cam.control_calls) >= 1:
+                raise RuntimeError("restore failed")
+            original_set(controls)
+
+        self.fake_cam.set_controls = fail_restore
+        with self.assertRaisesRegex(Cancelled, "cancelled"):
+            with self.camera.matched_photometric_controls():
+                raise Cancelled("cancelled")
+
+    def test_blocked_capture_queues_restore_and_releases_quarantine_later(self):
+        entered = threading.Event()
+        release = threading.Event()
+        original_capture = self.fake_cam.capture_arrays
+        capture_errors = []
+        capture_thread = None
+
+        with self.assertRaisesRegex(
+            camera_driver.PhotometricControlError,
+            "controls were restored.*quarantine",
+        ):
+            with self.camera.matched_photometric_controls() as session:
+                session.lock_from_metadata(session.capture_metadata())
+                session.confirm_locked_controls()
+
+                def blocked_capture(names):
+                    entered.set()
+                    release.wait(1)
+                    return original_capture(names)
+
+                self.fake_cam.capture_arrays = blocked_capture
+
+                def capture():
+                    try:
+                        session.capture_jpeg()
+                    except Exception as exc:
+                        capture_errors.append(exc)
+
+                capture_thread = threading.Thread(target=capture)
+                capture_thread.start()
+                self.assertTrue(entered.wait(0.5))
+
+        self.assertEqual(
+            self.fake_cam.control_calls[-1],
+            {"AeEnable": True, "AwbEnable": True},
+        )
+        self.assertIsNotNone(self.camera._active_session_token)
+        release.set()
+        capture_thread.join(1)
+        deadline = time.monotonic() + 1
+        while (
+            self.camera._active_session_token is not None
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+        self.assertIsNone(self.camera._active_session_token)
+        self.assertTrue(capture_errors)
+
+    def test_unsupported_controls_fail_before_camera_state_changes(self):
+        del self.fake_cam.camera_controls["ColourGains"]
+
+        with self.assertRaisesRegex(
+            camera_driver.PhotometricControlUnsupported,
+            "ColourGains",
+        ):
+            with self.camera.matched_photometric_controls():
+                self.fail("unsupported context must not yield")
+
+        self.assertEqual(self.fake_cam.control_calls, [])
 
 
 class FakeCv2:

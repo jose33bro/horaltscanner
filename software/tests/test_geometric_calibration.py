@@ -2420,6 +2420,54 @@ class CalibrationServiceTests(unittest.TestCase):
                     delta=0.002,
                 )
 
+    def test_live_paired_report_uses_contrast_jackknife_units(self):
+        fixture = json.loads(
+            USB_CARRIAGE_REPORT_FIXTURE.read_text(encoding="utf-8")
+        )
+        report = fixture["paired_report"]
+        views = self._real_usb_report_views(report)
+        self.service._reference_pose = dict(views[0]["pose"])
+        self.service._motion_model.update(report["motion_model"])
+        candidates = self._usb_extrinsic_candidates(
+            views, "rotate_180_about_board_x"
+        )
+
+        fit = self.service._fit_usb_carriage(
+            views,
+            candidates,
+            minimum=6,
+            eligible=np.asarray(report["pnp_inliers"], dtype=bool),
+            required_z_levels=sorted(
+                {float(view["pose"]["z"]) for view in views}
+            ),
+        )
+
+        self.assertTrue(fit["accepted"])
+        self.assertEqual(
+            fit["estimator"], "same_xy_z_contrast_geometric_median"
+        )
+        self.assertEqual(fit["direct_same_xy_z_contrasts"]["pairs"], 4)
+        self.assertLess(
+            fit["vector_uncertainty_mm_per_commanded_mm"], 0.15
+        )
+        self.assertAlmostEqual(
+            fit["scale_mm_per_commanded_mm"],
+            report["recorded_failure"]["scale"],
+            delta=0.001,
+        )
+        self.assertAlmostEqual(
+            fit["vertical_alignment_deg"],
+            report["recorded_failure"]["vertical_alignment_deg"],
+            delta=0.02,
+        )
+        self.assertAlmostEqual(
+            fit["direct_same_xy_z_contrasts"][
+                "maximum_pairwise_vector_difference_mm_per_commanded_mm"
+            ],
+            report["recorded_failure"]["maximum_pairwise_difference"],
+            delta=0.002,
+        )
+
     def test_real_reports_expose_concentrated_legacy_z_support(self):
         fixture = json.loads(
             USB_CARRIAGE_REPORT_FIXTURE.read_text(encoding="utf-8")

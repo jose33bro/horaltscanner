@@ -4295,52 +4295,37 @@ class GeometricCalibrationService:
                 )
                 jackknife_fits += 1
 
-        level_estimator = estimator
-        level_reference_vector = vector
-        if estimator == DIRECT_Z_ESTIMATOR:
-            try:
-                level_reference_solution = self._translation_regression_solution(
-                    deltas,
-                    translations,
-                    inlier_mask,
-                    estimator=RESIDUALIZED_Z_ESTIMATOR,
-                )
-            except CalibrationError:
-                level_estimator = None
-            else:
-                level_estimator = RESIDUALIZED_Z_ESTIMATOR
-                level_reference_vector = np.asarray(
-                    level_reference_solution["coefficients"][3], dtype=float
-                )
-        for level in required_levels:
-            if level_estimator is None:
-                break
-            trial = inlier_mask & ~np.isclose(all_levels, level, atol=1e-6)
-            if int(trial.sum()) < 4:
-                continue
-            try:
-                trial_solution = self._translation_regression_solution(
-                    deltas,
-                    translations,
-                    trial,
-                    estimator=level_estimator,
-                )
-            except CalibrationError:
-                continue
-            if trial_solution["observable"]:
-                jackknife_deviations.append(
-                    float(
-                        np.linalg.norm(
-                            np.asarray(
-                                trial_solution["coefficients"][3], dtype=float
+        if estimator == RESIDUALIZED_Z_ESTIMATOR:
+            for level in required_levels:
+                trial = inlier_mask & ~np.isclose(all_levels, level, atol=1e-6)
+                if int(trial.sum()) < 4:
+                    continue
+                try:
+                    trial_solution = self._translation_regression_solution(
+                        deltas,
+                        translations,
+                        trial,
+                        estimator=RESIDUALIZED_Z_ESTIMATOR,
+                    )
+                except CalibrationError:
+                    continue
+                if trial_solution["observable"]:
+                    jackknife_deviations.append(
+                        float(
+                            np.linalg.norm(
+                                np.asarray(
+                                    trial_solution["coefficients"][3],
+                                    dtype=float,
+                                )
+                                - vector
                             )
-                            - level_reference_vector
                         )
                     )
-                )
-                jackknife_fits += 1
+                    jackknife_fits += 1
 
         if estimator == DIRECT_Z_ESTIMATOR:
+            # Endpoint Z levels are not independent units: deleting one destroys
+            # every contrast. Delete complete X/Y contrast groups instead.
             for contrast in direct_contrasts:
                 trial = inlier_mask.copy()
                 trial[contrast["first_index"]] = False

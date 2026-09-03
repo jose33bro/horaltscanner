@@ -54,7 +54,11 @@ class GPIODriverTests(unittest.TestCase):
         )
 
         self.assertTrue(driver.connect())
-        factory.assert_called_once_with(23, True, False)
+        factory.assert_called_once_with(
+            23,
+            active_high=True,
+            initial_value=False,
+        )
         self.assertTrue(driver.status()["hardware_available"])
         self.assertEqual(driver.get_fan_status()["speed"], 0.0)
 
@@ -103,21 +107,233 @@ class GPIODriverTests(unittest.TestCase):
         self.assertEqual(
             output_factory.call_args_list,
             [
-                unittest.mock.call(27, True, False),
-                unittest.mock.call(22, True, False),
-                unittest.mock.call(23, True, False),
+                unittest.mock.call(
+                    27,
+                    active_high=True,
+                    initial_value=False,
+                ),
+                unittest.mock.call(
+                    22,
+                    active_high=True,
+                    initial_value=False,
+                ),
+                unittest.mock.call(
+                    23,
+                    active_high=True,
+                    initial_value=False,
+                ),
+            ],
+        )
+        self.assertEqual(
+            pwm_factory.call_args_list,
+            [
+                unittest.mock.call(
+                    18,
+                    active_high=True,
+                    initial_value=0.0,
+                    frequency=100.0,
+                ),
+                unittest.mock.call(
+                    13,
+                    active_high=True,
+                    initial_value=0.0,
+                    frequency=100.0,
+                ),
+                unittest.mock.call(
+                    19,
+                    active_high=True,
+                    initial_value=0.0,
+                    frequency=100.0,
+                ),
             ],
         )
         self.assertTrue(driver.laser_on("left"))
         output_devices[0].on.assert_called_once_with()
         self.assertTrue(driver.laser_off("left"))
-        output_devices[0].off.assert_called_once_with()
+        self.assertEqual(output_devices[0].off.call_count, 2)
 
         self.assertTrue(driver.led_set(255, 128, 0))
         self.assertEqual(pwm_devices[0].value, 1.0)
         self.assertAlmostEqual(pwm_devices[1].value, 128 / 255.0)
         self.assertEqual(pwm_devices[2].value, 0.0)
         self.assertEqual(driver.get_fan_status()["speed"], 0.0)
+
+    def test_pwm_lasers_use_bounded_named_profiles_and_preserve_polarity(self):
+        left_laser = Mock()
+        right_laser = Mock()
+        fan = Mock()
+        pwm_factory = Mock(side_effect=[left_laser, right_laser])
+        output_factory = Mock(return_value=fan)
+        driver = GPIODriver(
+            simulation=False,
+            hardware_config={
+                "lasers": {
+                    "pwm_enabled": True,
+                    "pwm_frequency_hz": 1000,
+                    "maximum_power": 0.35,
+                    "default_power": 0.2,
+                    "calibration_power": 0.21,
+                    "scan_power": 0.22,
+                    "left": {
+                        "gpio": 27,
+                        "active_high": False,
+                        "calibration_power": 0.18,
+                    },
+                    "right": {
+                        "gpio": 22,
+                        "active_high": True,
+                    },
+                },
+                "fans": {"pi_fan": {"gpio": 23}},
+            },
+            output_device_factory=output_factory,
+            pwm_device_factory=pwm_factory,
+        )
+
+        self.assertTrue(driver.connect())
+        self.assertEqual(
+            pwm_factory.call_args_list,
+            [
+                unittest.mock.call(
+                    27,
+                    active_high=False,
+                    initial_value=0.0,
+                    frequency=1000.0,
+                ),
+                unittest.mock.call(
+                    22,
+                    active_high=True,
+                    initial_value=0.0,
+                    frequency=1000.0,
+                ),
+            ],
+        )
+        left_laser.off.assert_called_once_with()
+        right_laser.off.assert_called_once_with()
+        self.assertEqual(driver.status()["laser_drive"], "pwm")
+
+        self.assertTrue(driver.laser_on("left"))
+        self.assertEqual(left_laser.value, 0.2)
+        self.assertTrue(driver.laser_on_for_calibration("left"))
+        self.assertEqual(left_laser.value, 0.18)
+        self.assertTrue(driver.laser_on_for_scan("right"))
+        self.assertEqual(right_laser.value, 0.22)
+        self.assertEqual(driver.get_laser_status(), {"left": True, "right": True})
+
+        self.assertTrue(driver.laser_off("left"))
+        self.assertEqual(left_laser.off.call_count, 2)
+        self.assertFalse(driver.get_laser_status()["left"])
+
+    def test_configs_without_pwm_fields_retain_digital_full_on_behavior(self):
+        laser_devices = [Mock(), Mock()]
+        output_factory = Mock(side_effect=[*laser_devices, Mock()])
+        driver = GPIODriver(
+            simulation=False,
+            hardware_config={
+                "lasers": {
+                    "left": {"gpio": 27, "active_high": False},
+                    "right": {"gpio": 22, "active_high": True},
+                },
+                "fans": {"pi_fan": {"gpio": 23}},
+            },
+            output_device_factory=output_factory,
+        )
+
+        self.assertTrue(driver.connect())
+        self.assertEqual(driver.status()["laser_drive"], "digital")
+        self.assertTrue(driver.laser_on_for_calibration("left"))
+        laser_devices[0].on.assert_called_once_with()
+        self.assertTrue(driver.laser_on_for_scan("right"))
+        laser_devices[1].on.assert_called_once_with()
+
+    def test_invalid_pwm_configuration_is_rejected_before_gpio_is_touched(self):
+        base = {
+            "pwm_enabled": True,
+            "pwm_frequency_hz": 1000,
+            "maximum_power": 0.35,
+            "default_power": 0.2,
+            "calibration_power": 0.2,
+            "scan_power": 0.2,
+            "left": {"gpio": 27},
+            "right": {"gpio": 22},
+        }
+        invalid = (
+            ({**base, "pwm_frequency_hz": 0}, "pwm_frequency_hz"),
+            ({**base, "scan_power": 0.5}, "scan_power"),
+            ({**base, "default_power": 0}, "default_power"),
+            ({**base, "calibration_power": float("nan")}, "finite number"),
+        )
+
+        for lasers, message in invalid:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    GPIODriver(
+                        simulation=False,
+                        hardware_config={"lasers": lasers},
+                        output_device_factory=Mock(),
+                        pwm_device_factory=Mock(),
+                    )
+
+    def test_partial_pwm_initialization_forces_off_and_closes_created_laser(self):
+        left_laser = Mock()
+        pwm_factory = Mock(
+            side_effect=[left_laser, RuntimeError("right GPIO busy")]
+        )
+        driver = GPIODriver(
+            simulation=False,
+            hardware_config={
+                "lasers": {
+                    "pwm_enabled": True,
+                    "pwm_frequency_hz": 1000,
+                    "maximum_power": 0.35,
+                    "default_power": 0.2,
+                    "calibration_power": 0.2,
+                    "scan_power": 0.2,
+                    "left": {"gpio": 27},
+                    "right": {"gpio": 22},
+                },
+                "fans": {"pi_fan": {"gpio": 23}},
+            },
+            output_device_factory=Mock(),
+            pwm_device_factory=pwm_factory,
+        )
+
+        self.assertFalse(driver.connect())
+        self.assertGreaterEqual(left_laser.off.call_count, 2)
+        left_laser.close.assert_called_once_with()
+        self.assertEqual(driver.get_laser_status(), {"left": False, "right": False})
+        self.assertIsInstance(driver.last_error, RuntimeError)
+
+    def test_close_forces_pwm_lasers_off_before_releasing_devices(self):
+        lasers = [Mock(), Mock()]
+        driver = GPIODriver(
+            simulation=False,
+            hardware_config={
+                "lasers": {
+                    "pwm_enabled": True,
+                    "pwm_frequency_hz": 1000,
+                    "maximum_power": 0.35,
+                    "default_power": 0.2,
+                    "calibration_power": 0.2,
+                    "scan_power": 0.2,
+                    "left": {"gpio": 27},
+                    "right": {"gpio": 22},
+                },
+                "fans": {"pi_fan": {"gpio": 23}},
+            },
+            output_device_factory=Mock(return_value=Mock()),
+            pwm_device_factory=Mock(side_effect=lasers),
+        )
+        self.assertTrue(driver.connect())
+        self.assertTrue(driver.laser_on_for_scan("left"))
+
+        driver.close()
+
+        self.assertGreaterEqual(lasers[0].off.call_count, 2)
+        self.assertGreaterEqual(lasers[1].off.call_count, 2)
+        lasers[0].close.assert_called_once_with()
+        lasers[1].close.assert_called_once_with()
+        self.assertEqual(driver.get_laser_status(), {"left": False, "right": False})
 
     def test_real_fan_rejects_commands_when_gpio_is_unavailable(self):
         driver = GPIODriver(

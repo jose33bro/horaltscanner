@@ -1,11 +1,13 @@
 import importlib
 import json
 import runpy
+import sys
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 try:
@@ -127,6 +129,18 @@ class HoralScannerAPITests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(("laser_on", "left"), self.fake_gpio.calls)
+
+    def test_laser_route_does_not_expose_pwm_power_control(self):
+        response = self.client.post(
+            "/api/laser/right",
+            json={"state": True, "power": 1.0, "duty_cycle": 1.0},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [call for call in self.fake_gpio.calls if call[0] == "laser_on"],
+            [("laser_on", "right")],
+        )
 
     def test_led_route_uses_gpio_driver(self):
         response = self.client.post("/api/led/color", json={"r": 255, "g": 0, "b": 5})
@@ -887,6 +901,30 @@ class HoralScannerAPITests(unittest.TestCase):
             hardware_config={"hardware": {"pi_gpio": True}},
             output_device_factory=fake_output_factory,
             pwm_device_factory=fake_pwm_factory,
+        )
+
+    def test_gpiozero_pwm_factory_forwards_frequency_polarity_and_zero_duty(self):
+        output_device = Mock()
+        pwm_device = Mock()
+        gpiozero = SimpleNamespace(
+            OutputDevice=output_device,
+            PWMOutputDevice=pwm_device,
+        )
+
+        with patch.dict(sys.modules, {"gpiozero": gpiozero}):
+            _, pwm_factory = self.api_module._load_gpiozero_factories()
+            pwm_factory(
+                27,
+                active_high=False,
+                initial_value=0.0,
+                frequency=1000,
+            )
+
+        pwm_device.assert_called_once_with(
+            27,
+            active_high=False,
+            initial_value=0.0,
+            frequency=1000,
         )
 
     def test_initialize_driver_logs_last_error_on_connection_failure(self):

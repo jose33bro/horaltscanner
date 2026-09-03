@@ -1582,10 +1582,20 @@ class ScanSession:
         return translated
 
     def _set_laser(self, side: str, enabled: bool) -> None:
-        method = self._gpio.laser_on if enabled else self._gpio.laser_off
-        if not method(side):
-            raise RuntimeError(f"Failed to turn laser '{side}' {'on' if enabled else 'off'}")
         with self._lock:
+            if enabled:
+                self._check_cancelled()
+                method = getattr(
+                    self._gpio,
+                    "laser_on_for_scan",
+                    self._gpio.laser_on,
+                )
+            else:
+                method = self._gpio.laser_off
+            if not method(side):
+                raise RuntimeError(
+                    f"Failed to turn laser '{side}' {'on' if enabled else 'off'}"
+                )
             self._laser_side = side if enabled else None
 
     def _lasers_off(self) -> None:

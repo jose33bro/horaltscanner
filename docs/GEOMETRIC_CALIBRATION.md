@@ -89,8 +89,14 @@ the Pi plane without contributing samples to it. Each laser must still provide
 at least the configured number of Pi points across three valid poses and three
 independently oriented board views before the robust plane fit, and both the
 plane RMS and optional USB cross-validation RMS limits remain **2 mm**. Laser
-drive remains the existing binary full-power on/off path; no PWM interface is
-assumed.
+control remains binary at the API boundary, but the tracked production hardware
+configuration opts GPIO27 and GPIO22 into 1 kHz `PWMOutputDevice` control at a
+conservative 20% calibration duty. The calibration service selects that fixed,
+bounded profile internally; callers cannot submit an arbitrary duty cycle.
+Configurations without `lasers.pwm_enabled: true` retain the previous digital
+full-power behavior for backward compatibility. Do not weaken the line width,
+point, pose, orientation, spread, or 2 mm plane-fit gates to compensate for
+optical saturation.
 
 Calibration payload validation requires this Pi-authoritative provenance and
 its surviving robust-fit per-pose point counts, view/orientation counts, and

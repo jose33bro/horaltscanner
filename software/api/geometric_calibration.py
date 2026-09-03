@@ -3863,7 +3863,14 @@ class GeometricCalibrationService:
         with self._lock:
             if enabled:
                 self._check_cancelled()
-            method = self._gpio.laser_on if enabled else self._gpio.laser_off
+            if enabled:
+                method = getattr(
+                    self._gpio,
+                    "laser_on_for_calibration",
+                    self._gpio.laser_on,
+                )
+            else:
+                method = self._gpio.laser_off
             if not method(side):
                 raise CalibrationError(
                     f"failed to turn laser {side} {'on' if enabled else 'off'}"

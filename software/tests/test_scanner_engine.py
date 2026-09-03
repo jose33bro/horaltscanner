@@ -118,6 +118,7 @@ class _FakeGPIO:
 
     def __init__(self):
         self.calls = []
+        self.profiles = []
         self.state = {"left": False, "right": False}
 
     def laser_on(self, side):
@@ -129,6 +130,10 @@ class _FakeGPIO:
         self.calls.append(("off", side))
         self.state[side] = False
         return True
+
+    def laser_on_for_scan(self, side):
+        self.profiles.append(("scan", side))
+        return self.laser_on(side)
 
 
 class _FakeCamera:
@@ -381,6 +386,10 @@ class RealScanSessionTests(unittest.TestCase):
         self.assertEqual(status["points"], 5)
         on_calls = [call for call in self.gpio.calls if call[0] == "on"]
         self.assertEqual(on_calls, [("on", "left"), ("on", "right")])
+        self.assertEqual(
+            self.gpio.profiles,
+            [("scan", "left"), ("scan", "right")],
+        )
         self.assertEqual(self.cameras["pi"].calls, 4)
         self.assertEqual(self.cameras["usb"].calls, 4)
         self.assertFalse(any(self.gpio.state.values()))

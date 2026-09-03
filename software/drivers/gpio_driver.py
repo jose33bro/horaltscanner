@@ -4,8 +4,13 @@ Supports a *simulation* mode (no hardware required) used by the test suite.
 """
 from __future__ import annotations
 
+import logging
+import math
+import threading
 from pathlib import Path
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_HARDWARE_CONFIG: dict = {
     "lasers": {
@@ -32,6 +37,8 @@ _DEFAULT_HARDWARE_CONFIG: dict = {
 }
 
 _LED_MODES = {"off", "on", "pulse"}
+_LASER_SIDES = ("left", "right")
+_LASER_POWER_PROFILES = ("default", "calibration", "scan")
 
 
 class GPIODriver:
@@ -66,6 +73,7 @@ class GPIODriver:
         self._pwm_device_factory = pwm_device_factory
         self._temperature_reader = temperature_reader
         self._cpu_temperature_reader = cpu_temperature_reader or self._read_cpu_temperature
+        self._laser_lock = threading.RLock()
 
         self._pin_laser_left: int = lasers_cfg.get("left", {}).get("gpio", 17)
         self._pin_laser_right: int = lasers_cfg.get("right", {}).get("gpio", 27)
@@ -73,6 +81,10 @@ class GPIODriver:
         self._pin_led_g: int = led_cfg.get("green", {}).get("gpio", 23)
         self._pin_led_b: int = led_cfg.get("blue", {}).get("gpio", 24)
         self._pin_fan_pi: int = pi_fan_cfg.get("gpio", 18)
+        self._laser_pwm_enabled = bool(lasers_cfg.get("pwm_enabled", False))
+        self._laser_pwm_frequency_hz: float | None = None
+        self._laser_powers: dict[str, dict[str, float]] = {}
+        self._configure_laser_power(lasers_cfg)
 
         self._pi_fan_on_temp: float = float(on_temp)
         self._pi_fan_off_temp: float = float(off_temp)
@@ -110,57 +122,83 @@ class GPIODriver:
         return self._last_error
 
     def connect(self) -> bool:
-        self._last_error = None
-        if self._simulation:
-            self._hardware_available = True
-            return True
-        cfg_in = self._hardware_config
-        lasers_cfg = cfg_in.get("lasers", _DEFAULT_HARDWARE_CONFIG["lasers"])
-        led_cfg = cfg_in.get("led_rgb", _DEFAULT_HARDWARE_CONFIG["led_rgb"])
-        fans_cfg = cfg_in.get("fans", _DEFAULT_HARDWARE_CONFIG["fans"])
-        pi_fan_cfg = fans_cfg.get("pi_fan", _DEFAULT_HARDWARE_CONFIG["fans"]["pi_fan"])
-        out_factory = self._output_device_factory
-        pwm_factory = self._pwm_device_factory
-        needs_pwm = "led_rgb" in cfg_in
-        if out_factory is None or (needs_pwm and pwm_factory is None):
+        with self._laser_lock:
+            self._last_error = None
+            if self._simulation:
+                self._hardware_available = True
+                return True
+            self._close_devices()
+            cfg_in = self._hardware_config
+            lasers_cfg = cfg_in.get("lasers", _DEFAULT_HARDWARE_CONFIG["lasers"])
+            led_cfg = cfg_in.get("led_rgb", _DEFAULT_HARDWARE_CONFIG["led_rgb"])
+            fans_cfg = cfg_in.get("fans", _DEFAULT_HARDWARE_CONFIG["fans"])
+            pi_fan_cfg = fans_cfg.get("pi_fan", _DEFAULT_HARDWARE_CONFIG["fans"]["pi_fan"])
+            out_factory = self._output_device_factory
+            pwm_factory = self._pwm_device_factory
+            needs_pwm = "led_rgb" in cfg_in or self._laser_pwm_enabled
+            if out_factory is None or (needs_pwm and pwm_factory is None):
+                try:
+                    from gpiozero import OutputDevice, PWMOutputDevice
+                except Exception as exc:
+                    self._last_error = exc
+                    self._hardware_available = False
+                    return False
+                out_factory = out_factory or OutputDevice
+                if needs_pwm:
+                    pwm_factory = pwm_factory or PWMOutputDevice
             try:
-                from gpiozero import OutputDevice, PWMOutputDevice
+                if "lasers" in cfg_in:
+                    laser_factory = pwm_factory if self._laser_pwm_enabled else out_factory
+                    if laser_factory is None:
+                        raise RuntimeError("Laser GPIO factory is unavailable")
+                    left_cfg = lasers_cfg.get("left", {})
+                    right_cfg = lasers_cfg.get("right", {})
+                    self._laser_left_device = self._create_laser_device(
+                        laser_factory, left_cfg, 17
+                    )
+                    self._laser_left_device.off()
+                    self._laser_right_device = self._create_laser_device(
+                        laser_factory, right_cfg, 27
+                    )
+                    self._laser_right_device.off()
+                fan_gpio = pi_fan_cfg.get("gpio", 18)
+                fan_ah = pi_fan_cfg.get("active_high", True)
+                fan_default = bool(pi_fan_cfg.get("default_value", 0))
+                self._fan_device = out_factory(
+                    fan_gpio,
+                    active_high=fan_ah,
+                    initial_value=fan_default,
+                )
+                if "led_rgb" in cfg_in and pwm_factory:
+                    frequency = float(led_cfg.get("pwm_frequency_hz", 100))
+                    r_cfg = led_cfg.get("red", {})
+                    g_cfg = led_cfg.get("green", {})
+                    b_cfg = led_cfg.get("blue", {})
+                    self._led_r_device = pwm_factory(
+                        r_cfg.get("gpio", 22),
+                        active_high=led_cfg.get("active_high", True),
+                        initial_value=0.0,
+                        frequency=frequency,
+                    )
+                    self._led_g_device = pwm_factory(
+                        g_cfg.get("gpio", 23),
+                        active_high=led_cfg.get("active_high", True),
+                        initial_value=0.0,
+                        frequency=frequency,
+                    )
+                    self._led_b_device = pwm_factory(
+                        b_cfg.get("gpio", 24),
+                        active_high=led_cfg.get("active_high", True),
+                        initial_value=0.0,
+                        frequency=frequency,
+                    )
+                self._hardware_available = True
+                return True
             except Exception as exc:
                 self._last_error = exc
                 self._hardware_available = False
+                self._close_devices()
                 return False
-            out_factory = out_factory or OutputDevice
-            if needs_pwm:
-                pwm_factory = pwm_factory or PWMOutputDevice
-        try:
-            # Lasers first (output_factory calls 0, 1)
-            if "lasers" in cfg_in and out_factory:
-                left_cfg = lasers_cfg.get("left", {})
-                right_cfg = lasers_cfg.get("right", {})
-                self._laser_left_device = out_factory(
-                    left_cfg.get("gpio", 17), left_cfg.get("active_high", True), False
-                )
-                self._laser_right_device = out_factory(
-                    right_cfg.get("gpio", 27), right_cfg.get("active_high", True), False
-                )
-            # Fan (output_factory call 2)
-            fan_gpio = pi_fan_cfg.get("gpio", 18)
-            fan_ah = pi_fan_cfg.get("active_high", True)
-            fan_default = bool(pi_fan_cfg.get("default_value", 0))
-            self._fan_device = out_factory(fan_gpio, fan_ah, fan_default)
-            if "led_rgb" in cfg_in and pwm_factory:
-                r_cfg = led_cfg.get("red", {})
-                g_cfg = led_cfg.get("green", {})
-                b_cfg = led_cfg.get("blue", {})
-                self._led_r_device = pwm_factory(r_cfg.get("gpio", 22), True, False)
-                self._led_g_device = pwm_factory(g_cfg.get("gpio", 23), True, False)
-                self._led_b_device = pwm_factory(b_cfg.get("gpio", 24), True, False)
-            self._hardware_available = True
-            return True
-        except Exception as exc:
-            self._last_error = exc
-            self._hardware_available = False
-            return False
 
     @property
     def simulation(self) -> bool:
@@ -171,6 +209,19 @@ class GPIODriver:
         return self._hardware_available
 
     def close(self) -> None:
+        with self._laser_lock:
+            self._close_devices()
+            self._hardware_available = False
+            self._pi_fan_speed = 0.0
+
+    def _close_devices(self) -> None:
+        for laser_device in (self._laser_left_device, self._laser_right_device):
+            if laser_device is None:
+                continue
+            try:
+                laser_device.off()
+            except Exception:
+                logger.exception("Failed to force a laser OFF before closing GPIO")
         for device_name in (
             "_laser_left_device",
             "_laser_right_device",
@@ -185,55 +236,127 @@ class GPIODriver:
             try:
                 device.close()
             except Exception:
-                pass
+                logger.exception("Failed to close GPIO device %s", device_name)
             setattr(self, device_name, None)
-        self._hardware_available = False
-        self._pi_fan_speed = 0.0
+        self._laser_status = {"left": False, "right": False}
 
     # ------------------------------------------------------------------
     # Laser
     # ------------------------------------------------------------------
 
     def laser_on(self, side: str) -> bool:
-        if side not in ("left", "right"):
+        """Turn a laser on using its configured default power."""
+        return self._laser_on_profile(side, "default")
+
+    def laser_on_for_calibration(self, side: str) -> bool:
+        """Turn a laser on using its fixed calibration profile."""
+        return self._laser_on_profile(side, "calibration")
+
+    def laser_on_for_scan(self, side: str) -> bool:
+        """Turn a laser on using its fixed acquisition profile."""
+        return self._laser_on_profile(side, "scan")
+
+    def _laser_on_profile(self, side: str, profile: str) -> bool:
+        if side not in _LASER_SIDES:
             return False
-        if not self._hardware_available and not self._simulation:
-            return False
-        if side == "left":
-            if self._laser_left_device is None and not self._simulation:
+        with self._laser_lock:
+            if not self._hardware_available and not self._simulation:
                 return False
-            if self._laser_left_device is not None:
-                self._laser_left_device.on()
-            self._laser_status["left"] = True
-        else:
-            if self._laser_right_device is None and not self._simulation:
+            device = self._laser_device(side)
+            if device is None and not self._simulation:
                 return False
-            if self._laser_right_device is not None:
-                self._laser_right_device.on()
-            self._laser_status["right"] = True
-        return True
+            if device is not None:
+                if self._laser_pwm_enabled:
+                    device.value = self._laser_powers[side][profile]
+                else:
+                    device.on()
+            self._laser_status[side] = True
+            return True
 
     def laser_off(self, side: str) -> bool:
-        if side not in ("left", "right"):
+        if side not in _LASER_SIDES:
             return False
-        if not self._hardware_available and not self._simulation:
-            return False
-        if side == "left":
-            if self._laser_left_device is None and not self._simulation:
+        with self._laser_lock:
+            if not self._hardware_available and not self._simulation:
                 return False
-            if self._laser_left_device is not None:
-                self._laser_left_device.off()
-            self._laser_status["left"] = False
-        else:
-            if self._laser_right_device is None and not self._simulation:
+            device = self._laser_device(side)
+            if device is None and not self._simulation:
                 return False
-            if self._laser_right_device is not None:
-                self._laser_right_device.off()
-            self._laser_status["right"] = False
-        return True
+            if device is not None:
+                device.off()
+            self._laser_status[side] = False
+            return True
 
     def get_laser_status(self) -> dict[str, bool]:
-        return dict(self._laser_status)
+        with self._laser_lock:
+            return dict(self._laser_status)
+
+    def _configure_laser_power(self, lasers_cfg: dict) -> None:
+        if not self._laser_pwm_enabled:
+            self._laser_powers = {
+                side: {profile: 1.0 for profile in _LASER_POWER_PROFILES}
+                for side in _LASER_SIDES
+            }
+            return
+        frequency = self._finite_float(
+            lasers_cfg.get("pwm_frequency_hz"), "lasers.pwm_frequency_hz"
+        )
+        if not 1 <= frequency <= 100_000:
+            raise ValueError("lasers.pwm_frequency_hz must be between 1 and 100000")
+        self._laser_pwm_frequency_hz = frequency
+        global_maximum = self._laser_power(
+            lasers_cfg.get("maximum_power", 1.0), "lasers.maximum_power", maximum=1.0
+        )
+        for side in _LASER_SIDES:
+            side_cfg = lasers_cfg.get(side, {})
+            side_maximum = self._laser_power(
+                side_cfg.get("maximum_power", global_maximum),
+                f"lasers.{side}.maximum_power",
+                maximum=global_maximum,
+            )
+            powers = {}
+            for profile in _LASER_POWER_PROFILES:
+                key = f"{profile}_power"
+                configured = side_cfg.get(key, lasers_cfg.get(key))
+                powers[profile] = self._laser_power(
+                    configured,
+                    f"lasers.{side}.{key}",
+                    maximum=side_maximum,
+                )
+            self._laser_powers[side] = powers
+
+    @staticmethod
+    def _finite_float(value: object, name: str) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be a finite number") from exc
+        if not math.isfinite(parsed):
+            raise ValueError(f"{name} must be a finite number")
+        return parsed
+
+    @classmethod
+    def _laser_power(cls, value: object, name: str, *, maximum: float) -> float:
+        power = cls._finite_float(value, name)
+        if not 0 < power <= maximum:
+            raise ValueError(f"{name} must be greater than 0 and at most {maximum:g}")
+        return power
+
+    def _create_laser_device(self, factory: Callable, config: dict, default_pin: int):
+        kwargs = {
+            "active_high": config.get("active_high", True),
+            "initial_value": 0.0 if self._laser_pwm_enabled else False,
+        }
+        if self._laser_pwm_enabled:
+            kwargs["frequency"] = self._laser_pwm_frequency_hz
+        return factory(config.get("gpio", default_pin), **kwargs)
+
+    def _laser_device(self, side: str):
+        return (
+            self._laser_left_device
+            if side == "left"
+            else self._laser_right_device
+        )
 
     # ------------------------------------------------------------------
     # LED
@@ -329,6 +452,7 @@ class GPIODriver:
         return {
             "simulation": self._simulation,
             "hardware_available": self._hardware_available,
+            "laser_drive": "pwm" if self._laser_pwm_enabled else "digital",
             "pins": {
                 "laser_left": self._pin_laser_left,
                 "laser_right": self._pin_laser_right,

@@ -1942,6 +1942,22 @@ class CalibrationServiceTests(unittest.TestCase):
         with self.assertRaises(CalibrationCancelled):
             self.service._laser("right", True)
 
+    def test_laser_plane_capture_selects_fixed_calibration_power_profile(self):
+        profile_calls = []
+
+        def calibration_on(side):
+            profile_calls.append(side)
+            self.gpio.state[side] = True
+            return True
+
+        self.gpio.laser_on_for_calibration = calibration_on
+
+        self.service._laser("left", True)
+        self.service._laser("left", False)
+
+        self.assertEqual(profile_calls, ["left"])
+        self.assertFalse(self.gpio.state["left"])
+
     def test_commit_boundary_rejects_early_cancel_and_defers_late_cancel(self):
         self.service._cancel.set()
         with self.assertRaises(CalibrationCancelled):

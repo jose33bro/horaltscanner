@@ -36,6 +36,12 @@
     }
   },
   "lasers": {
+    "pwm_enabled": true,
+    "pwm_frequency_hz": 1000,
+    "maximum_power": 0.35,
+    "default_power": 0.2,
+    "calibration_power": 0.2,
+    "scan_power": 0.2,
     "left": {
       "gpio": 27,
       "pin": "rpi:gpio27",

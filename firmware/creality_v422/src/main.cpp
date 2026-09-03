@@ -8,6 +8,7 @@ namespace {
 constexpr uint32_t SERIAL_BAUD = 115200;
 constexpr uint32_t COMMAND_TIMEOUT_MS = 5000;
 constexpr uint32_t HOME_TIMEOUT_MS = 120000;
+constexpr uint32_t Y_INDEX_DEBOUNCE_MS = 20;
 constexpr uint32_t MAX_MOVE_STEPS = 200000;
 constexpr uint32_t MIN_STEP_RATE = 1;
 constexpr uint32_t MAX_STEP_RATE = 20000;
@@ -47,6 +48,7 @@ bool steppers_enabled = false;
 
 enum class MotionType { IDLE, MOVE, HOME };
 enum class MotionResult { DONE, RUNNING, STOPPED, ERROR };
+enum class YHomePhase { SEEK_RELEASE, SEEK_TRIGGER };
 
 MotionType motion_type = MotionType::IDLE;
 MotionResult motion_result = MotionResult::DONE;
@@ -63,6 +65,9 @@ uint8_t home_axis_index = 0;
 bool home_all = false;
 bool motion_positive = false;
 bool step_pin_high = false;
+YHomePhase y_home_phase = YHomePhase::SEEK_TRIGGER;
+bool y_index_candidate = false;
+uint32_t y_index_candidate_since_ms = 0;
 
 Axis const *findAxis(char name) {
   for (const Axis &axis : AXES) {
@@ -127,7 +132,8 @@ void updateMotionPeriod() {
 void beginHomeAxis(uint8_t index) {
   home_axis_index = index;
   motion_axis = &AXES[index];
-  if (endstopTriggered(*motion_axis)) {
+  const bool endstop_triggered = endstopTriggered(*motion_axis);
+  if (motion_axis->name != 'Y' && endstop_triggered) {
     if (home_all && static_cast<size_t>(index + 1) < AXIS_COUNT) {
       beginHomeAxis(index + 1);
     } else {
@@ -145,6 +151,10 @@ void beginHomeAxis(uint8_t index) {
   motion_deadline_ms = millis() + HOME_TIMEOUT_MS;
   motion_type = MotionType::HOME;
   motion_result = MotionResult::RUNNING;
+  step_pin_high = false;
+  y_home_phase =
+      endstop_triggered ? YHomePhase::SEEK_RELEASE : YHomePhase::SEEK_TRIGGER;
+  y_index_candidate = false;
   setSteppersEnabled(true);
 }
 
@@ -182,7 +192,28 @@ void serviceMotion() {
   if (motion_type == MotionType::IDLE || motion_axis == nullptr) return;
 
   if (motion_type == MotionType::HOME) {
-    if (endstopTriggered(*motion_axis)) {
+    bool axis_homed = false;
+    if (motion_axis->name == 'Y') {
+      const uint32_t now_ms = millis();
+      const bool expected_triggered = y_home_phase == YHomePhase::SEEK_TRIGGER;
+      if (endstopTriggered(*motion_axis) != expected_triggered) {
+        y_index_candidate = false;
+      } else if (!y_index_candidate) {
+        y_index_candidate = true;
+        y_index_candidate_since_ms = now_ms;
+      } else if (now_ms - y_index_candidate_since_ms >= Y_INDEX_DEBOUNCE_MS) {
+        if (y_home_phase == YHomePhase::SEEK_RELEASE) {
+          y_home_phase = YHomePhase::SEEK_TRIGGER;
+          y_index_candidate = false;
+        } else {
+          axis_homed = true;
+        }
+      }
+    } else {
+      axis_homed = endstopTriggered(*motion_axis);
+    }
+
+    if (axis_homed) {
       digitalWrite(motion_axis->step_pin, LOW);
       step_pin_high = false;
       if (home_all && static_cast<size_t>(home_axis_index + 1) < AXIS_COUNT) {

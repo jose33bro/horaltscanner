@@ -87,10 +87,13 @@ a view only when another inlier remains at that same Z level. A PnP mask that
 removes a whole Z level fails instead of triggering a biased refit. Calibration
 still requires three Z levels spanning 20 mm, independent-Z leverage ratio at
 least 0.25, condition number at most 50, per-level repeatability at most 5 mm,
-and within-estimator leave-one-view/leave-one-level/leave-one-contrast
-carriage-vector deviation at most 0.15 mm per commanded mm. Reports include
-those values, maximum leverage fraction, effective sample count, per-level
-sample/inlier counts, rejected views, and direct same-X/same-Y Z contrasts.
+and jackknife carriage-vector deviation at most 0.15 mm per commanded mm.
+Residualized legacy fits use leave-one-view and leave-one-level trials. Paired
+fits use leave-one-view and leave-one-contrast trials because deleting an entire
+endpoint Z level destroys every contrast rather than leaving a valid sample of
+the same estimator. Reports include those values, maximum leverage fraction,
+effective sample count, per-level sample/inlier counts, rejected views, and
+direct same-X/same-Y Z contrasts.
 
 A configured trajectory whose Z is explained by X/Y is rejected before motion
 begins. A bad USB fit, ambiguous board convention, out-of-tolerance scale,

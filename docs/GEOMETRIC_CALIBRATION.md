@@ -40,15 +40,23 @@ centered shape change, scale, orientation, per-corner motion hulls, and unique
 views. Center movement is diagnostic only. Status and reports include every
 metric and threshold.
 
-After intrinsics, the service fits a shared mechanism model from both cameras'
-PnP poses. It evaluates both Y rotation directions and estimates signed radians
-per commanded millimeter within the measured 200 mm diameter tolerance. It then
-robustly regresses signed X millimeters per commanded millimeter. The USB
+After intrinsics, the fixed Pi camera is the primary observable for the shared
+mechanism model. Its PnP poses determine the signed X scale and the signed Y
+command rotation within the measured 200 mm diameter tolerance. The service
+then solves the Pi extrinsic before independently solving and cross-validating
+the opposed USB camera against that global scanner-frame model. The USB
 camera's commanded Z displacement is removed before fitting its reference
-transform. Ambiguous directions, an out-of-tolerance scale, insufficient axis
-travel, or excessive robust residuals fail calibration; motor
-`rotation_distance` is never changed. The fitted signed Y scale is persisted and
-used to undo turntable motion during scans. For every scan frame, runtime derives
+transform. The canonical and proper 180-degree-about-normal board-frame
+conventions are evaluated for the opposed view, but reflections are never
+accepted. The fixed Pi observation defines the canonical board convention.
+Raw camera-coordinate
+rotation signs are not compared across cameras. Diagnostics explicitly identify
+the fixed Pi reference as the command-sign source and report the USB
+cross-validation candidates. A bad USB fit, ambiguous board convention,
+out-of-tolerance scale, insufficient axis travel, or excessive robust residuals
+fails calibration; motor `rotation_distance` is never changed. The fitted signed
+Y scale is persisted and used to undo turntable motion during scans. For every
+scan frame, runtime derives
 the physical turntable center as
 `reference_center + signed_x_scale * (current_x - reference_x) * scanner_+X`,
 undoes Y rotation about that current center, then maps the result to the

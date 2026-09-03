@@ -154,6 +154,14 @@ class CalibrationMathTests(unittest.TestCase):
         with self.assertRaisesRegex(CalibrationError, "singular"):
             validate_calibration_payload(payload)
 
+    def test_payload_rejects_reflected_camera_transform(self):
+        payload = valid_calibration()
+        payload["cameras"]["usb"]["camera_to_scanner"][0][0] = -1
+        with self.assertRaisesRegex(
+            CalibrationError, "right-handed and orthonormal"
+        ):
+            validate_calibration_payload(payload)
+
     def test_payload_rejects_false_checkerboard_pattern_metadata(self):
         payload = valid_calibration()
         payload["checkerboard"]["board_columns"] = 10
@@ -827,32 +835,48 @@ class CalibrationServiceTests(unittest.TestCase):
         self.assertAlmostEqual(translation_rms, 1.0)
         self.assertAlmostEqual(rotation_rms, 0.0)
 
-    def _synthetic_motion_views(self, x_scale, y_scale):
+    def _synthetic_motion_views(
+        self,
+        x_scale,
+        y_scale,
+        *,
+        opposed_usb_pnp_frame=False,
+        live_candidate_split_noise=False,
+    ):
         poses = self.service._trajectory({})
         self.service._reference_pose = dict(poses[0])
         camera_to_scanner = {
             "pi": np.array(
                 [
-                    [0, -1, 0, 80],
+                    [0, 0, -1, 280],
                     [1, 0, 0, -35],
-                    [0, 0, 1, 260],
+                    [0, -1, 0, 80],
                     [0, 0, 0, 1],
                 ],
                 dtype=float,
             ),
             "usb": np.array(
                 [
-                    [1, 0, 0, -60],
-                    [0, 0, -1, 45],
-                    [0, 1, 0, 220],
+                    [0, 0, 1, -260],
+                    [-1, 0, 0, 45],
+                    [0, -1, 0, 70],
                     [0, 0, 0, 1],
                 ],
                 dtype=float,
             ),
         }
+        usb_pnp_adjustment = np.eye(4)
+        if opposed_usb_pnp_frame:
+            usb_pnp_adjustment[:3, :3] = np.diag([-1.0, -1.0, 1.0])
+        rotation_noise_deg = {
+            "pi": [0.7, -0.35, 0.25, -0.7, 0.35, -0.25, 0.0],
+            "usb": [-0.38, 0.75, -0.28, 0.38, -0.75, 0.28, 0.0],
+        }
+        translation_noise_scale = {"pi": 1.045, "usb": 0.24}
+        translation_noise = [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
         views = {"pi": [], "usb": []}
         for name in ("pi", "usb"):
-            for pose in poses:
+            for index, pose in enumerate(poses):
                 scanner_from_board = self.service._board_transform(
                     pose, x_scale=x_scale, y_scale=y_scale
                 )
@@ -863,12 +887,23 @@ class CalibrationServiceTests(unittest.TestCase):
                         0,
                         pose["z"] - poses[0]["z"],
                     ]
+                if live_candidate_split_noise:
+                    scanner_from_camera[:3, :3] = (
+                        self.service._rotation_z(
+                            math.radians(rotation_noise_deg[name][index])
+                        )
+                        @ scanner_from_camera[:3, :3]
+                    )
+                    scanner_from_camera[1, 3] += (
+                        translation_noise_scale[name] * translation_noise[index]
+                    )
                 views[name].append(
                     {
                         "pose": dict(pose),
                         "board_to_camera": (
                             np.linalg.inv(scanner_from_camera) @ scanner_from_board
-                        ),
+                        )
+                        @ (usb_pnp_adjustment if name == "usb" else np.eye(4)),
                     }
                 )
         return views, camera_to_scanner
@@ -913,6 +948,148 @@ class CalibrationServiceTests(unittest.TestCase):
                             expected_cameras[name],
                             atol=1e-5,
                         )
+                        self.assertEqual(
+                            result["quality"]["command_sign_reference_camera"], "pi"
+                        )
+
+    def test_fixed_pi_sign_fit_handles_opposed_usb_candidate_split(self):
+        expected_x = -0.984607
+        expected_y = 0.01065
+        views, expected_cameras = self._synthetic_motion_views(
+            expected_x,
+            expected_y,
+            opposed_usb_pnp_frame=True,
+            live_candidate_split_noise=True,
+        )
+
+        pi_positive = self.service._rotation_fit(
+            {"pi": views["pi"]}, expected_y
+        )
+        pi_negative = self.service._rotation_fit(
+            {"pi": views["pi"]}, -expected_y
+        )
+        usb_positive = self.service._rotation_fit(
+            {"usb": views["usb"]}, expected_y
+        )
+        usb_negative = self.service._rotation_fit(
+            {"usb": views["usb"]}, -expected_y
+        )
+        self.assertGreater(pi_positive["rotation_rms_deg"], 0.4)
+        self.assertLess(pi_positive["rotation_rms_deg"], 0.5)
+        self.assertGreater(pi_negative["rotation_rms_deg"], 24)
+        self.assertLess(pi_negative["rotation_rms_deg"], 27)
+        self.assertGreater(usb_positive["rotation_rms_deg"], 24)
+        self.assertLess(usb_positive["rotation_rms_deg"], 27)
+        self.assertGreater(usb_negative["rotation_rms_deg"], 0.4)
+        self.assertLess(usb_negative["rotation_rms_deg"], 0.55)
+
+        raw_x_candidate = self.service._translation_fit_score(
+            views, x_scale=expected_x, y_scale=expected_y
+        )
+        self.assertGreater(
+            raw_x_candidate["per_camera_translation_rms_mm"]["pi"], 1.8
+        )
+        self.assertLess(
+            raw_x_candidate["per_camera_translation_rms_mm"]["pi"], 2.3
+        )
+        self.assertGreater(
+            raw_x_candidate["per_camera_translation_rms_mm"]["usb"], 120
+        )
+
+        self.service._config["maximum_x_repeatability_mm"] = 3.0
+        model = self.service._estimate_motion_model(views)
+        self.service._motion_model = model
+        self.assertEqual(model["command_sign_reference_camera"], "pi")
+        self.assertAlmostEqual(
+            model["x_mm_per_commanded_mm"], expected_x, delta=0.003
+        )
+        self.assertAlmostEqual(
+            model["y_radians_per_commanded_mm"], expected_y, places=4
+        )
+        self.assertEqual(
+            model["candidate_residuals"]["command_sign_reference_camera"], "pi"
+        )
+
+        for name in ("pi", "usb"):
+            result = self.service._calibrate_camera_extrinsics(
+                name,
+                views[name],
+                {
+                    "quality": {
+                        "accepted": True,
+                        "rms_px": 0.1,
+                        "maximum_rms_px": 1.0,
+                    }
+                },
+                {},
+            )
+            actual = np.asarray(result["camera_to_scanner"])
+            expected = expected_cameras[name]
+            np.testing.assert_allclose(
+                actual[:3, :3], expected[:3, :3], atol=0.01
+            )
+            self.assertLess(
+                float(np.linalg.norm(actual[:3, 3] - expected[:3, 3])), 1.0
+            )
+        self.assertEqual(
+            result["quality"]["pnp_board_frame_adjustment"],
+            "rotate_180_about_board_normal",
+        )
+        self.assertEqual(
+            result["quality"]["calibration_role"],
+            "moving_cross_validation_after_z_correction",
+        )
+
+    def test_ambiguous_usb_board_frame_convention_is_rejected(self):
+        views, _ = self._synthetic_motion_views(-1.0, 0.01)
+        self.service._motion_model = self.service._estimate_motion_model(views)
+        self.service._config["maximum_extrinsic_rms_mm"] = 1000.0
+        self.service._config["maximum_extrinsic_rms_deg"] = 180.0
+        with self.assertRaisesRegex(
+            CalibrationError, "usb PnP board-frame convention is ambiguous"
+        ):
+            self.service._calibrate_camera_extrinsics(
+                "usb",
+                views["usb"],
+                {
+                    "quality": {
+                        "accepted": True,
+                        "rms_px": 0.1,
+                        "maximum_rms_px": 1.0,
+                    }
+                },
+                {},
+            )
+
+    def test_bad_usb_cross_validation_cannot_be_ignored(self):
+        views, _ = self._synthetic_motion_views(
+            -0.984607,
+            0.01065,
+            opposed_usb_pnp_frame=True,
+        )
+        model = self.service._estimate_motion_model(views)
+        self.service._motion_model = model
+        for index, view in enumerate(views["usb"]):
+            view["board_to_camera"][:3, 3] += [
+                15.0 * (-1 if index % 2 else 1),
+                8.0 * (index - 3),
+                0.0,
+            ]
+        with self.assertRaisesRegex(
+            CalibrationError, "usb extrinsic residual too high"
+        ):
+            self.service._calibrate_camera_extrinsics(
+                "usb",
+                views["usb"],
+                {
+                    "quality": {
+                        "accepted": True,
+                        "rms_px": 0.1,
+                        "maximum_rms_px": 1.0,
+                    }
+                },
+                {},
+            )
 
     def test_axis_model_rejects_degenerate_and_wrong_scale_trajectories(self):
         expected_y = 2.0 / 200.0
@@ -921,7 +1098,9 @@ class CalibrationServiceTests(unittest.TestCase):
             reference_rotation = camera_views[0]["board_to_camera"][:3, :3].copy()
             for view in camera_views:
                 view["board_to_camera"][:3, :3] = reference_rotation
-        with self.assertRaisesRegex(CalibrationError, "Y rotation direction is ambiguous"):
+        with self.assertRaisesRegex(
+            CalibrationError, "Y rotation direction from fixed Pi reference camera is ambiguous"
+        ):
             self.service._estimate_motion_model(views)
 
         views, _ = self._synthetic_motion_views(1.0, expected_y * 1.2)

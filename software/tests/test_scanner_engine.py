@@ -1,4 +1,5 @@
 import copy
+import math
 import threading
 import time
 import unittest
@@ -218,6 +219,10 @@ VALID_CALIBRATION = {
         "axis": [0, 0, 1],
         "diameter_mm": 200,
         "mm_per_revolution": np.pi * 200,
+        "command_radians_per_mm": 0.01,
+        "commanded_mm_per_revolution": np.pi * 200,
+        "command_direction": "positive",
+        "reference_pose_mm": {"x": 0, "y": 0, "z": 0},
         "source": "measured_diameter",
         "quality": {"accepted": True},
     },
@@ -234,6 +239,8 @@ VALID_CALIBRATION = {
     "x_scale_validation": {
         "accepted": True,
         "measured_mm_per_commanded_mm": 1.0,
+        "signed_mm_per_commanded_mm": 1.0,
+        "command_direction": "positive",
         "repeatability_rms_mm": 0.1,
         "maximum_repeatability_mm": 3.0,
         "motor_rotation_distance_changed": False,
@@ -424,6 +431,26 @@ class RealScanSessionTests(unittest.TestCase):
 
         self.assertFalse(any(call[0] in {"home", "move"} for call in self.motor.calls))
 
+    def test_x_hard_maximum_cannot_be_raised_above_195(self):
+        config = {
+            **SAFE_CONFIG,
+            "axis_limits_mm": {
+                **SAFE_CONFIG["axis_limits_mm"],
+                "x": {"min": 0, "max": 196},
+            },
+        }
+        session = self.make_session(config=config)
+        self.motor.limits = (0.0, 196.0)
+
+        readiness = session.readiness()
+
+        self.assertFalse(readiness["ready"])
+        self.assertTrue(
+            any("maximum must not exceed 195 mm" in item for item in readiness["blockers"])
+        )
+        with self.assertRaisesRegex(RuntimeError, "outside configured limits"):
+            session._require_target_in_limits("x", 195.5)
+
     def test_x_center_failure_stops_and_invalidates_position(self):
         session = self.make_session()
         self.motor.move_motor_to = lambda axis, target: False
@@ -586,6 +613,116 @@ class RealScanSessionTests(unittest.TestCase):
         )
 
         np.testing.assert_allclose(session._data.points[-1], [0.0, 0.0, 98.0])
+
+    def test_turntable_normalization_has_no_x_pivot_warp_for_both_x_signs(self):
+        local_point = np.array([22.0, 7.0, 11.0])
+        angle = 0.1
+        rotation = np.array(
+            [
+                [math.cos(angle), -math.sin(angle), 0.0],
+                [math.sin(angle), math.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        for signed_scale in (-1.0, 1.0):
+            for commanded_x in (195.0, 97.5):
+                with self.subTest(
+                    signed_scale=signed_scale, commanded_x=commanded_x
+                ):
+                    calibration = copy.deepcopy(VALID_CALIBRATION)
+                    calibration["turntable"]["reference_pose_mm"]["x"] = 195.0
+                    calibration["x_scale_validation"].update(
+                        signed_mm_per_commanded_mm=signed_scale,
+                        command_direction=(
+                            "positive" if signed_scale > 0 else "negative"
+                        ),
+                    )
+                    session = self.make_session(calibration=calibration)
+                    center = np.array(
+                        [signed_scale * (commanded_x - 195.0), 0.0, 0.0]
+                    )
+                    session._axis_position.update(
+                        {"x": commanded_x, "y": 10.0, "z": 0.0}
+                    )
+                    observed = center + rotation @ local_point
+                    normalized = session._normalize_turntable_point(
+                        observed,
+                        {"x": commanded_x, "y": 0.0, "z": 0.0},
+                    )
+                    np.testing.assert_allclose(
+                        normalized, center + local_point, atol=1e-10
+                    )
+
+    def test_turntable_normalization_maps_per_frame_x_to_scan_origin_center(self):
+        calibration = copy.deepcopy(VALID_CALIBRATION)
+        calibration["turntable"]["reference_pose_mm"]["x"] = 195.0
+        local_point = np.array([15.0, -4.0, 8.0])
+        angle = 0.1
+        rotation = np.array(
+            [
+                [math.cos(angle), -math.sin(angle), 0.0],
+                [math.sin(angle), math.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        for signed_scale in (-1.0, 1.0):
+            with self.subTest(signed_scale=signed_scale):
+                calibration["x_scale_validation"].update(
+                    signed_mm_per_commanded_mm=signed_scale,
+                    command_direction=(
+                        "positive" if signed_scale > 0 else "negative"
+                    ),
+                )
+                session = self.make_session(calibration=copy.deepcopy(calibration))
+                origin_x, current_x = 97.5, 110.0
+                origin_center = np.array(
+                    [signed_scale * (origin_x - 195.0), 0.0, 0.0]
+                )
+                current_center = np.array(
+                    [signed_scale * (current_x - 195.0), 0.0, 0.0]
+                )
+                session._axis_position.update(
+                    {"x": current_x, "y": 10.0, "z": 0.0}
+                )
+                observed = current_center + rotation @ local_point
+                normalized = session._normalize_turntable_point(
+                    observed,
+                    {"x": origin_x, "y": 0.0, "z": 0.0},
+                )
+                np.testing.assert_allclose(
+                    normalized, origin_center + local_point, atol=1e-10
+                )
+
+    def test_missing_or_inconsistent_turntable_x_model_is_rejected(self):
+        cases = []
+        missing_reference = copy.deepcopy(VALID_CALIBRATION)
+        missing_reference["turntable"].pop("reference_pose_mm")
+        cases.append(missing_reference)
+        inconsistent_scale = copy.deepcopy(VALID_CALIBRATION)
+        inconsistent_scale["x_scale_validation"]["signed_mm_per_commanded_mm"] = -1.0
+        cases.append(inconsistent_scale)
+        inconsistent_magnitude = copy.deepcopy(VALID_CALIBRATION)
+        inconsistent_magnitude["x_scale_validation"][
+            "signed_mm_per_commanded_mm"
+        ] = 0.9
+        cases.append(inconsistent_magnitude)
+
+        for calibration in cases:
+            with self.subTest(calibration=calibration):
+                session = self.make_session(calibration=calibration)
+                blockers = session.readiness()["blockers"]
+                self.assertTrue(
+                    any(
+                        "reference_pose_mm" in blocker
+                        or "X scale validation" in blocker
+                        for blocker in blockers
+                    ),
+                    blockers,
+                )
+                with self.assertRaisesRegex(
+                    RuntimeError, "Turntable .*model|reference_pose_mm"
+                ):
+                    session._turntable_center_at_x(5.0)
 
     def test_fixed_pi_camera_is_not_translated_or_given_reference_blocker(self):
         session = self.make_session(saved_pose={"x": 0.0, "y": 0.0, "z": 7.0})

@@ -41,6 +41,11 @@ BOARD_COLUMNS = 11
 BOARD_ROWS = 6
 BOARD_SQUARE_MM = 13.0
 CALIBRATION_MAX_X_MM = 195.0
+CALIBRATION_MAX_Z_MM = 40.0
+BOARD_TO_SCANNER_AT_REFERENCE = np.array(
+    [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+    dtype=float,
+)
 
 
 def checkerboard_points(
@@ -59,45 +64,164 @@ def checkerboard_points(
     return points
 
 
-def validate_view_diversity(
+def _convex_hull_area(points: np.ndarray) -> float:
+    unique = sorted({(float(point[0]), float(point[1])) for point in points})
+    if len(unique) < 3:
+        return 0.0
+
+    def cross(origin: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+        return (a[0] - origin[0]) * (b[1] - origin[1]) - (
+            a[1] - origin[1]
+        ) * (b[0] - origin[0])
+
+    lower: list[tuple[float, float]] = []
+    for point in unique:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 0:
+            lower.pop()
+        lower.append(point)
+    upper: list[tuple[float, float]] = []
+    for point in reversed(unique):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 0:
+            upper.pop()
+        upper.append(point)
+    hull = lower[:-1] + upper[:-1]
+    return 0.5 * abs(
+        sum(
+            hull[index][0] * hull[(index + 1) % len(hull)][1]
+            - hull[(index + 1) % len(hull)][0] * hull[index][1]
+            for index in range(len(hull))
+        )
+    )
+
+
+def checkerboard_view_metrics(
     views: list[Mapping[str, Any]],
     *,
-    minimum_views: int,
-    minimum_center_span: float = 0.04,
-    minimum_scale_span: float = 0.04,
-    minimum_angle_span_deg: float = 5.0,
-) -> dict[str, float]:
-    """Reject repeated near-identical views before invoking OpenCV."""
-    if len(views) < minimum_views:
-        raise CalibrationError(f"insufficient accepted views: {len(views)} < {minimum_views}")
+    duplicate_corner_rms: float = 0.002,
+    board_columns: int = BOARD_COLUMNS,
+) -> dict[str, Any]:
+    """Measure checkerboard motion without assuming its center must translate."""
+    normalized_views: list[np.ndarray] = []
     centers: list[np.ndarray] = []
-    scales: list[float] = []
+    board_scales: list[float] = []
     angles: list[float] = []
     for view in views:
         corners = np.asarray(view["corners"], dtype=float).reshape(-1, 2)
         width, height = view["image_size"]
-        if corners.shape[0] < 4 or width <= 0 or height <= 0:
+        if (
+            corners.shape[0] < board_columns
+            or width <= 0
+            or height <= 0
+            or not np.isfinite(corners).all()
+        ):
             raise CalibrationError("invalid checkerboard view")
-        centers.append(corners.mean(axis=0) / np.array([width, height]))
-        span = np.ptp(corners, axis=0)
-        scales.append(float(span[0] * span[1] / (width * height)))
-        vector = corners[-1] - corners[0]
+        normalized = corners / np.array([width, height], dtype=float)
+        normalized_views.append(normalized)
+        centers.append(normalized.mean(axis=0))
+        board_scales.append(math.sqrt(max(_convex_hull_area(normalized), 0.0)))
+        vector = normalized[board_columns - 1] - normalized[0]
         angles.append(math.degrees(math.atan2(float(vector[1]), float(vector[0]))))
-    center_array = np.asarray(centers)
-    center_span = float(max(np.ptp(center_array[:, 0]), np.ptp(center_array[:, 1])))
-    scale_span = float(np.ptp(scales))
-    angle_span = float(np.ptp(angles))
-    if center_span < minimum_center_span:
-        raise CalibrationError("insufficient checkerboard position diversity")
-    if scale_span < minimum_scale_span:
-        raise CalibrationError("insufficient checkerboard distance/scale diversity")
-    if angle_span < minimum_angle_span_deg:
-        raise CalibrationError("insufficient checkerboard angle diversity")
+
+    pairwise_motion: list[float] = []
+    pairwise_shape_motion: list[float] = []
+    unique: list[np.ndarray] = []
+    for normalized in normalized_views:
+        if not unique or all(
+            float(np.sqrt(np.mean(np.sum((normalized - prior) ** 2, axis=1))))
+            >= duplicate_corner_rms
+            for prior in unique
+        ):
+            unique.append(normalized)
+    for first in range(len(normalized_views)):
+        for second in range(first + 1, len(normalized_views)):
+            left, right = normalized_views[first], normalized_views[second]
+            pairwise_motion.append(
+                float(np.sqrt(np.mean(np.sum((left - right) ** 2, axis=1))))
+            )
+            left_shape = left - left.mean(axis=0)
+            right_shape = right - right.mean(axis=0)
+            pairwise_shape_motion.append(
+                float(np.sqrt(np.mean(np.sum((left_shape - right_shape) ** 2, axis=1))))
+            )
+
+    center_array = np.asarray(centers, dtype=float)
+    unwrapped_angles = np.degrees(np.unwrap(np.radians(angles)))
+    scale_median = float(np.median(board_scales)) if board_scales else 0.0
+    corner_tracks = (
+        np.stack(normalized_views, axis=0).transpose(1, 0, 2)
+        if normalized_views
+        else np.empty((0, 0, 2))
+    )
+    track_hulls = [_convex_hull_area(track) for track in corner_tracks]
     return {
-        "center_span": center_span,
-        "scale_span": scale_span,
-        "angle_span_deg": angle_span,
+        "views": len(views),
+        "unique_views": len(unique),
+        "duplicate_corner_rms_threshold": duplicate_corner_rms,
+        "center_span": (
+            float(max(np.ptp(center_array[:, 0]), np.ptp(center_array[:, 1])))
+            if len(center_array)
+            else 0.0
+        ),
+        "corresponding_corner_motion_rms": max(pairwise_motion, default=0.0),
+        "centered_corner_shape_motion_rms": max(pairwise_shape_motion, default=0.0),
+        "relative_scale_span": (
+            float(np.ptp(board_scales)) / scale_median if scale_median > 1e-12 else 0.0
+        ),
+        "angle_span_deg": (
+            float(np.ptp(unwrapped_angles)) if len(unwrapped_angles) else 0.0
+        ),
+        "median_corner_track_hull": float(np.median(track_hulls)) if track_hulls else 0.0,
+        "maximum_corner_track_hull": max(track_hulls, default=0.0),
     }
+
+
+def validate_view_diversity(
+    views: list[Mapping[str, Any]],
+    *,
+    minimum_views: int,
+    minimum_corner_motion: float = 0.01,
+    minimum_shape_motion: float = 0.004,
+    minimum_relative_scale_span: float = 0.01,
+    minimum_angle_span_deg: float = 2.0,
+    duplicate_corner_rms: float = 0.002,
+) -> dict[str, Any]:
+    """Reject repeated or geometrically degenerate views before OpenCV calibration."""
+    if len(views) < minimum_views:
+        raise CalibrationError(f"insufficient accepted views: {len(views)} < {minimum_views}")
+    metrics = checkerboard_view_metrics(
+        views, duplicate_corner_rms=duplicate_corner_rms
+    )
+    thresholds = {
+        "minimum_unique_views": minimum_views,
+        "minimum_corner_motion": minimum_corner_motion,
+        "minimum_shape_motion": minimum_shape_motion,
+        "minimum_relative_scale_span": minimum_relative_scale_span,
+        "minimum_angle_span_deg": minimum_angle_span_deg,
+    }
+    failures = []
+    if metrics["unique_views"] < minimum_views:
+        failures.append("repeated near-identical checkerboard views")
+    if metrics["corresponding_corner_motion_rms"] < minimum_corner_motion:
+        failures.append("insufficient corresponding-corner motion")
+    if (
+        metrics["centered_corner_shape_motion_rms"] < minimum_shape_motion
+        and metrics["relative_scale_span"] < minimum_relative_scale_span
+        and metrics["angle_span_deg"] < minimum_angle_span_deg
+    ):
+        failures.append("insufficient checkerboard shape/scale/orientation diversity")
+    metrics["thresholds"] = thresholds
+    if failures:
+        summary = ", ".join(
+            f"{key}={value:.5g}" if isinstance(value, float) else f"{key}={value}"
+            for key, value in metrics.items()
+            if key != "thresholds"
+        )
+        limits = ", ".join(f"{key}={value:g}" for key, value in thresholds.items())
+        raise CalibrationError(
+            f"{'; '.join(failures)}; diversity metrics [{summary}]; "
+            f"thresholds [{limits}]"
+        )
+    return metrics
 
 
 def fit_plane_robust(points: Any, *, minimum_points: int = 20) -> tuple[np.ndarray, float, dict]:
@@ -284,6 +408,31 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
         raise CalibrationError("turntable circumference source is not recorded")
     if not turntable.get("quality", {}).get("accepted"):
         raise CalibrationError("turntable quality is not accepted")
+    command_scale = float(turntable.get("command_radians_per_mm", math.nan))
+    commanded_revolution = float(
+        turntable.get("commanded_mm_per_revolution", math.nan)
+    )
+    if (
+        not math.isfinite(command_scale)
+        or abs(command_scale) <= 1e-12
+        or not math.isfinite(commanded_revolution)
+        or commanded_revolution <= 0
+        or not math.isclose(
+            commanded_revolution,
+            2.0 * math.pi / abs(command_scale),
+            rel_tol=1e-8,
+            abs_tol=1e-6,
+        )
+        or turntable.get("command_direction")
+        != ("positive" if command_scale > 0 else "negative")
+    ):
+        raise CalibrationError("turntable signed command scale is invalid")
+    reference_pose = turntable.get("reference_pose_mm", {})
+    if not isinstance(reference_pose, Mapping) or not all(
+        math.isfinite(float(reference_pose.get(axis, math.nan)))
+        for axis in ("x", "y", "z")
+    ):
+        raise CalibrationError("turntable reference_pose_mm is invalid")
 
     lidar = calibration.get("lidar", {})
     transform = matrix(lidar.get("lidar_to_scanner"), (4, 4), "TF-Luna lidar_to_scanner")
@@ -322,6 +471,7 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
 
     x_scale = calibration.get("x_scale_validation", {})
     measured = float(x_scale.get("measured_mm_per_commanded_mm", math.nan))
+    signed = float(x_scale.get("signed_mm_per_commanded_mm", math.nan))
     expected = float(x_scale.get("expected_mm_per_commanded_mm", math.nan))
     tolerance = float(x_scale.get("tolerance_fraction", math.nan))
     repeatability = float(x_scale.get("repeatability_rms_mm", math.inf))
@@ -332,10 +482,14 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
             math.isfinite(value)
             for value in (measured, expected, tolerance, repeatability, maximum_repeatability)
         )
+        or not math.isfinite(signed)
         or expected <= 0
         or tolerance < 0
         or maximum_repeatability <= 0
         or abs(measured - expected) > tolerance * expected
+        or not math.isclose(abs(signed), measured, rel_tol=1e-8, abs_tol=1e-8)
+        or x_scale.get("command_direction")
+        != ("positive" if signed > 0 else "negative")
         or repeatability > maximum_repeatability
         or x_scale.get("motor_rotation_distance_changed") is not False
     ):
@@ -459,8 +613,13 @@ class GeometricCalibrationService:
         self._status = self._new_status()
         self._report: dict[str, Any] = {}
         self._reference_pose = dict(
-            self._config.get("starting_pose_mm", {"x": 195, "y": 0, "z": 10})
+            self._config.get("starting_pose_mm", {"x": 195, "y": 0, "z": 20})
         )
+        circumference = math.pi * float(self._config.get("turntable_diameter_mm", 200))
+        self._motion_model = {
+            "x_mm_per_commanded_mm": 1.0,
+            "y_radians_per_commanded_mm": 2.0 * math.pi / circumference,
+        }
 
     def _new_status(self) -> dict[str, Any]:
         return {
@@ -476,6 +635,9 @@ class GeometricCalibrationService:
             "starting_pose_validated": None,
             "last_checkerboard_rejection": {"pi": None, "usb": None},
             "lidar_output_suspended": False,
+            "view_diversity": {},
+            "pnp_views": {"pi": [], "usb": []},
+            "axis_model_candidates": {},
         }
 
     def status(self) -> dict:
@@ -696,7 +858,7 @@ class GeometricCalibrationService:
             views = self._capture_checkerboard_views(poses)
             calibration = self._solve_cameras(views, options)
             calibration["checkerboard"] = self._board_contract()
-            calibration["x_scale_validation"] = self._validate_x_scale(views["pi"], calibration)
+            calibration["x_scale_validation"] = self._validate_x_scale()
             calibration["turntable"] = self._turntable_calibration()
             calibration["laser_planes"] = self._calibrate_lasers(poses, calibration)
             calibration["lidar"] = self._calibrate_lidar(poses, calibration, options["lidar"])
@@ -709,6 +871,14 @@ class GeometricCalibrationService:
                 "starting_pose": poses[0],
                 "calibration": calibration,
                 "metrics": copy.deepcopy(self._status["metrics"]),
+                "diagnostics": {
+                    key: copy.deepcopy(self._status[key])
+                    for key in (
+                        "view_diversity",
+                        "pnp_views",
+                        "axis_model_candidates",
+                    )
+                },
             }
             self._set_phase("persisting", "Writing atomic configuration and backup", 97)
             self._store.save(calibration, report)
@@ -720,8 +890,10 @@ class GeometricCalibrationService:
             self._set_phase("complete", "Calibration saved", 100)
         except CalibrationCancelled:
             self._set_error("cancelled", "Calibration cancelled")
+            self._report = self._failure_report("Calibration cancelled")
         except Exception as exc:
             self._set_error("error", str(exc))
+            self._report = self._failure_report(str(exc))
         finally:
             self._safe_outputs()
             with self._lock:
@@ -729,18 +901,39 @@ class GeometricCalibrationService:
                 self._status["active"] = False
             self._reservation.release()
 
+    def _failure_report(self, error: str) -> dict:
+        with self._lock:
+            return {
+                "schema_version": 1,
+                "accepted": False,
+                "created_at_utc": time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                ),
+                "error": error,
+                "reference_pose_mm": copy.deepcopy(self._reference_pose),
+                "metrics": copy.deepcopy(self._status["metrics"]),
+                "diagnostics": {
+                    key: copy.deepcopy(self._status[key])
+                    for key in (
+                        "view_diversity",
+                        "pnp_views",
+                        "axis_model_candidates",
+                    )
+                },
+            }
+
     def _trajectory(self, options: Mapping[str, Any]) -> list[dict[str, float]]:
         configured_start = self._starting_pose(options)
         offsets = self._config.get("pose_offsets_mm", [])
         if not offsets:
             offsets = [
                 {"x": 0, "y": 0, "z": 0},
-                {"x": -10, "y": 10.4719755, "z": 0},
-                {"x": -20, "y": 20.943951, "z": 5},
-                {"x": -10, "y": 31.4159265, "z": 5},
-                {"x": 0, "y": 41.887902, "z": 0},
-                {"x": -20, "y": 52.3598776, "z": 0},
-                {"x": -10, "y": 62.8318531, "z": 5},
+                {"x": -10, "y": 10.4719755, "z": 10},
+                {"x": -20, "y": 20.9439510, "z": 20},
+                {"x": -30, "y": 31.4159265, "z": 0},
+                {"x": 0, "y": 41.8879020, "z": 20},
+                {"x": -30, "y": 52.3598776, "z": 10},
+                {"x": -15, "y": 62.8318531, "z": 20},
             ]
         limits = self._config.get("axis_limits_mm", {})
         poses: list[dict[str, float]] = []
@@ -756,6 +949,8 @@ class GeometricCalibrationService:
                 )
                 if axis == "x":
                     high = min(high, CALIBRATION_MAX_X_MM)
+                if axis == "z":
+                    high = min(high, CALIBRATION_MAX_Z_MM)
                 if not all(math.isfinite(value) for value in (target, low, high)) or not low <= target <= high:
                     raise CalibrationError(
                         f"calibration pose {axis.upper()}={target:.3f} is outside "
@@ -765,10 +960,27 @@ class GeometricCalibrationService:
         minimum_views = int(self._config.get("minimum_views", 6))
         if len(poses) < minimum_views:
             raise CalibrationError("configured calibration trajectory has insufficient poses")
+        unique_x = np.unique(np.round([pose["x"] for pose in poses], 4))
+        unique_y = np.unique(np.round([pose["y"] for pose in poses], 4))
+        unique_z = np.unique(np.round([pose["z"] for pose in poses], 4))
+        expected_y_scale = 2.0 / float(self._config.get("turntable_diameter_mm", 200))
+        y_span_deg = math.degrees(float(np.ptp(unique_y)) * expected_y_scale)
+        if len(unique_x) < 3 or float(np.ptp(unique_x)) < 20:
+            raise CalibrationError(
+                "calibration trajectory must contain at least three X positions spanning 20mm"
+            )
+        if len(unique_y) < 4 or y_span_deg < 30:
+            raise CalibrationError(
+                "calibration trajectory must contain at least four Y positions spanning 30deg"
+            )
+        if len(unique_z) < 3 or float(np.ptp(unique_z)) < 20:
+            raise CalibrationError(
+                "calibration trajectory must contain at least three Z positions spanning 20mm"
+            )
         return poses
 
     def _starting_pose(self, options: Mapping[str, Any]) -> dict[str, float]:
-        start = dict(self._config.get("starting_pose_mm", {"x": 195, "y": 0, "z": 10}))
+        start = dict(self._config.get("starting_pose_mm", {"x": 195, "y": 0, "z": 20}))
         start.update(options.get("starting_pose_mm", {}))
         try:
             return {axis: float(start[axis]) for axis in ("x", "y", "z")}
@@ -879,13 +1091,53 @@ class GeometricCalibrationService:
         self._check_cancelled()
         minimum = int(self._config.get("minimum_views", 6))
         for name in ("pi", "usb"):
-            validate_view_diversity(
-                views[name],
-                minimum_views=minimum,
-                minimum_center_span=float(self._config.get("minimum_center_span", 0.025)),
-                minimum_scale_span=float(self._config.get("minimum_scale_span", 0.01)),
-                minimum_angle_span_deg=float(self._config.get("minimum_angle_span_deg", 4.0)),
-            )
+            try:
+                metrics = validate_view_diversity(
+                    views[name],
+                    minimum_views=minimum,
+                    minimum_corner_motion=float(
+                        self._config.get("minimum_corner_motion", 0.01)
+                    ),
+                    minimum_shape_motion=float(
+                        self._config.get("minimum_shape_motion", 0.004)
+                    ),
+                    minimum_relative_scale_span=float(
+                        self._config.get("minimum_relative_scale_span", 0.01)
+                    ),
+                    minimum_angle_span_deg=float(
+                        self._config.get("minimum_angle_span_deg", 2.0)
+                    ),
+                    duplicate_corner_rms=float(
+                        self._config.get("duplicate_corner_rms", 0.002)
+                    ),
+                )
+            except CalibrationError:
+                metrics = checkerboard_view_metrics(
+                    views[name],
+                    duplicate_corner_rms=float(
+                        self._config.get("duplicate_corner_rms", 0.002)
+                    ),
+                )
+                metrics["thresholds"] = {
+                    "minimum_unique_views": minimum,
+                    "minimum_corner_motion": float(
+                        self._config.get("minimum_corner_motion", 0.01)
+                    ),
+                    "minimum_shape_motion": float(
+                        self._config.get("minimum_shape_motion", 0.004)
+                    ),
+                    "minimum_relative_scale_span": float(
+                        self._config.get("minimum_relative_scale_span", 0.01)
+                    ),
+                    "minimum_angle_span_deg": float(
+                        self._config.get("minimum_angle_span_deg", 2.0)
+                    ),
+                }
+                with self._lock:
+                    self._status["view_diversity"][name] = metrics
+                raise
+            with self._lock:
+                self._status["view_diversity"][name] = metrics
         return views
 
     def _capture_checkerboard_candidate(
@@ -1038,19 +1290,21 @@ class GeometricCalibrationService:
         self._set_phase("intrinsics", "Solving camera intrinsics and distortion", 40)
         for name in ("pi", "usb"):
             camera = self._calibrate_camera_intrinsics(views[name])
+            self._solve_pnp_views(name, views[name], camera)
+            calibration["cameras"][name] = camera
+        self._motion_model = self._estimate_motion_model(views)
+        with self._lock:
+            self._status["metrics"]["axis_model"] = copy.deepcopy(self._motion_model)
+        for name in ("pi", "usb"):
+            camera = calibration["cameras"][name]
             self._set_phase("extrinsics", f"Solving {name} camera scanner transform", 50)
             camera.update(self._calibrate_camera_extrinsics(name, views[name], camera, options))
             if name == "usb":
                 camera.update(
                     carriage_axis="z",
                     carriage_direction=[0.0, 0.0, 1.0],
-                    reference_axis_position_mm=float(
-                        options.get("starting_pose_mm", {}).get(
-                            "z", self._config.get("starting_pose_mm", {}).get("z", 10)
-                        )
-                    ),
+                    reference_axis_position_mm=float(self._reference_pose["z"]),
                 )
-            calibration["cameras"][name] = camera
             with self._lock:
                 self._status["metrics"][name] = copy.deepcopy(camera["quality"])
         return calibration
@@ -1102,13 +1356,12 @@ class GeometricCalibrationService:
             "quality": quality,
         }
 
-    def _calibrate_camera_extrinsics(
+    def _solve_pnp_views(
         self,
         name: str,
         views: list[dict],
         camera: Mapping[str, Any],
-        options: Mapping[str, Any],
-    ) -> dict:
+    ) -> None:
         intrinsic = np.asarray(camera["intrinsic_matrix"], dtype=float)
         distortion = np.asarray(camera["distortion_coefficients"], dtype=float)
         board_points = checkerboard_points(
@@ -1116,8 +1369,9 @@ class GeometricCalibrationService:
             int(self._config.get("board_rows", BOARD_ROWS)),
             float(self._config.get("square_size_mm", BOARD_SQUARE_MM)),
         )
-        candidates = []
-        for view in views:
+        diagnostics = []
+        valid = 0
+        for index, view in enumerate(views):
             ok, rvec, tvec = self._cv.solvePnP(
                 board_points,
                 view["corners"].reshape(-1, 1, 2),
@@ -1125,30 +1379,458 @@ class GeometricCalibrationService:
                 distortion,
             )
             if not ok:
+                diagnostics.append(
+                    {"view": index + 1, "pose": dict(view["pose"]), "pnp_valid": False}
+                )
                 continue
             rotation, _ = self._cv.Rodrigues(rvec)
             board_to_camera = np.eye(4)
             board_to_camera[:3, :3] = rotation
-            board_to_camera[:3, 3] = np.asarray(tvec).reshape(3)
-            scanner_from_board = self._board_to_scanner(view["pose"])
-            candidate = scanner_from_board @ np.linalg.inv(board_to_camera)
-            if name == "usb":
-                reference_z = float(
-                    options.get("starting_pose_mm", {}).get(
-                        "z", self._config.get("starting_pose_mm", {}).get("z", 10)
-                    )
+            board_to_camera[:3, 3] = np.asarray(tvec, dtype=float).reshape(3)
+            view["rvec"], view["tvec"] = rvec, tvec
+            view["board_to_camera"] = board_to_camera
+            diagnostics.append(
+                {
+                    "view": index + 1,
+                    "pose": dict(view["pose"]),
+                    "pnp_valid": True,
+                    "board_center_camera_mm": np.round(
+                        board_to_camera[:3, 3], 4
+                    ).tolist(),
+                    "rotation_vector_deg": np.round(
+                        np.degrees(np.asarray(rvec, dtype=float).reshape(3)), 4
+                    ).tolist(),
+                }
+            )
+            valid += 1
+        with self._lock:
+            self._status["pnp_views"][name] = diagnostics
+        minimum = int(self._config.get("minimum_views", 6))
+        if valid < minimum:
+            raise CalibrationError(
+                f"{name} extrinsics have insufficient valid PnP views: {valid} < {minimum}"
+            )
+
+    @staticmethod
+    def _rotation_z(angle: float) -> np.ndarray:
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        return np.array(
+            [[cos_a, -sin_a, 0.0], [sin_a, cos_a, 0.0], [0.0, 0.0, 1.0]],
+            dtype=float,
+        )
+
+    @staticmethod
+    def _rotation_residual_deg(reference: np.ndarray, observed: np.ndarray) -> float:
+        cosine = np.clip((np.trace(reference.T @ observed) - 1.0) / 2.0, -1.0, 1.0)
+        return math.degrees(math.acos(float(cosine)))
+
+    @staticmethod
+    def _robust_rms(
+        residuals: list[float],
+        *,
+        minimum_cutoff: float,
+    ) -> tuple[float, np.ndarray, float]:
+        values = np.asarray(residuals, dtype=float)
+        median = float(np.median(values))
+        mad = float(np.median(np.abs(values - median)))
+        cutoff = max(minimum_cutoff, median + 3.5 * 1.4826 * mad)
+        mask = values <= cutoff
+        if not bool(mask.any()):
+            return math.inf, mask, cutoff
+        return float(np.sqrt(np.mean(values[mask] ** 2))), mask, cutoff
+
+    def _rotation_fit(self, views: Mapping[str, list[dict]], y_scale: float) -> dict:
+        residuals: list[float] = []
+        per_camera: dict[str, float] = {}
+        for name, camera_views in views.items():
+            rotations = []
+            for view in camera_views:
+                board_to_camera = view.get("board_to_camera")
+                if board_to_camera is None:
+                    continue
+                angle = y_scale * (
+                    float(view["pose"]["y"]) - float(self._reference_pose["y"])
                 )
+                rotations.append(
+                    self._rotation_z(angle)
+                    @ BOARD_TO_SCANNER_AT_REFERENCE
+                    @ np.asarray(board_to_camera, dtype=float)[:3, :3].T
+                )
+            transforms = []
+            for rotation in rotations:
+                transform = np.eye(4)
+                transform[:3, :3] = rotation
+                transforms.append(transform)
+            average, _, _, robust_details = self._robust_average_transforms(
+                transforms
+            )
+            camera_residuals = [
+                self._rotation_residual_deg(average[:3, :3], rotation)
+                for rotation in rotations
+            ]
+            camera_inliers = np.asarray(
+                [detail["inlier"] for detail in robust_details], dtype=bool
+            )
+            camera_rms = float(
+                np.sqrt(
+                    np.mean(np.square(np.asarray(camera_residuals)[camera_inliers]))
+                )
+            )
+            per_camera[name] = camera_rms
+            residuals.extend(
+                residual
+                for residual, keep in zip(camera_residuals, camera_inliers)
+                if keep
+            )
+        rms, mask, cutoff = self._robust_rms(residuals, minimum_cutoff=0.05)
+        return {
+            "signed_radians_per_commanded_mm": float(y_scale),
+            "rotation_rms_deg": rms,
+            "per_camera_rotation_rms_deg": per_camera,
+            "inliers": int(mask.sum()),
+            "samples": len(residuals),
+            "outlier_cutoff_deg": cutoff,
+        }
+
+    def _best_y_candidate(
+        self,
+        views: Mapping[str, list[dict]],
+        sign: float,
+        expected_scale: float,
+        tolerance: float,
+    ) -> dict:
+        low = sign * expected_scale * (1.0 - tolerance)
+        high = sign * expected_scale * (1.0 + tolerance)
+        low, high = min(low, high), max(low, high)
+        best: dict | None = None
+        for _ in range(3):
+            scales = np.linspace(low, high, 121)
+            candidates = [self._rotation_fit(views, float(scale)) for scale in scales]
+            index = min(
+                range(len(candidates)),
+                key=lambda item: candidates[item]["rotation_rms_deg"],
+            )
+            best = candidates[index]
+            step = float(scales[1] - scales[0])
+            previous_low, previous_high = low, high
+            low = max(previous_low, float(scales[index]) - step)
+            high = min(previous_high, float(scales[index]) + step)
+        assert best is not None
+        return best
+
+    def _board_transform(
+        self,
+        pose: Mapping[str, float],
+        *,
+        x_scale: float,
+        y_scale: float,
+    ) -> np.ndarray:
+        angle = y_scale * (
+            float(pose["y"]) - float(self._reference_pose["y"])
+        )
+        transform = np.eye(4)
+        transform[:3, :3] = (
+            self._rotation_z(angle) @ BOARD_TO_SCANNER_AT_REFERENCE
+        )
+        transform[:3, 3] = [
+            x_scale * (float(pose["x"]) - float(self._reference_pose["x"])),
+            0.0,
+            0.0,
+        ]
+        return transform
+
+    def _reference_camera_candidates(
+        self,
+        views: Mapping[str, list[dict]],
+        *,
+        x_scale: float,
+        y_scale: float,
+    ) -> dict[str, list[np.ndarray]]:
+        result: dict[str, list[np.ndarray]] = {}
+        for name, camera_views in views.items():
+            candidates = []
+            for view in camera_views:
+                board_to_camera = view.get("board_to_camera")
+                if board_to_camera is None:
+                    continue
+                candidate = self._board_transform(
+                    view["pose"], x_scale=x_scale, y_scale=y_scale
+                ) @ np.linalg.inv(np.asarray(board_to_camera, dtype=float))
+                if name == "usb":
+                    candidate[:3, 3] -= np.array(
+                        [
+                            0.0,
+                            0.0,
+                            float(view["pose"]["z"])
+                            - float(self._reference_pose["z"]),
+                        ]
+                    )
+                candidates.append(candidate)
+            result[name] = candidates
+        return result
+
+    def _translation_fit_score(
+        self,
+        views: Mapping[str, list[dict]],
+        *,
+        x_scale: float,
+        y_scale: float,
+    ) -> dict:
+        by_camera = self._reference_camera_candidates(
+            views, x_scale=x_scale, y_scale=y_scale
+        )
+        residuals: list[float] = []
+        per_camera: dict[str, float] = {}
+        for name, candidates in by_camera.items():
+            translations = np.asarray([candidate[:3, 3] for candidate in candidates])
+            center = np.median(translations, axis=0)
+            camera_residuals = np.linalg.norm(translations - center, axis=1).tolist()
+            camera_rms, _, _ = self._robust_rms(
+                camera_residuals, minimum_cutoff=0.1
+            )
+            per_camera[name] = camera_rms
+            residuals.extend(camera_residuals)
+        rms, mask, cutoff = self._robust_rms(residuals, minimum_cutoff=0.1)
+        return {
+            "signed_mm_per_commanded_mm": float(x_scale),
+            "translation_rms_mm": rms,
+            "per_camera_translation_rms_mm": per_camera,
+            "inliers": int(mask.sum()),
+            "samples": len(residuals),
+            "outlier_cutoff_mm": cutoff,
+        }
+
+    def _fit_x_scale(
+        self,
+        views: Mapping[str, list[dict]],
+        *,
+        y_scale: float,
+    ) -> tuple[float, dict[str, dict]]:
+        zero_candidates = self._reference_camera_candidates(
+            views, x_scale=0.0, y_scale=y_scale
+        )
+        centered_x: list[float] = []
+        pairwise_slopes: list[float] = []
+        for name, camera_views in views.items():
+            valid_views = [
+                view for view in camera_views if view.get("board_to_camera") is not None
+            ]
+            commanded = np.asarray(
+                [
+                    float(view["pose"]["x"]) - float(self._reference_pose["x"])
+                    for view in valid_views
+                ],
+                dtype=float,
+            )
+            candidate_x = np.asarray(
+                [candidate[:3, 3][0] for candidate in zero_candidates[name]],
+                dtype=float,
+            )
+            centered_x.extend((commanded - commanded.mean()).tolist())
+            for first in range(len(commanded)):
+                for second in range(first + 1, len(commanded)):
+                    delta = commanded[second] - commanded[first]
+                    if abs(float(delta)) > 1e-9:
+                        pairwise_slopes.append(
+                            float(
+                                (candidate_x[second] - candidate_x[first]) / delta
+                            )
+                        )
+        x_values = np.asarray(centered_x)
+        denominator = float(np.dot(x_values, x_values))
+        if denominator <= 1e-9 or not pairwise_slopes:
+            raise CalibrationError("X command scale is not observable from the trajectory")
+        slope = float(np.median(pairwise_slopes))
+        fitted = -slope
+        magnitude = abs(fitted)
+        candidates = {
+            "positive": self._translation_fit_score(
+                views, x_scale=magnitude, y_scale=y_scale
+            ),
+            "negative": self._translation_fit_score(
+                views, x_scale=-magnitude, y_scale=y_scale
+            ),
+        }
+        return fitted, candidates
+
+    def _estimate_motion_model(self, views: Mapping[str, list[dict]]) -> dict:
+        diameter = float(self._config.get("turntable_diameter_mm", 200.0))
+        expected_y_scale = 2.0 / diameter
+        y_tolerance = float(
+            self._config.get("y_angular_scale_tolerance_fraction", 0.08)
+        )
+        y_candidates = {
+            "positive": self._best_y_candidate(
+                views, 1.0, expected_y_scale, y_tolerance
+            ),
+            "negative": self._best_y_candidate(
+                views, -1.0, expected_y_scale, y_tolerance
+            ),
+        }
+        selected_y_name = min(
+            y_candidates,
+            key=lambda name: y_candidates[name]["rotation_rms_deg"],
+        )
+        other_y_name = "negative" if selected_y_name == "positive" else "positive"
+        selected_y = y_candidates[selected_y_name]
+        y_ratio = (
+            y_candidates[other_y_name]["rotation_rms_deg"] + 0.05
+        ) / (selected_y["rotation_rms_deg"] + 0.05)
+        minimum_ratio = float(
+            self._config.get("minimum_axis_direction_score_ratio", 2.0)
+        )
+        maximum_rotation = float(
+            self._config.get("maximum_axis_fit_rotation_rms_deg", 2.0)
+        )
+        y_scale = float(selected_y["signed_radians_per_commanded_mm"])
+        fitted_x, x_candidates = self._fit_x_scale(views, y_scale=y_scale)
+        selected_x_name = "positive" if fitted_x >= 0 else "negative"
+        other_x_name = "negative" if selected_x_name == "positive" else "positive"
+        x_ratio = (
+            x_candidates[other_x_name]["translation_rms_mm"] + 0.1
+        ) / (x_candidates[selected_x_name]["translation_rms_mm"] + 0.1)
+        x_tolerance = float(self._config.get("x_scale_tolerance_fraction", 0.05))
+        maximum_translation = float(
+            self._config.get("maximum_x_repeatability_mm", 3.0)
+        )
+        diagnostics = {
+            "y": {
+                "selected": selected_y_name,
+                "direction_score_ratio": y_ratio,
+                "minimum_direction_score_ratio": minimum_ratio,
+                "candidates": y_candidates,
+            },
+            "x": {
+                "selected": selected_x_name,
+                "direction_score_ratio": x_ratio,
+                "minimum_direction_score_ratio": minimum_ratio,
+                "candidates": x_candidates,
+            },
+        }
+        with self._lock:
+            self._status["axis_model_candidates"] = copy.deepcopy(diagnostics)
+        failures = []
+        if selected_y["rotation_rms_deg"] > maximum_rotation:
+            failures.append(
+                f"Y angular fit RMS {selected_y['rotation_rms_deg']:.3f}deg "
+                f"exceeds {maximum_rotation:.3f}deg"
+            )
+        relative_y_scale_error = abs(abs(y_scale) / expected_y_scale - 1.0)
+        if relative_y_scale_error >= y_tolerance * 0.995:
+            failures.append(
+                f"Y angular scale {y_scale:.7f}rad/mm reached the "
+                f"{y_tolerance:.1%} validation boundary"
+            )
+        if y_ratio < minimum_ratio:
+            failures.append(
+                f"Y rotation direction is ambiguous (candidate score ratio {y_ratio:.2f})"
+            )
+        if abs(abs(fitted_x) - 1.0) > x_tolerance:
+            failures.append(
+                f"X signed scale {fitted_x:.5f}mm/mm is outside "
+                f"{x_tolerance:.1%} magnitude tolerance"
+            )
+        selected_x = x_candidates[selected_x_name]
+        if selected_x["translation_rms_mm"] > maximum_translation:
+            failures.append(
+                f"X fit RMS {selected_x['translation_rms_mm']:.3f}mm "
+                f"exceeds {maximum_translation:.3f}mm"
+            )
+        if x_ratio < minimum_ratio:
+            failures.append(
+                f"X translation direction is ambiguous (candidate score ratio {x_ratio:.2f})"
+            )
+        if failures:
+            raise CalibrationError(
+                "; ".join(failures)
+                + "; axis candidates "
+                + json.dumps(diagnostics, separators=(",", ":"), sort_keys=True)
+            )
+        return {
+            "accepted": True,
+            "reference_pose_mm": {
+                axis: float(self._reference_pose[axis]) for axis in ("x", "y", "z")
+            },
+            "x_mm_per_commanded_mm": fitted_x,
+            "x_direction": selected_x_name,
+            "x_scale_magnitude": abs(fitted_x),
+            "x_translation_rms_mm": selected_x["translation_rms_mm"],
+            "y_radians_per_commanded_mm": y_scale,
+            "y_direction": selected_y_name,
+            "y_commanded_mm_per_revolution": 2.0 * math.pi / abs(y_scale),
+            "y_rotation_rms_deg": selected_y["rotation_rms_deg"],
+            "expected_y_radians_per_commanded_mm": expected_y_scale,
+            "y_angular_scale_tolerance_fraction": y_tolerance,
+            "minimum_direction_score_ratio": minimum_ratio,
+            "candidate_residuals": diagnostics,
+            "frame_convention": (
+                "reference board +X -> scanner +Y, board +Y -> scanner +Z, "
+                "board normal -> scanner +X; signed X and Y command directions "
+                "are estimated from PnP"
+            ),
+        }
+
+    def _calibrate_camera_extrinsics(
+        self,
+        name: str,
+        views: list[dict],
+        camera: Mapping[str, Any],
+        options: Mapping[str, Any],
+    ) -> dict:
+        candidates = []
+        for view in views:
+            board_to_camera = view.get("board_to_camera")
+            if board_to_camera is None:
+                continue
+            scanner_from_board = self._board_to_scanner(view["pose"])
+            candidate = scanner_from_board @ np.linalg.inv(
+                np.asarray(board_to_camera, dtype=float)
+            )
+            if name == "usb":
+                reference_z = float(self._reference_pose["z"])
                 candidate[:3, 3] -= np.array([0.0, 0.0, view["pose"]["z"] - reference_z])
             candidates.append(candidate)
         if len(candidates) < int(self._config.get("minimum_views", 6)):
             raise CalibrationError(f"{name} extrinsics have insufficient valid PnP views")
-        transform, translation_rms, rotation_rms = self._average_transforms(candidates)
+        (
+            transform,
+            translation_rms,
+            rotation_rms,
+            candidate_residuals,
+        ) = self._robust_average_transforms(candidates)
+        with self._lock:
+            residual_index = 0
+            for diagnostic in self._status["pnp_views"][name]:
+                if diagnostic.get("pnp_valid"):
+                    diagnostic["extrinsic_candidate"] = copy.deepcopy(
+                        candidate_residuals[residual_index]
+                    )
+                    residual_index += 1
+        minimum = int(self._config.get("minimum_views", 6))
+        inliers = sum(item["inlier"] for item in candidate_residuals)
+        if inliers < minimum:
+            raise CalibrationError(
+                f"{name} extrinsics retain only {inliers} robust PnP inliers; "
+                f"{minimum} required; residuals "
+                + json.dumps(candidate_residuals, separators=(",", ":"))
+            )
         max_translation = float(self._config.get("maximum_extrinsic_rms_mm", 5.0))
         max_rotation = float(self._config.get("maximum_extrinsic_rms_deg", 3.0))
         if translation_rms > max_translation or rotation_rms > max_rotation:
+            with self._lock:
+                self._status["metrics"][name] = {
+                    **copy.deepcopy(camera["quality"]),
+                    "extrinsic_translation_rms_mm": translation_rms,
+                    "extrinsic_rotation_rms_deg": rotation_rms,
+                    "candidate_residuals": copy.deepcopy(
+                        self._status["axis_model_candidates"]
+                    ),
+                }
             raise CalibrationError(
                 f"{name} extrinsic residual too high: {translation_rms:.2f}mm, "
-                f"{rotation_rms:.2f}deg"
+                f"{rotation_rms:.2f}deg; commanded poses and PnP summaries are "
+                "available in status.pnp_views; axis candidates are available in "
+                "status.axis_model_candidates"
             )
         quality = dict(camera["quality"])
         quality.update(
@@ -1157,32 +1839,24 @@ class GeometricCalibrationService:
             maximum_extrinsic_rms_mm=max_translation,
             maximum_extrinsic_rms_deg=max_rotation,
             frame="turntable_center_x-radial_y-tangential_z-up",
+            robust_pnp_inliers=inliers,
+            pnp_candidate_residuals=candidate_residuals,
         )
         return {"camera_to_scanner": transform.tolist(), "quality": quality}
 
-    def _validate_x_scale(self, views: list[dict], calibration: Mapping[str, Any]) -> dict:
+    def _validate_x_scale(self) -> dict:
         self._set_phase("x-scale", "Validating X scale and repeatability", 60)
-        positions = np.asarray([view["pose"]["x"] for view in views], dtype=float)
-        unique = np.unique(np.round(positions, 4))
-        if len(unique) < 3:
-            raise CalibrationError("X scale requires at least three distinct commanded positions")
-        translations = np.asarray(
-            [np.asarray(view["tvec"], dtype=float).reshape(3) for view in views]
-        )
-        centered_x = positions - positions.mean()
-        centered_t = translations - translations.mean(axis=0)
-        slope = (centered_x[:, None] * centered_t).sum(axis=0) / float(
-            np.dot(centered_x, centered_x)
-        )
-        scale = float(np.linalg.norm(slope))
-        predicted = translations.mean(axis=0) + centered_x[:, None] * slope
-        rms = float(np.sqrt(np.mean(np.sum((translations - predicted) ** 2, axis=1))))
+        signed_scale = float(self._motion_model["x_mm_per_commanded_mm"])
+        scale = abs(signed_scale)
+        rms = float(self._motion_model["x_translation_rms_mm"])
         tolerance = float(self._config.get("x_scale_tolerance_fraction", 0.05))
         maximum_repeatability = float(self._config.get("maximum_x_repeatability_mm", 3.0))
         accepted = abs(scale - 1.0) <= tolerance and rms <= maximum_repeatability
         result = {
             "accepted": accepted,
             "measured_mm_per_commanded_mm": scale,
+            "signed_mm_per_commanded_mm": signed_scale,
+            "command_direction": self._motion_model["x_direction"],
             "expected_mm_per_commanded_mm": 1.0,
             "tolerance_fraction": tolerance,
             "repeatability_rms_mm": rms,
@@ -1207,12 +1881,28 @@ class GeometricCalibrationService:
             "axis": [0.0, 0.0, 1.0],
             "diameter_mm": diameter,
             "mm_per_revolution": circumference,
+            "command_radians_per_mm": float(
+                self._motion_model["y_radians_per_commanded_mm"]
+            ),
+            "commanded_mm_per_revolution": float(
+                self._motion_model["y_commanded_mm_per_revolution"]
+            ),
+            "command_direction": self._motion_model["y_direction"],
+            "reference_pose_mm": copy.deepcopy(
+                self._motion_model["reference_pose_mm"]
+            ),
             "source": "measured_diameter",
             "quality": {
                 "accepted": True,
                 "diameter_source": "operator_measured_turntable",
                 "formula": "pi * diameter_mm",
                 "derived_mm_per_revolution": circumference,
+                "observed_rotation_rms_deg": float(
+                    self._motion_model["y_rotation_rms_deg"]
+                ),
+                "candidate_residuals": copy.deepcopy(
+                    self._motion_model["candidate_residuals"]["y"]
+                ),
             },
         }
 
@@ -1331,7 +2021,7 @@ class GeometricCalibrationService:
         self._set_phase("lidar", "Validating measured TF-Luna beam transform", 84)
         transform = transform_from_beam(inputs.get("origin_mm"), inputs.get("direction"))
         reference_z = float(
-            inputs.get("reference_z_mm", self._config.get("starting_pose_mm", {}).get("z", 10))
+            inputs.get("reference_z_mm", self._reference_pose["z"])
         )
         residuals = []
         readings = []
@@ -1398,19 +2088,11 @@ class GeometricCalibrationService:
         }
 
     def _board_to_scanner(self, pose: Mapping[str, float]) -> np.ndarray:
-        start_x = float(self._reference_pose["x"])
-        diameter = float(self._config.get("turntable_diameter_mm", 200))
-        circumference = math.pi * diameter
-        angle = 2 * math.pi * float(pose["y"]) / circumference
-        cos_a, sin_a = math.cos(angle), math.sin(angle)
-        rotate_z = np.array(
-            [[cos_a, -sin_a, 0], [sin_a, cos_a, 0], [0, 0, 1]], dtype=float
+        return self._board_transform(
+            pose,
+            x_scale=float(self._motion_model["x_mm_per_commanded_mm"]),
+            y_scale=float(self._motion_model["y_radians_per_commanded_mm"]),
         )
-        base = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=float)
-        transform = np.eye(4)
-        transform[:3, :3] = rotate_z @ base
-        transform[:3, 3] = [float(pose["x"]) - start_x, 0.0, 0.0]
-        return transform
 
     @staticmethod
     def _average_transforms(transforms: list[np.ndarray]) -> tuple[np.ndarray, float, float]:
@@ -1433,6 +2115,70 @@ class GeometricCalibrationService:
         result[:3, :3], result[:3, 3] = rotation, translation
         return result, translation_rms, float(np.sqrt(np.mean(np.asarray(angles) ** 2)))
 
+    def _robust_average_transforms(
+        self, transforms: list[np.ndarray]
+    ) -> tuple[np.ndarray, float, float, list[dict[str, Any]]]:
+        selected = np.ones(len(transforms), dtype=bool)
+        for _ in range(3):
+            average, _, _ = self._average_transforms(
+                [transform for transform, keep in zip(transforms, selected) if keep]
+            )
+            translation_residuals = [
+                float(np.linalg.norm(transform[:3, 3] - average[:3, 3]))
+                for transform in transforms
+            ]
+            rotation_residuals = [
+                self._rotation_residual_deg(average[:3, :3], transform[:3, :3])
+                for transform in transforms
+            ]
+            _, translation_mask, _ = self._robust_rms(
+                translation_residuals, minimum_cutoff=0.5
+            )
+            _, rotation_mask, _ = self._robust_rms(
+                rotation_residuals, minimum_cutoff=0.1
+            )
+            updated = translation_mask & rotation_mask
+            if not bool(updated.any()) or np.array_equal(updated, selected):
+                break
+            selected = updated
+        average, _, _ = self._average_transforms(
+            [transform for transform, keep in zip(transforms, selected) if keep]
+        )
+        translation_residuals = [
+            float(np.linalg.norm(transform[:3, 3] - average[:3, 3]))
+            for transform in transforms
+        ]
+        rotation_residuals = [
+            self._rotation_residual_deg(average[:3, :3], transform[:3, :3])
+            for transform in transforms
+        ]
+        translation_rms = float(
+            np.sqrt(
+                np.mean(
+                    np.square(
+                        np.asarray(translation_residuals, dtype=float)[selected]
+                    )
+                )
+            )
+        )
+        rotation_rms = float(
+            np.sqrt(
+                np.mean(
+                    np.square(np.asarray(rotation_residuals, dtype=float)[selected])
+                )
+            )
+        )
+        details = [
+            {
+                "view": index + 1,
+                "translation_residual_mm": round(translation_residuals[index], 5),
+                "rotation_residual_deg": round(rotation_residuals[index], 5),
+                "inlier": bool(selected[index]),
+            }
+            for index in range(len(transforms))
+        ]
+        return average, translation_rms, rotation_rms, details
+
     def _turntable_calibration_metrics(self) -> dict:
         circumference = math.pi * float(self._config.get("turntable_diameter_mm", 200))
         return {"diameter_mm": 200.0, "mm_per_revolution": circumference}
@@ -1453,7 +2199,10 @@ class GeometricCalibrationService:
             "centered_on_turntable": True,
             "scanner_frame": {
                 "origin": "checkerboard/turntable center at calibration reference pose",
-                "x": "radial, positive with commanded X",
+                "x": (
+                    "checkerboard normal at Y reference; commanded X sign is "
+                    "estimated from PnP"
+                ),
                 "y": "turntable tangent at Y=0",
                 "z": "turntable rotation axis, positive upward",
             },

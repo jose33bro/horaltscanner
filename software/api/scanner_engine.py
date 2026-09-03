@@ -101,6 +101,7 @@ class ScanSession:
     _MAX_ROTATION_STEPS = 72
     _MAX_Z_LEVELS = 20
     _MAX_AXIS_TRAVEL_MM = 100.0
+    _MAX_X_MM = 195.0
 
     def __init__(
         self,
@@ -433,6 +434,11 @@ class ScanSession:
             if not all(math.isfinite(value) for value in (low, high, current, start)) or high <= low:
                 blockers.append(f"Axis {axis.upper()} limits and positions must be finite with max > min")
                 continue
+            if axis == "x" and high > self._MAX_X_MM:
+                blockers.append(
+                    f"Axis X maximum must not exceed {self._MAX_X_MM:g} mm"
+                )
+                high = self._MAX_X_MM
             axis_homed = bool(motor_status.get("homed", {}).get(axis, False))
             if axis_homed and not low <= current <= high:
                 blockers.append(
@@ -478,6 +484,10 @@ class ScanSession:
         ) or scan_high <= scan_low or motor_high <= motor_low:
             raise RuntimeError(
                 "Axis X limits must be finite with max > min for automatic centering"
+            )
+        if scan_high > self._MAX_X_MM or motor_high > self._MAX_X_MM:
+            raise RuntimeError(
+                f"Axis X maximum must not exceed {self._MAX_X_MM:g} mm"
             )
 
         target = motor_low + (motor_high - motor_low) / 2.0
@@ -604,6 +614,35 @@ class ScanSession:
             )
         ):
             blockers.append("Turntable circumference source/quality is missing")
+        command_scale = turntable.get("command_radians_per_mm")
+        commanded_revolution = turntable.get("commanded_mm_per_revolution")
+        reference_pose = turntable.get("reference_pose_mm")
+        if (
+            not self._finite_number(command_scale)
+            or abs(float(command_scale)) <= 1e-12
+            or not self._finite_number(commanded_revolution, positive=True)
+            or not math.isclose(
+                float(commanded_revolution),
+                2.0 * math.pi / abs(float(command_scale)),
+                rel_tol=1e-8,
+                abs_tol=1e-6,
+            )
+            or turntable.get("command_direction")
+            != ("positive" if float(command_scale) > 0 else "negative")
+        ):
+            blockers.append("Turntable signed command scale is missing or invalid")
+        if (
+            not isinstance(reference_pose, Mapping)
+            or any(
+                not self._finite_number(reference_pose.get(axis))
+                for axis in ("x", "y", "z")
+            )
+        ):
+            blockers.append("Turntable reference_pose_mm is missing or invalid")
+        elif not self._reference_x_within_limits(float(reference_pose["x"])):
+            blockers.append(
+                "Turntable reference_pose_mm X is outside validated scan limits"
+            )
         lidar = self._calibration.get("lidar", {})
         if not self._matrix_valid(lidar.get("lidar_to_scanner"), (4, 4), transform=True):
             blockers.append("TF-Luna lidar_to_scanner calibration is missing")
@@ -633,6 +672,11 @@ class ScanSession:
         except (TypeError, ValueError):
             blockers.append("TF-Luna calibrated distance range is invalid")
         x_scale = self._calibration.get("x_scale_validation", {})
+        signed_x_scale = (
+            x_scale.get("signed_mm_per_commanded_mm")
+            if isinstance(x_scale, Mapping)
+            else None
+        )
         if (
             not isinstance(x_scale, Mapping)
             or not x_scale.get("accepted")
@@ -644,6 +688,16 @@ class ScanSession:
             or float(x_scale["repeatability_rms_mm"])
             > float(x_scale["maximum_repeatability_mm"])
             or x_scale.get("motor_rotation_distance_changed") is not False
+            or not self._finite_number(signed_x_scale)
+            or abs(float(signed_x_scale)) <= 1e-12
+            or not math.isclose(
+                abs(float(signed_x_scale)),
+                float(x_scale.get("measured_mm_per_commanded_mm", math.nan)),
+                rel_tol=1e-8,
+                abs_tol=1e-8,
+            )
+            or x_scale.get("command_direction")
+            != ("positive" if float(signed_x_scale) > 0 else "negative")
         ):
             blockers.append("X scale validation is missing or rejected")
         return blockers
@@ -694,6 +748,21 @@ class ScanSession:
         except (TypeError, ValueError):
             return False
         return math.isfinite(number) and (number > 0 if positive else True)
+
+    def _reference_x_within_limits(self, reference_x: float) -> bool:
+        limits = self._config.get("axis_limits_mm", {})
+        axis_limits = limits.get("x") if isinstance(limits, Mapping) else None
+        try:
+            low = float(axis_limits["min"])
+            high = min(float(axis_limits["max"]), self._MAX_X_MM)
+        except (KeyError, TypeError, ValueError):
+            return False
+        return (
+            math.isfinite(reference_x)
+            and math.isfinite(low)
+            and math.isfinite(high)
+            and low <= reference_x <= high
+        )
 
     @staticmethod
     def _vector_valid(value: Any, *, nonzero: bool = False) -> bool:
@@ -1157,6 +1226,8 @@ class ScanSession:
             high = float(axis_limits["max"])
         except (KeyError, TypeError, ValueError) as exc:
             raise RuntimeError(f"Axis {axis.upper()} travel limits are invalid") from exc
+        if axis == "x":
+            high = min(high, self._MAX_X_MM)
         if (
             not math.isfinite(target)
             or not math.isfinite(low)
@@ -1357,19 +1428,56 @@ class ScanSession:
         trajectory_origin: Mapping[str, float],
     ) -> np.ndarray:
         turntable = self._calibration["turntable"]
-        center = np.asarray(turntable["center_mm"], dtype=float)
+        current_center = self._turntable_center_at_x(self._axis_position["x"])
+        origin_center = self._turntable_center_at_x(trajectory_origin["x"])
         axis = np.asarray(turntable["axis"], dtype=float)
         axis /= np.linalg.norm(axis)
         rotation_axis = str(self._config.get("rotation_axis", "y")).lower()
         travel = self._axis_position[rotation_axis] - float(trajectory_origin[rotation_axis])
-        angle = -2.0 * math.pi * travel / float(turntable["mm_per_revolution"])
-        vector = np.asarray(point, dtype=float) - center
+        angle = -float(turntable["command_radians_per_mm"]) * travel
+        vector = np.asarray(point, dtype=float) - current_center
         rotated = (
             vector * math.cos(angle)
             + np.cross(axis, vector) * math.sin(angle)
             + axis * np.dot(axis, vector) * (1.0 - math.cos(angle))
         )
-        return center + rotated
+        return origin_center + rotated
+
+    def _turntable_center_at_x(self, commanded_x: Any) -> np.ndarray:
+        turntable = self._calibration.get("turntable", {})
+        x_scale = self._calibration.get("x_scale_validation", {})
+        reference_pose = turntable.get("reference_pose_mm")
+        if not isinstance(reference_pose, Mapping):
+            raise RuntimeError("Turntable reference_pose_mm is missing")
+        try:
+            x = float(commanded_x)
+            reference_x = float(reference_pose["x"])
+            signed_scale = float(x_scale["signed_mm_per_commanded_mm"])
+            center = np.asarray(turntable["center_mm"], dtype=float)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("Turntable X command model is missing or invalid") from exc
+        measured_scale = x_scale.get("measured_mm_per_commanded_mm")
+        direction = x_scale.get("command_direction")
+        if (
+            not math.isfinite(x)
+            or not math.isfinite(reference_x)
+            or not math.isfinite(signed_scale)
+            or abs(signed_scale) <= 1e-12
+            or not self._finite_number(measured_scale, positive=True)
+            or not math.isclose(
+                abs(signed_scale),
+                float(measured_scale),
+                rel_tol=1e-8,
+                abs_tol=1e-8,
+            )
+            or direction != ("positive" if signed_scale > 0 else "negative")
+            or center.shape != (3,)
+            or not bool(np.isfinite(center).all())
+        ):
+            raise RuntimeError("Turntable X command model is inconsistent")
+        translated = center.copy()
+        translated[0] += signed_scale * (x - reference_x)
+        return translated
 
     def _set_laser(self, side: str, enabled: bool) -> None:
         method = self._gpio.laser_on if enabled else self._gpio.laser_off

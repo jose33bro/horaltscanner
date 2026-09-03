@@ -13,13 +13,49 @@ quality evidence has been accepted.
   628.318530717... mm`; the workflow does not silently change any motor
   `rotation_distance`.
 - Frame origin: checkerboard/turntable center at the reference pose.
-- +X: radial, positive with commanded X; +Y: turntable tangent at Y=0; +Z:
-  turntable axis, upward.
+- +X: checkerboard normal at the Y reference; +Y: checkerboard horizontal
+  direction/turntable tangent at Y=0; +Z: checkerboard vertical direction and
+  turntable axis, upward. The signs relating commanded X and Y to this physical
+  frame are estimated from PnP observations, not assumed.
 
-The configured X=195, Y=0, Z=10 mm pose keeps a temporary 5 mm margin from the
+The configured X=195, Y=0, Z=20 mm pose keeps a temporary 5 mm margin from the
 first observed mechanical contact at X=200 while preserving the camera framing.
 The calibration service hard-caps every trajectory pose at X=195 mm even if an
-unsafe higher limit is supplied.
+unsafe higher limit is supplied, and caps calibration Z at the validated 40 mm.
+The default seven poses are:
+
+| View | X (mm) | Y travel (mm / degrees) | Z (mm) |
+|---:|---:|---:|---:|
+| 1 | 195 | 0 / 0° | 20 |
+| 2 | 185 | 10.4719755 / 6° | 30 |
+| 3 | 175 | 20.9439510 / 12° | 40 |
+| 4 | 165 | 31.4159265 / 18° | 20 |
+| 5 | 195 | 41.8879020 / 24° | 40 |
+| 6 | 165 | 52.3598776 / 30° | 30 |
+| 7 | 180 | 62.8318531 / 36° | 40 |
+
+Because the checkerboard is centered, a stable Pi-camera checkerboard center is
+expected. Diversity is measured from normalized corresponding-corner motion,
+centered shape change, scale, orientation, per-corner motion hulls, and unique
+views. Center movement is diagnostic only. Status and reports include every
+metric and threshold.
+
+After intrinsics, the service fits a shared mechanism model from both cameras'
+PnP poses. It evaluates both Y rotation directions and estimates signed radians
+per commanded millimeter within the measured 200 mm diameter tolerance. It then
+robustly regresses signed X millimeters per commanded millimeter. The USB
+camera's commanded Z displacement is removed before fitting its reference
+transform. Ambiguous directions, an out-of-tolerance scale, insufficient axis
+travel, or excessive robust residuals fail calibration; motor
+`rotation_distance` is never changed. The fitted signed Y scale is persisted and
+used to undo turntable motion during scans. For every scan frame, runtime derives
+the physical turntable center as
+`reference_center + signed_x_scale * (current_x - reference_x) * scanner_+X`,
+undoes Y rotation about that current center, then maps the result to the
+trajectory-origin X center. This prevents pivot warp when automatic centering
+moves X from 195 mm to 97.5 mm and also keeps future per-frame X trajectory
+changes registered. Missing or inconsistent signed-X/reference metadata blocks
+physical scans.
 The workflow suspends TF-Luna ranging output once before checkerboard camera
 capture, waits for the optical spot to clear, and restores ranging output in a
 `finally` guard before any LiDAR measurements. Cancellation and failure paths
@@ -67,7 +103,7 @@ These checks do not command motion or energize a laser:
 curl -fsS http://127.0.0.1:5000/api/status | python3 -m json.tool
 curl -fsS http://127.0.0.1:5000/api/calibration/geometric/status | python3 -m json.tool
 curl -fsS -X POST -H 'Content-Type: application/json' \
-  -d '{"start_pose":{"x":195,"y":0,"z":10},"lidar_measurements":{"origin_mm":[MEASURE_X,MEASURE_Y,MEASURE_Z],"direction":[DIR_X,DIR_Y,DIR_Z]}}' \
+  -d '{"start_pose":{"x":195,"y":0,"z":20},"lidar_measurements":{"origin_mm":[MEASURE_X,MEASURE_Y,MEASURE_Z],"direction":[DIR_X,DIR_Y,DIR_Z],"reference_z_mm":20}}' \
   http://127.0.0.1:5000/api/calibration/geometric/preflight | python3 -m json.tool
 ```
 
@@ -84,7 +120,7 @@ is:
 
 ```bash
 curl -fsS -X POST -H 'Content-Type: application/json' \
-  -d '{"start_pose":{"x":195,"y":0,"z":10},"lidar_measurements":{"origin_mm":[MEASURE_X,MEASURE_Y,MEASURE_Z],"direction":[DIR_X,DIR_Y,DIR_Z]}}' \
+  -d '{"start_pose":{"x":195,"y":0,"z":20},"lidar_measurements":{"origin_mm":[MEASURE_X,MEASURE_Y,MEASURE_Z],"direction":[DIR_X,DIR_Y,DIR_Z],"reference_z_mm":20}}' \
   http://127.0.0.1:5000/api/calibration/geometric/start | python3 -m json.tool
 watch -n 1 'curl -fsS http://127.0.0.1:5000/api/calibration/geometric/status'
 ```
@@ -101,6 +137,10 @@ curl -fsS http://127.0.0.1:5000/api/calibration/geometric/report?download=1 \
 The service accepts and atomically installs calibration only after finite,
 invertible transforms and all RMS/residual limits pass. The previous
 configuration is retained for `/api/calibration/geometric/rollback`.
+On failure, `status` and the downloadable in-memory report include only compact
+per-view commanded poses, PnP board centers/rotation vectors, diversity
+statistics, signed-axis candidate scores, and transform residuals. Camera images
+are not embedded.
 
 ## Durable state and OS upgrades
 

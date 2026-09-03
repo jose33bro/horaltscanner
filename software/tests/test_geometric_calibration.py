@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 import shutil
 import threading
 import time
@@ -16,6 +17,8 @@ from software.api.geometric_calibration import (
     CheckerboardDetectionRejected,
     CheckerboardDetectionTimeout,
     GeometricCalibrationService,
+    BOARD_TO_SCANNER_AT_REFERENCE,
+    checkerboard_view_metrics,
     checkerboard_points,
     fit_plane_robust,
     transform_from_beam,
@@ -61,6 +64,10 @@ def valid_calibration():
             "axis": [0, 0, 1],
             "diameter_mm": 200,
             "mm_per_revolution": np.pi * 200,
+            "command_radians_per_mm": 0.01,
+            "commanded_mm_per_revolution": 200 * np.pi,
+            "command_direction": "positive",
+            "reference_pose_mm": {"x": 195, "y": 0, "z": 20},
             "source": "measured_diameter",
             "quality": {"accepted": True},
         },
@@ -72,6 +79,8 @@ def valid_calibration():
         "x_scale_validation": {
             "accepted": True,
             "measured_mm_per_commanded_mm": 1.0,
+            "signed_mm_per_commanded_mm": 1.0,
+            "command_direction": "positive",
             "expected_mm_per_commanded_mm": 1.0,
             "tolerance_fraction": 0.05,
             "repeatability_rms_mm": 0.2,
@@ -89,10 +98,33 @@ class CalibrationMathTests(unittest.TestCase):
         np.testing.assert_allclose(np.ptp(points, axis=0), [130, 65, 0])
 
     def test_repeated_views_are_rejected_for_insufficient_diversity(self):
-        corners = np.array([[10, 10], [20, 10], [10, 20], [20, 20]], dtype=float)
+        corners = np.column_stack(
+            (
+                np.tile(np.arange(11), 6) * 5 + 10,
+                np.repeat(np.arange(6), 11) * 5 + 10,
+            )
+        ).astype(float)
         views = [{"corners": corners.copy(), "image_size": (100, 100)} for _ in range(6)]
-        with self.assertRaisesRegex(CalibrationError, "position diversity"):
-            validate_view_diversity(views, minimum_views=6)
+        with self.assertRaisesRegex(CalibrationError, "repeated near-identical"):
+            validate_view_diversity(views, minimum_views=6, minimum_corner_motion=0)
+
+    def test_centered_rotating_board_has_valid_corner_diversity(self):
+        grid = checkerboard_points()[:, :2].astype(float)
+        grid[:, 0] /= 500.0
+        grid[:, 1] /= 500.0
+        views = []
+        for angle_deg in (0, 6, 12, 18, 24, 30, 36):
+            angle = math.radians(angle_deg)
+            distorted = grid.copy()
+            distorted[:, 0] *= math.cos(angle)
+            distorted[:, 1] += 0.18 * grid[:, 0] * math.sin(angle)
+            corners = (distorted + [0.5, 0.5]) * [1280, 960]
+            views.append({"corners": corners, "image_size": (1280, 960)})
+        metrics = validate_view_diversity(views, minimum_views=6)
+        self.assertLess(metrics["center_span"], 1e-12)
+        self.assertGreaterEqual(metrics["unique_views"], 6)
+        self.assertGreater(metrics["centered_corner_shape_motion_rms"], 0.004)
+        self.assertIn("maximum_corner_track_hull", checkerboard_view_metrics(views))
 
     def test_view_count_is_enforced_before_opencv(self):
         with self.assertRaisesRegex(CalibrationError, "insufficient accepted views"):
@@ -251,11 +283,15 @@ def service_config():
         "board_rows": 6,
         "square_size_mm": 13,
         "minimum_views": 3,
-        "starting_pose_mm": {"x": 195, "y": 0, "z": 10},
+        "starting_pose_mm": {"x": 195, "y": 0, "z": 20},
         "pose_offsets_mm": [
             {"x": 0, "y": 0, "z": 0},
-            {"x": -10, "y": 10, "z": 0},
-            {"x": -20, "y": 20, "z": 5},
+            {"x": -10, "y": 10.4719755, "z": 10},
+            {"x": -20, "y": 20.9439510, "z": 20},
+            {"x": -30, "y": 31.4159265, "z": 0},
+            {"x": 0, "y": 41.8879020, "z": 20},
+            {"x": -30, "y": 52.3598776, "z": 10},
+            {"x": -15, "y": 62.8318531, "z": 20},
         ],
         "axis_limits_mm": {
             "x": {"min": 0, "max": 195},
@@ -321,8 +357,8 @@ class CalibrationServiceTests(unittest.TestCase):
         self.assertEqual(self.motor.calls, [])
 
     def test_trajectory_is_bounded_and_configurable(self):
-        poses = self.service._trajectory({"starting_pose_mm": {"x": 190, "y": 5, "z": 30}})
-        self.assertEqual(poses[0], {"x": 190.0, "y": 5.0, "z": 30.0})
+        poses = self.service._trajectory({"starting_pose_mm": {"x": 190, "y": 5, "z": 20}})
+        self.assertEqual(poses[0], {"x": 190.0, "y": 5.0, "z": 20.0})
         self.assertTrue(all(pose["x"] <= 195 for pose in self.service._trajectory({})))
         with self.assertRaisesRegex(CalibrationError, "outside configured limits"):
             self.service._trajectory({"starting_pose_mm": {"x": 206, "y": 0, "z": 10}})
@@ -760,19 +796,25 @@ class CalibrationServiceTests(unittest.TestCase):
             )
 
     def test_x_scale_is_validated_without_changing_rotation_distance(self):
-        views = [
-            {"pose": {"x": x}, "tvec": np.array([[x], [0], [300]])}
-            for x in (175.0, 185.0, 195.0)
-        ]
-        result = self.service._validate_x_scale(views, {})
+        self.service._motion_model.update(
+            x_mm_per_commanded_mm=-1.0,
+            x_direction="negative",
+            x_translation_rms_mm=0.2,
+        )
+        result = self.service._validate_x_scale()
         self.assertTrue(result["accepted"])
+        self.assertEqual(result["signed_mm_per_commanded_mm"], -1.0)
         self.assertFalse(result["motor_rotation_distance_changed"])
-        views[-1]["tvec"] = np.array([[230], [0], [300]])
+        self.service._motion_model["x_mm_per_commanded_mm"] = -1.2
         with self.assertRaisesRegex(CalibrationError, "rotation_distance was not changed"):
-            self.service._validate_x_scale(views, {})
+            self.service._validate_x_scale()
 
     def test_scanner_frame_pose_math_and_extrinsic_average_are_consistent(self):
         self.service._reference_pose = {"x": 195, "y": 0, "z": 10}
+        self.service._motion_model.update(
+            x_mm_per_commanded_mm=1.0,
+            y_radians_per_commanded_mm=0.01,
+        )
         transform = self.service._board_to_scanner({"x": 185, "y": 0, "z": 10})
         np.testing.assert_allclose(transform[:3, 3], [-10, 0, 0])
         np.testing.assert_allclose(transform[:3, :3], [[0, 0, 1], [1, 0, 0], [0, 1, 0]])
@@ -784,6 +826,139 @@ class CalibrationServiceTests(unittest.TestCase):
         np.testing.assert_allclose(average[:3, 3], [-10, 1, 0])
         self.assertAlmostEqual(translation_rms, 1.0)
         self.assertAlmostEqual(rotation_rms, 0.0)
+
+    def _synthetic_motion_views(self, x_scale, y_scale):
+        poses = self.service._trajectory({})
+        self.service._reference_pose = dict(poses[0])
+        camera_to_scanner = {
+            "pi": np.array(
+                [
+                    [0, -1, 0, 80],
+                    [1, 0, 0, -35],
+                    [0, 0, 1, 260],
+                    [0, 0, 0, 1],
+                ],
+                dtype=float,
+            ),
+            "usb": np.array(
+                [
+                    [1, 0, 0, -60],
+                    [0, 0, -1, 45],
+                    [0, 1, 0, 220],
+                    [0, 0, 0, 1],
+                ],
+                dtype=float,
+            ),
+        }
+        views = {"pi": [], "usb": []}
+        for name in ("pi", "usb"):
+            for pose in poses:
+                scanner_from_board = self.service._board_transform(
+                    pose, x_scale=x_scale, y_scale=y_scale
+                )
+                scanner_from_camera = camera_to_scanner[name].copy()
+                if name == "usb":
+                    scanner_from_camera[:3, 3] += [
+                        0,
+                        0,
+                        pose["z"] - poses[0]["z"],
+                    ]
+                views[name].append(
+                    {
+                        "pose": dict(pose),
+                        "board_to_camera": (
+                            np.linalg.inv(scanner_from_camera) @ scanner_from_board
+                        ),
+                    }
+                )
+        return views, camera_to_scanner
+
+    def test_axis_model_recovers_both_command_signs_and_moving_usb(self):
+        expected_y = 2.0 / 200.0
+        for x_sign in (-1.0, 1.0):
+            for y_sign in (-1.0, 1.0):
+                with self.subTest(x_sign=x_sign, y_sign=y_sign):
+                    views, expected_cameras = self._synthetic_motion_views(
+                        x_sign, y_sign * expected_y * 1.02
+                    )
+                    model = self.service._estimate_motion_model(views)
+                    self.service._motion_model = model
+                    self.assertAlmostEqual(
+                        model["x_mm_per_commanded_mm"], x_sign, places=5
+                    )
+                    self.assertAlmostEqual(
+                        model["y_radians_per_commanded_mm"],
+                        y_sign * expected_y * 1.02,
+                        places=6,
+                    )
+                    self.assertGreater(
+                        model["candidate_residuals"]["x"][
+                            "direction_score_ratio"
+                        ],
+                        2,
+                    )
+                    for name in ("pi", "usb"):
+                        camera = {
+                            "quality": {
+                                "accepted": True,
+                                "rms_px": 0.1,
+                                "maximum_rms_px": 1.0,
+                            }
+                        }
+                        result = self.service._calibrate_camera_extrinsics(
+                            name, views[name], camera, {}
+                        )
+                        np.testing.assert_allclose(
+                            result["camera_to_scanner"],
+                            expected_cameras[name],
+                            atol=1e-5,
+                        )
+
+    def test_axis_model_rejects_degenerate_and_wrong_scale_trajectories(self):
+        expected_y = 2.0 / 200.0
+        views, _ = self._synthetic_motion_views(1.0, expected_y)
+        for camera_views in views.values():
+            reference_rotation = camera_views[0]["board_to_camera"][:3, :3].copy()
+            for view in camera_views:
+                view["board_to_camera"][:3, :3] = reference_rotation
+        with self.assertRaisesRegex(CalibrationError, "Y rotation direction is ambiguous"):
+            self.service._estimate_motion_model(views)
+
+        views, _ = self._synthetic_motion_views(1.0, expected_y * 1.2)
+        with self.assertRaisesRegex(CalibrationError, "validation boundary"):
+            self.service._estimate_motion_model(views)
+
+    def test_axis_and_extrinsic_fit_reject_single_pnp_outlier(self):
+        expected_y = 2.0 / 200.0
+        views, expected_cameras = self._synthetic_motion_views(-1.0, -expected_y)
+        outlier = views["pi"][3]["board_to_camera"]
+        outlier[:3, 3] += [40, -25, 30]
+        outlier[:3, :3] = (
+            self.service._rotation_z(math.radians(12)) @ outlier[:3, :3]
+        )
+
+        model = self.service._estimate_motion_model(views)
+        self.service._motion_model = model
+        self.assertAlmostEqual(model["x_mm_per_commanded_mm"], -1.0, places=4)
+        self.assertAlmostEqual(
+            model["y_radians_per_commanded_mm"], -expected_y, places=6
+        )
+        result = self.service._calibrate_camera_extrinsics(
+            "pi",
+            views["pi"],
+            {
+                "quality": {
+                    "accepted": True,
+                    "rms_px": 0.1,
+                    "maximum_rms_px": 1.0,
+                }
+            },
+            {},
+        )
+        np.testing.assert_allclose(
+            result["camera_to_scanner"], expected_cameras["pi"], atol=1e-4
+        )
+        self.assertEqual(result["quality"]["robust_pnp_inliers"], 6)
 
     def test_lidar_geometry_rejects_unobservable_beam_direction(self):
         self.service._move_to = lambda _pose: None

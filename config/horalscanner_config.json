@@ -150,6 +150,10 @@
       "axis": null,
       "diameter_mm": null,
       "mm_per_revolution": null,
+      "command_radians_per_mm": null,
+      "commanded_mm_per_revolution": null,
+      "command_direction": null,
+      "reference_pose_mm": null,
       "source": null,
       "quality": null
     },

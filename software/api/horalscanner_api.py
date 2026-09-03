@@ -230,11 +230,17 @@ def _load_gpiozero_factories() -> tuple[Callable | None, Callable | None]:
             initial_value=bool(initial_value),
         )
 
-    def pwm_device_factory(pin, active_high=True, initial_value=False):
+    def pwm_device_factory(
+        pin,
+        active_high=True,
+        initial_value=False,
+        frequency=100,
+    ):
         return PWMOutputDevice(
             pin,
             active_high=active_high,
-            initial_value=1.0 if initial_value else 0.0,
+            initial_value=float(initial_value),
+            frequency=frequency,
         )
 
     return output_device_factory, pwm_device_factory

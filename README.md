@@ -81,8 +81,8 @@ Access at: `http://<your-pi-ip>:5000`
 
 **GPIO Mapping (Raspberry Pi):**
 ```
-GPIO27  → Laser Left (digital)
-GPIO22  → Laser Right (digital)
+GPIO27  → Laser Left (PWM-capable MOSFET, binary API)
+GPIO22  → Laser Right (PWM-capable MOSFET, binary API)
 GPIO18  → LED Red (PWM)
 GPIO13  → LED Green (PWM)
 GPIO19  → LED Blue (PWM)

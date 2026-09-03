@@ -13,8 +13,13 @@ Ce firmware cible uniquement une carte Creality V4.2.2 équipée d'un
   active. Les contacts normalement fermés de X, Y et Z sont actifs à l'état
   haut lorsqu'ils s'ouvrent sur la butée.
 - Une recherche d'origine est abandonnée après 120 secondes.
-- Le repère Y arrête uniquement `HOME Y`. Les rotations normales peuvent le
-  franchir afin que le plateau circulaire accomplisse un tour complet.
+- Le repère Y arrête uniquement le référencement. Si PA6 est déjà actif au
+  début de `HOME Y` (ou lorsque `HOME ALL` atteint Y), le plateau continue dans
+  le sens de référencement jusqu'à la libération stable du repère, puis jusqu'à
+  son prochain déclenchement stable. La libération et le déclenchement sont
+  validés pendant 20 ms pour rejeter les rebonds. Les rotations `MOVE Y`
+  franchissent toujours le repère afin que le plateau accomplisse un tour
+  complet.
 - Les mouvements utilisent une rampe d'accélération et de décélération pour
   éviter les résonances et pertes de pas du plateau.
 - La vitesse de référencement est limitée séparément pour chaque mécanique:

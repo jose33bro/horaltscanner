@@ -60,6 +60,7 @@ PNP_BOARD_FRAME_ADJUSTMENTS = {
     "rotate_180_about_board_y": np.diag([-1.0, 1.0, -1.0]),
     "rotate_180_about_board_normal": np.diag([-1.0, -1.0, 1.0]),
 }
+MINIMUM_DIRECT_Z_CONTRASTS = 3
 
 
 def checkerboard_points(
@@ -2511,12 +2512,16 @@ class GeometricCalibrationService:
         if not offsets:
             offsets = [
                 {"x": 0, "y": 0, "z": 0},
+                {"x": 0, "y": 0, "z": 20},
                 {"x": -10, "y": 10.4719755, "z": 10},
                 {"x": -20, "y": 20.9439510, "z": 20},
-                {"x": -30, "y": 31.4159265, "z": 0},
+                {"x": -20, "y": 20.9439510, "z": 0},
+                {"x": -30, "y": 31.4159265, "z": 10},
+                {"x": 0, "y": 41.8879020, "z": 0},
                 {"x": 0, "y": 41.8879020, "z": 20},
                 {"x": -30, "y": 52.3598776, "z": 10},
                 {"x": -15, "y": 62.8318531, "z": 20},
+                {"x": -15, "y": 62.8318531, "z": 0},
             ]
         limits = self._config.get("axis_limits_mm", {})
         poses: list[dict[str, float]] = []
@@ -3934,7 +3939,7 @@ class GeometricCalibrationService:
         )
         return {
             "accepted": bool(accepted),
-            "estimator": "z_residualized_against_commanded_x_y",
+            "estimator": regression["estimator"],
             "commanded_xy_model_source": "fixed_pi_axis_model",
             "pi_x_mm_per_commanded_mm": float(
                 self._motion_model["x_mm_per_commanded_mm"]
@@ -3961,6 +3966,12 @@ class GeometricCalibrationService:
             ],
             "independent_z_leverage_span_mm": regression[
                 "independent_z_leverage_span_mm"
+            ],
+            "maximum_independent_z_leverage_fraction": regression[
+                "maximum_independent_z_leverage_fraction"
+            ],
+            "independent_z_effective_samples": regression[
+                "independent_z_effective_samples"
             ],
             "z_span_mm": regression["z_span_mm"],
             "z_levels": regression["z_levels"],
@@ -4189,37 +4200,45 @@ class GeometricCalibrationService:
                 }
             )
 
-        direct_slopes = []
         selected_indexes = np.flatnonzero(inlier_mask)
-        for first_position, first in enumerate(selected_indexes):
-            for second in selected_indexes[first_position + 1 :]:
-                if (
-                    abs(float(deltas[first, 0] - deltas[second, 0])) <= 1e-6
-                    and abs(float(deltas[first, 1] - deltas[second, 1])) <= 1e-6
-                    and abs(float(deltas[first, 2] - deltas[second, 2])) > 1e-6
-                ):
-                    direct_slopes.append(
-                        (
-                            translations[second] - translations[first]
-                        )
-                        / float(deltas[second, 2] - deltas[first, 2])
-                    )
-        if direct_slopes:
-            direct_array = np.asarray(direct_slopes, dtype=float)
-            direct_vector = np.median(direct_array, axis=0)
+        direct_contrasts = self._direct_z_contrasts(
+            deltas, translations, selected_indexes
+        )
+        if direct_contrasts:
+            direct_array = np.asarray(
+                [contrast["vector"] for contrast in direct_contrasts],
+                dtype=float,
+            )
+            direct_vector = self._geometric_median(direct_array)
             direct_spread = float(
                 np.max(np.linalg.norm(direct_array - direct_vector, axis=1))
             )
             direct_diagnostics = {
-                "pairs": len(direct_slopes),
+                "method": "widest_same_xy_z_contrast_geometric_median",
+                "pairs": len(direct_contrasts),
                 "median_vector_mm_per_commanded_mm": direct_vector.tolist(),
                 "maximum_vector_deviation_mm_per_commanded_mm": direct_spread,
+                "contrasts": [
+                    {
+                        "first_view": reported_view_numbers[
+                            contrast["first_index"]
+                        ],
+                        "second_view": reported_view_numbers[
+                            contrast["second_index"]
+                        ],
+                        "delta_z_mm": contrast["delta_z_mm"],
+                        "vector_mm_per_commanded_mm": contrast["vector"].tolist(),
+                    }
+                    for contrast in direct_contrasts
+                ],
             }
         else:
             direct_diagnostics = {
+                "method": "widest_same_xy_z_contrast_geometric_median",
                 "pairs": 0,
                 "median_vector_mm_per_commanded_mm": None,
                 "maximum_vector_deviation_mm_per_commanded_mm": None,
+                "contrasts": [],
             }
 
         jackknife_vectors = []
@@ -4262,7 +4281,7 @@ class GeometricCalibrationService:
                     np.asarray(trial_solution["coefficients"][3], dtype=float)
                 )
         vector = np.asarray(coefficients[3], dtype=float)
-        uncertainty = (
+        jackknife_uncertainty = (
             max(
                 float(np.linalg.norm(jackknife_vector - vector))
                 for jackknife_vector in jackknife_vectors
@@ -4270,9 +4289,16 @@ class GeometricCalibrationService:
             if jackknife_vectors
             else 0.0
         )
+        direct_uncertainty = (
+            float(direct_diagnostics["maximum_vector_deviation_mm_per_commanded_mm"])
+            if len(direct_contrasts) >= MINIMUM_DIRECT_Z_CONTRASTS
+            else 0.0
+        )
+        uncertainty = max(jackknife_uncertainty, direct_uncertainty)
         return {
             "coefficients": coefficients,
             "inlier_mask": inlier_mask,
+            "estimator": solution["estimator"],
             "design_condition_number": solution["design_condition_number"],
             "observable": bool(
                 solution["observable"]
@@ -4287,6 +4313,12 @@ class GeometricCalibrationService:
             ],
             "independent_z_leverage_span_mm": solution[
                 "independent_z_leverage_span_mm"
+            ],
+            "maximum_independent_z_leverage_fraction": solution[
+                "maximum_independent_z_leverage_fraction"
+            ],
+            "independent_z_effective_samples": solution[
+                "independent_z_effective_samples"
             ],
             "z_span_mm": z_span,
             "z_levels": required_levels,
@@ -4328,15 +4360,28 @@ class GeometricCalibrationService:
         commanded_z = selected_deltas[:, 2]
         residualized_z = leverage["residualized_z"]
         residualized_energy = leverage["residualized_energy"]
-        nuisance_translation = nuisance @ np.linalg.lstsq(
-            nuisance, selected_translations, rcond=None
-        )[0]
-        residualized_translation = (
-            selected_translations - nuisance_translation
+        direct_contrasts = GeometricCalibrationService._direct_z_contrasts(
+            selected_deltas,
+            selected_translations,
+            np.arange(len(selected_deltas)),
         )
-        vector = (
-            residualized_z @ residualized_translation
-        ) / residualized_energy
+        if len(direct_contrasts) >= MINIMUM_DIRECT_Z_CONTRASTS:
+            vector = GeometricCalibrationService._geometric_median(
+                np.asarray(
+                    [contrast["vector"] for contrast in direct_contrasts],
+                    dtype=float,
+                )
+            )
+            estimator = "same_xy_z_contrast_geometric_median"
+        else:
+            nuisance_translation = nuisance @ np.linalg.lstsq(
+                nuisance, selected_translations, rcond=None
+            )[0]
+            residualized_translation = selected_translations - nuisance_translation
+            vector = (
+                residualized_z @ residualized_translation
+            ) / residualized_energy
+            estimator = "z_residualized_against_commanded_x_y"
         nuisance_coefficients = np.linalg.lstsq(
             nuisance,
             selected_translations - commanded_z[:, None] * vector,
@@ -4363,12 +4408,85 @@ class GeometricCalibrationService:
             )
         return {
             "coefficients": coefficients,
+            "estimator": estimator,
             "design_condition_number": condition,
             "observable": rank == 4 and math.isfinite(condition),
             "independent_z_leverage_ratio": leverage["ratio"],
             "independent_z_leverage_rms_mm": leverage["rms_mm"],
             "independent_z_leverage_span_mm": leverage["span_mm"],
+            "maximum_independent_z_leverage_fraction": leverage[
+                "maximum_fraction"
+            ],
+            "independent_z_effective_samples": leverage["effective_samples"],
         }
+
+    @staticmethod
+    def _direct_z_contrasts(
+        deltas: np.ndarray,
+        translations: np.ndarray,
+        selected_indexes: np.ndarray,
+    ) -> list[dict[str, Any]]:
+        groups: dict[tuple[float, float], list[int]] = {}
+        for index in np.asarray(selected_indexes, dtype=int):
+            key = (
+                round(float(deltas[index, 0]), 6),
+                round(float(deltas[index, 1]), 6),
+            )
+            groups.setdefault(key, []).append(int(index))
+
+        contrasts = []
+        for indexes in groups.values():
+            ordered = sorted(indexes, key=lambda index: float(deltas[index, 2]))
+            first, second = ordered[0], ordered[-1]
+            delta_z = float(deltas[second, 2] - deltas[first, 2])
+            if abs(delta_z) <= 1e-6:
+                continue
+            contrasts.append(
+                {
+                    "first_index": first,
+                    "second_index": second,
+                    "delta_z_mm": delta_z,
+                    "vector": (
+                        translations[second] - translations[first]
+                    )
+                    / delta_z,
+                }
+            )
+        return contrasts
+
+    @staticmethod
+    def _geometric_median(values: np.ndarray) -> np.ndarray:
+        points = np.asarray(values, dtype=float)
+        if points.ndim != 2 or not len(points):
+            raise CalibrationError("geometric median requires vector samples")
+        estimate = np.mean(points, axis=0)
+        for _ in range(100):
+            distances = np.linalg.norm(points - estimate, axis=1)
+            noncoincident = distances > 1e-12
+            if not bool(np.any(noncoincident)):
+                return estimate
+            weights = 1.0 / distances[noncoincident]
+            weighted = np.sum(
+                points[noncoincident] * weights[:, None], axis=0
+            ) / float(np.sum(weights))
+            coincident_count = int(np.count_nonzero(~noncoincident))
+            if coincident_count:
+                residual = np.sum(
+                    (points[noncoincident] - estimate)
+                    / distances[noncoincident, None],
+                    axis=0,
+                )
+                residual_norm = float(np.linalg.norm(residual))
+                if residual_norm <= coincident_count:
+                    return estimate
+                retained = coincident_count / residual_norm
+                updated = retained * estimate + (1.0 - retained) * weighted
+            else:
+                updated = weighted
+            if float(np.linalg.norm(updated - estimate)) <= 1e-12:
+                return updated
+            estimate = updated
+        return estimate
 
     @staticmethod
     def _independent_z_leverage_metrics(
@@ -4396,12 +4514,17 @@ class GeometricCalibrationService:
                 "USB carriage motion has insufficient independent Z leverage "
                 "after residualizing commanded X/Y"
             )
+        leverage_fractions = np.square(residualized_z) / residualized_energy
         return {
             "residualized_z": residualized_z,
             "residualized_energy": residualized_energy,
             "ratio": math.sqrt(residualized_energy / centered_energy),
             "rms_mm": math.sqrt(residualized_energy / len(residualized_z)),
             "span_mm": float(np.ptp(residualized_z)),
+            "maximum_fraction": float(np.max(leverage_fractions)),
+            "effective_samples": float(
+                1.0 / np.sum(np.square(leverage_fractions))
+            ),
         }
 
     def _translation_slope_diagnostics(

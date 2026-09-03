@@ -578,7 +578,15 @@ class ScanSession:
         for side in self._LASER_SIDES:
             plane = planes.get(side, {}) if isinstance(planes, Mapping) else {}
             normal = plane.get("normal")
-            if not self._vector_valid(normal, nonzero=True):
+            if (
+                not self._vector_valid(normal, nonzero=True)
+                or not math.isclose(
+                    float(np.linalg.norm(np.asarray(normal, dtype=float))),
+                    1.0,
+                    rel_tol=0,
+                    abs_tol=1e-6,
+                )
+            ):
                 blockers.append(f"Laser '{side}' calibrated plane normal is missing")
             if not self._finite_number(plane.get("offset_mm")):
                 blockers.append(f"Laser '{side}' calibrated plane offset_mm is missing")
@@ -593,11 +601,19 @@ class ScanSession:
                 if isinstance(quality, Mapping)
                 else None
             )
+            minimum_points = (
+                quality.get("minimum_points")
+                if isinstance(quality, Mapping)
+                else None
+            )
             inlier_points_valid = (
                 isinstance(inlier_points, list)
                 and self._finite_number(
                     minimum_points_per_view, positive=True
                 )
+                and self._finite_number(minimum_points, positive=True)
+                and float(minimum_points_per_view) >= 10
+                and float(minimum_points) >= 30
                 and self._finite_number(quality.get("views"), positive=True)
                 and len(inlier_points) == int(float(quality["views"]))
                 and len(
@@ -615,6 +631,8 @@ class ScanSession:
                     >= float(minimum_points_per_view)
                     for entry in inlier_points
                 )
+                and sum(float(entry["points"]) for entry in inlier_points)
+                >= float(minimum_points)
             )
             provenance_valid = (
                 plane.get("source") == "pi_checkerboard_structured_light"
@@ -643,9 +661,18 @@ class ScanSession:
                 and self._finite_number(
                     quality.get("minimum_plane_spread_ratio"), positive=True
                 )
+                and float(quality["minimum_plane_spread_ratio"]) >= 1e-3
                 and float(quality["plane_spread_ratio"])
                 >= float(quality["minimum_plane_spread_ratio"])
                 and inlier_points_valid
+                and self._laser_pose_consensus_valid(
+                    quality,
+                    {
+                        entry.get("pose_index")
+                        for entry in inlier_points
+                        if isinstance(entry, Mapping)
+                    },
+                )
             )
             if (
                 not isinstance(quality, Mapping)
@@ -850,6 +877,156 @@ class ScanSession:
         except (TypeError, ValueError):
             return False
         return math.isfinite(number) and (number > 0 if positive else True)
+
+    def _laser_pose_consensus_valid(
+        self,
+        quality: Mapping[str, Any],
+        retained_pose_indexes: set[Any],
+    ) -> bool:
+        numeric_names = (
+            "views",
+            "minimum_views",
+            "independent_board_orientations",
+            "minimum_board_orientations",
+            "original_accepted_poses",
+            "required_retained_poses",
+            "retained_pose_fraction",
+            "minimum_retained_pose_fraction",
+            "rejected_pose_fraction",
+            "maximum_rejected_pose_fraction",
+            "pose_residual_threshold_mm",
+            "minimum_pose_inlier_fraction",
+            "hypotheses_evaluated",
+            "maximum_pose_hypotheses",
+        )
+        if not all(self._finite_number(quality.get(name)) for name in numeric_names):
+            return False
+        views = float(quality["views"])
+        minimum_views = float(quality["minimum_views"])
+        orientations = float(quality["independent_board_orientations"])
+        minimum_orientations = float(quality["minimum_board_orientations"])
+        original = float(quality["original_accepted_poses"])
+        required = float(quality["required_retained_poses"])
+        retained_fraction = float(quality["retained_pose_fraction"])
+        minimum_fraction = float(quality["minimum_retained_pose_fraction"])
+        rejected_fraction = float(quality["rejected_pose_fraction"])
+        maximum_rejected = float(quality["maximum_rejected_pose_fraction"])
+        threshold = float(quality["pose_residual_threshold_mm"])
+        minimum_inlier_fraction = float(quality["minimum_pose_inlier_fraction"])
+        hypotheses = float(quality["hypotheses_evaluated"])
+        maximum_hypotheses = float(quality["maximum_pose_hypotheses"])
+        minimum_points = float(quality.get("minimum_points_per_view", math.nan))
+        per_pose = quality.get("per_pose_residuals")
+        rejected = quality.get("rejected_poses")
+        leave_one_out = quality.get("leave_one_pose_out")
+        if (
+            quality.get("consensus_method") != "deterministic_pose_balanced_v1"
+            or quality.get("ambiguity_checked") is not True
+            or quality.get("ambiguous") is not False
+            or original != int(original)
+            or required != int(required)
+            or views != int(views)
+            or minimum_views != int(minimum_views)
+            or orientations != int(orientations)
+            or minimum_orientations != int(minimum_orientations)
+            or orientations < minimum_orientations
+            or minimum_orientations < 3
+            or hypotheses != int(hypotheses)
+            or maximum_hypotheses != int(maximum_hypotheses)
+            or not original >= views >= minimum_views >= 3
+            or required
+            != max(
+                minimum_views,
+                math.ceil(original * minimum_fraction),
+                math.ceil(original * (1.0 - maximum_rejected)),
+            )
+            or views < required
+            or not 0.75 <= minimum_fraction <= retained_fraction <= 1.0
+            or not math.isclose(
+                retained_fraction, views / original, rel_tol=0, abs_tol=1e-9
+            )
+            or not 0 <= rejected_fraction <= maximum_rejected <= 0.25
+            or not math.isclose(
+                rejected_fraction,
+                (original - views) / original,
+                rel_tol=0,
+                abs_tol=1e-9,
+            )
+            or not 0 < threshold <= 2.0
+            or not 0.75 <= minimum_inlier_fraction <= 1.0
+            or not 1 <= hypotheses <= maximum_hypotheses <= 128
+            or not math.isfinite(minimum_points)
+            or minimum_points <= 0
+            or not isinstance(per_pose, list)
+            or len(per_pose) != int(original)
+            or not isinstance(rejected, list)
+            or len(rejected) != int(original - views)
+            or not isinstance(leave_one_out, list)
+            or len(leave_one_out) != int(views)
+        ):
+            return False
+        per_pose_indexes = {
+            entry.get("pose_index")
+            for entry in per_pose
+            if isinstance(entry, Mapping)
+        }
+        per_pose_retained = {
+            entry.get("pose_index")
+            for entry in per_pose
+            if isinstance(entry, Mapping) and entry.get("retained") is True
+        }
+        leave_one_out_indexes = {
+            entry.get("pose_index")
+            for entry in leave_one_out
+            if isinstance(entry, Mapping)
+        }
+        rejected_indexes = {
+            entry.get("pose_index")
+            for entry in rejected
+            if isinstance(entry, Mapping)
+        }
+        return (
+            len(per_pose_indexes) == len(per_pose)
+            and per_pose_retained == retained_pose_indexes
+            and leave_one_out_indexes == retained_pose_indexes
+            and len(rejected_indexes) == len(rejected)
+            and rejected_indexes == per_pose_indexes - retained_pose_indexes
+            and all(
+                isinstance(entry, Mapping)
+                and entry.get("retained") in (True, False)
+                and self._finite_number(entry.get("pose_index"))
+                and float(entry["pose_index"]) >= 0
+                and float(entry["pose_index"])
+                == int(float(entry["pose_index"]))
+                and self._finite_number(entry.get("original_points"), positive=True)
+                and self._finite_number(entry.get("inlier_points"))
+                and self._finite_number(entry.get("inlier_fraction"))
+                and float(entry["original_points"])
+                == int(float(entry["original_points"]))
+                and float(entry["inlier_points"])
+                == int(float(entry["inlier_points"]))
+                and 0
+                <= float(entry["inlier_points"])
+                <= float(entry["original_points"])
+                and 0 <= float(entry["inlier_fraction"]) <= 1.0
+                and math.isclose(
+                    float(entry["inlier_fraction"]),
+                    float(entry["inlier_points"])
+                    / float(entry["original_points"]),
+                    rel_tol=0,
+                    abs_tol=1e-9,
+                )
+                and (
+                    entry.get("retained") is False
+                    or (
+                        float(entry["inlier_points"]) >= minimum_points
+                        and float(entry["inlier_fraction"])
+                        >= minimum_inlier_fraction
+                    )
+                )
+                for entry in per_pose
+            )
+        )
 
     def _reference_x_within_limits(self, reference_x: float) -> bool:
         limits = self._config.get("axis_limits_mm", {})

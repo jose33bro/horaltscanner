@@ -160,10 +160,34 @@ full-power behavior for backward compatibility. Do not weaken the line width,
 point, pose, orientation, spread, or 2 mm plane-fit gates to compensate for
 optical saturation.
 
+Before the final point-level robust fit, laser-plane calibration now runs a
+deterministic, bounded, pose-balanced consensus. It forms at most 128 hypotheses
+from the global pose set and pose pairs, with at most 64 evenly distributed
+points from each pose. If exhaustive global/pair coverage would exceed the
+configured bound, calibration fails closed rather than sampling hypotheses and
+potentially missing a competing plane. A hypothesis is scored independently against every
+originally accepted Pi pose. A pose contributes only when at least the
+configured points and 75% of all its points lie within the fixed 2 mm residual
+threshold. Thus one dense pose cannot dominate the score and a small arbitrary
+subset cannot preserve a bad pose. The retained set must contain at least 75%
+of the originally accepted poses, may reject at most 25%, and must still contain
+at least three poses and three independently oriented boards. The final robust
+fit is pose-balanced, retains the existing two-dimensional spread check, and
+must itself remain at or below 2 mm RMS. No subset passing only weaker limits is
+accepted.
+
+Competing hypotheses with similarly sized, substantially distinct pose support
+are compared before selection. If their normals differ by at least 3 degrees or
+their canonical offsets differ by at least 2 mm, calibration fails as ambiguous
+instead of selecting either plane. Reports include the bounded hypothesis count,
+all consensus thresholds, original/retained/rejected pose fractions, per-pose
+residual RMS/median/p90/p95/maximum and surviving-point fraction, explicit
+rejection reasons, and leave-one-pose-out training/held-out RMS plus plane
+normal/offset deltas.
+
 Calibration payload validation requires this Pi-authoritative provenance and
-its surviving robust-fit per-pose point counts, view/orientation counts, and
-two-dimensional spread condition. A pose that retains fewer than the configured
-points after robust rejection is removed before the plane is refitted. A legacy
+the complete unambiguous pose-consensus evidence, surviving per-pose point
+counts, view/orientation counts, and two-dimensional spread condition. A legacy
 laser plane without that evidence is intentionally rejected and must be
 recalibrated; it is not silently trusted after upgrade. Persistence prepares
 the report and rollback backup, renames them, and syncs the parent directory
@@ -251,26 +275,29 @@ curl -fsS http://127.0.0.1:5000/api/calibration/geometric/report?download=1 \
   -o horalscanner-calibration-report.json
 ```
 
-### Deploy the carriage-fit correction without replacing local configuration
+### Deploy pose consensus without replacing any local configuration
 
-After this correction is merged to `main`, preserve the Pi's locally tuned
-11-pose trajectory, 5% PWM profile, scan poses, and hardware configuration.
-The only intentional local setting change below restores the temporary USB
-vertical-alignment override from 15° to the production 12° gate. These commands
-do not move an axis or energize a laser:
+After this change is merged to `main`, preserve the Pi's complete local
+application, hardware, and saved-pose configuration byte for byte. The
+pose-consensus implementation supplies its safety defaults when the local
+application file does not yet contain the new keys. Do not copy the tracked
+configuration over the Pi's tuned 11-pose trajectory or 5% PWM profile. These
+commands do not move an axis or energize a laser:
 
 ```bash
 set -eu
 cd /home/pi/horaltscanner
 test "$(git branch --show-current)" = main
 sudo systemctl stop horalscanner
-backup="$HOME/horalscanner-usb-fit-update-$(date +%Y%m%d-%H%M%S)"
+backup="$HOME/horalscanner-pose-consensus-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$backup/config"
 cp -a config/horalscanner.json config/horalscanner_config.json \
   config/scan_poses.json "$backup/config/"
 if sudo test -e /var/lib/horalscanner/calibration.json; then
   sudo cp -a /var/lib/horalscanner/calibration.json "$backup/"
 fi
+sha256sum config/horalscanner.json config/horalscanner_config.json \
+  config/scan_poses.json >"$backup/config.sha256"
 git fetch origin main
 git restore --source=HEAD --worktree -- \
   config/horalscanner.json config/horalscanner_config.json config/scan_poses.json
@@ -279,22 +306,14 @@ cp -a "$backup/config/horalscanner.json" config/horalscanner.json
 cp -a "$backup/config/horalscanner_config.json" config/horalscanner_config.json
 cp -a "$backup/config/scan_poses.json" config/scan_poses.json
 
-/home/pi/horaltscanner_env/bin/python - <<PY
-import copy
+/home/pi/horaltscanner_env/bin/python - <<'PY'
 import json
 from pathlib import Path
 
-backup = Path("$backup/config")
 application_path = Path("config/horalscanner.json")
 hardware_path = Path("config/horalscanner_config.json")
-before = json.loads((backup / "horalscanner.json").read_text())
-application = copy.deepcopy(before)
+application = json.loads(application_path.read_text())
 geometric = application["scanner"]["geometric_calibration"]
-geometric["maximum_usb_z_vertical_alignment_deg"] = 12
-geometric["minimum_carriage_z_leverage_ratio"] = 0.25
-geometric["maximum_usb_z_vector_uncertainty_mm_per_commanded_mm"] = 0.15
-application_path.write_text(json.dumps(application, indent=2) + "\n")
-
 start = geometric["starting_pose_mm"]
 poses = [
     {
@@ -313,40 +332,37 @@ assert geometric["maximum_carriage_fit_condition_number"] == 50
 assert geometric["maximum_extrinsic_rms_mm"] == 5
 assert geometric["maximum_extrinsic_rms_deg"] == 3
 assert geometric["maximum_laser_plane_rms_mm"] == 2
-
-preserved = copy.deepcopy(application)
-preserved_geometric = preserved["scanner"]["geometric_calibration"]
-original = copy.deepcopy(before)
-original_geometric = original["scanner"]["geometric_calibration"]
-for key in (
-    "maximum_usb_z_vertical_alignment_deg",
-    "minimum_carriage_z_leverage_ratio",
-    "maximum_usb_z_vector_uncertainty_mm_per_commanded_mm",
-):
-    preserved_geometric.pop(key, None)
-    original_geometric.pop(key, None)
-assert preserved == original, "an unrelated application setting changed"
+assert geometric["maximum_laser_line_residual_px"] == 2
+assert geometric["maximum_laser_line_width_px"] == 12
+assert geometric["minimum_laser_views"] == 3
+assert geometric["minimum_laser_board_orientations"] == 3
+assert geometric["minimum_laser_plane_spread_ratio"] == 0.001
 
 hardware = json.loads(hardware_path.read_text())
 assert hardware["lasers"]["pwm_enabled"] is True
 assert hardware["lasers"]["calibration_power"] == 0.05
 PY
 
+sha256sum -c "$backup/config.sha256"
+cmp "$backup/config/horalscanner.json" config/horalscanner.json
 cmp "$backup/config/horalscanner_config.json" config/horalscanner_config.json
 cmp "$backup/config/scan_poses.json" config/scan_poses.json
 /home/pi/horaltscanner_env/bin/python -m py_compile \
-  software/api/geometric_calibration.py
+  software/api/geometric_calibration.py software/api/scanner_engine.py
 /home/pi/horaltscanner_env/bin/python -m pytest -q software/tests
-sudo test ! -e /var/lib/horalscanner/calibration.json
+if sudo test -e /var/lib/horalscanner/calibration.json; then
+  sudo cmp "$backup/calibration.json" /var/lib/horalscanner/calibration.json
+else
+  test ! -e "$backup/calibration.json"
+fi
 sudo systemctl restart horalscanner
 sudo systemctl status --no-pager horalscanner
 curl -fsS http://127.0.0.1:5000/api/status | python3 -m json.tool
 ```
 
-The final `sudo test` is expected for the stated no-calibration-file starting
-state. If a supervised run has since created a calibration, replace it with
-`sudo python3 -m json.tool /var/lib/horalscanner/calibration.json >/dev/null`;
-never delete a measured calibration as part of deployment.
+For the stated current machine, both the backup and active calibration-file
+checks take the no-file branch. Never delete or synthesize measured calibration
+as part of deployment.
 
 Keep the exact measured TF-Luna origin/direction and start pose in
 `/home/pi/geometric-calibration-request.locked-5pct.json`; do not remeasure or
@@ -369,22 +385,34 @@ curl -fsS -X POST -H 'Content-Type: application/json' \
 watch -n 1 'curl -fsS http://127.0.0.1:5000/api/calibration/geometric/status'
 curl -fsS \
   'http://127.0.0.1:5000/api/calibration/geometric/report?download=1' \
-  -o horalscanner-calibration-report-usb-fit-1.json
+  -o horalscanner-calibration-report-pose-consensus-1.json
 ```
 
-For an accepted run, verify `carriage_fit` reports all five local Z levels,
-independent-Z leverage at least 0.25, vector uncertainty at most 0.15,
-scale within 15%, vertical alignment at most 12°, and USB extrinsics within
-5 mm / 3°. A `changed_views` list is acceptable only when the normalized
-per-view rotation residuals and final extrinsic gates pass. Do not raise any
-limit for a failure.
+The authorized pre-change report contains compact extraction counts and line
+statistics but no raw 3D board-intersection points. It therefore cannot
+determine offline which, if any, of left poses 0, 1, 3, or 5 is the outlier, and
+this software change does not claim that report would pass. The supervised
+retest is the required evidence.
+
+For an accepted run, verify both laser qualities report
+`consensus_method: deterministic_pose_balanced_v1`, `ambiguous: false`, at least
+three retained poses and orientations, retained fraction at least 0.75, rejected
+fraction at most 0.25, every retained pose at or above the configured point and
+75% inlier-fraction gates, adequate 2D spread, and final RMS at or below 2 mm.
+Inspect every per-pose and leave-one-pose-out RMS. Also verify `carriage_fit`
+still reports all five local Z levels, independent-Z leverage at least 0.25,
+vector uncertainty at most 0.15, scale within 15%, vertical alignment at most
+12°, and USB extrinsics within 5 mm / 3°. Do not raise any limit for a failure.
 
 With the setup unchanged and still supervised, run the same request once more
-and save `horalscanner-calibration-report-usb-fit-2.json`. Compare the two
+and save `horalscanner-calibration-report-pose-consensus-2.json`. Compare the two
+laser retained/rejected pose sets, per-pose residual distributions,
+leave-one-pose-out diagnostics, normals, offsets, and RMS values as well as the
 carriage vectors, per-Z-level repeatability, normalized PnP adjustments, and
-extrinsic residuals. Stop and retain both reports if a level disappears, the
-adjustments oscillate without a discrete 180° correspondence switch, the
-vector remains near 35°, or either run fails an existing gate.
+extrinsic residuals. Stop and retain both reports if the consensus is ambiguous,
+the selected pose set changes without corresponding residual evidence, no
+subset passes 2 mm, a level disappears, the USB adjustments oscillate without
+a discrete 180° correspondence switch, or either run fails an existing gate.
 
 Do not create or copy a calibration file after a failed run. The service writes
 runtime calibration only after every existing point, pose, orientation, spread,

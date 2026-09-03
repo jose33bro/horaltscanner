@@ -70,11 +70,41 @@ def valid_calibration():
             "minimum_board_orientations": 3,
             "plane_spread_ratio": 0.5,
             "minimum_plane_spread_ratio": 0.001,
+            "minimum_points": 30,
             "minimum_points_per_view": 10,
             "inlier_points_per_pose": [
                 {"pose_index": 0, "points": 10},
                 {"pose_index": 1, "points": 10},
                 {"pose_index": 2, "points": 10},
+            ],
+            "consensus_method": "deterministic_pose_balanced_v1",
+            "original_accepted_poses": 3,
+            "required_retained_poses": 3,
+            "retained_pose_fraction": 1.0,
+            "minimum_retained_pose_fraction": 0.75,
+            "rejected_pose_fraction": 0.0,
+            "maximum_rejected_pose_fraction": 0.25,
+            "pose_residual_threshold_mm": 2.0,
+            "minimum_pose_inlier_fraction": 0.75,
+            "hypotheses_evaluated": 4,
+            "maximum_pose_hypotheses": 128,
+            "ambiguity_checked": True,
+            "ambiguous": False,
+            "per_pose_residuals": [
+                {
+                    "pose_index": index,
+                    "original_points": 10,
+                    "inlier_points": 10,
+                    "inlier_fraction": 1.0,
+                    "retained": True,
+                    "reason": None,
+                }
+                for index in range(3)
+            ],
+            "rejected_poses": [],
+            "leave_one_pose_out": [
+                {"pose_index": index, "fit_available": True}
+                for index in range(3)
             ],
         },
     }
@@ -180,6 +210,19 @@ class CalibrationMathTests(unittest.TestCase):
         with self.assertRaisesRegex(CalibrationError, "spread ratio"):
             fit_plane_robust(points, minimum_points=20)
 
+    def test_robust_plane_fit_cannot_weaken_spread_floor(self):
+        points = [
+            [float(x), float(y), 0.0]
+            for x in range(5)
+            for y in range(5)
+        ]
+        with self.assertRaisesRegex(CalibrationError, "spread ratio"):
+            fit_plane_robust(
+                points,
+                minimum_points=20,
+                minimum_spread_ratio=1e-6,
+            )
+
     def test_lidar_transform_requires_explicit_finite_nonzero_direction(self):
         with self.assertRaises(CalibrationError):
             transform_from_beam([0, 0, 0], [0, 0, 0])
@@ -284,6 +327,46 @@ class CalibrationMathTests(unittest.TestCase):
                     CalibrationError, "laser plane quality"
                 ):
                     validate_calibration_payload(payload)
+
+    def test_payload_requires_unambiguous_pose_consensus_evidence(self):
+        mutations = (
+            lambda quality: quality.pop("consensus_method"),
+            lambda quality: quality.update(ambiguous=True),
+            lambda quality: quality.update(retained_pose_fraction=0.5),
+            lambda quality: quality.update(maximum_rejected_pose_fraction=0.5),
+            lambda quality: quality.update(minimum_pose_inlier_fraction=0.5),
+            lambda quality: quality.update(hypotheses_evaluated=257),
+            lambda quality: quality.pop("leave_one_pose_out"),
+            lambda quality: quality.update(views=3.5),
+            lambda quality: quality["per_pose_residuals"][0].update(
+                inlier_points=11
+            ),
+            lambda quality: quality["rejected_poses"].append(
+                {"pose_index": 99, "reason": "fabricated"}
+            ),
+            lambda quality: quality.update(minimum_plane_spread_ratio=1e-6),
+            lambda quality: quality.update(independent_board_orientations=3.5),
+            lambda quality: quality.update(minimum_points=3),
+            lambda quality: quality.update(minimum_points_per_view=1),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                payload = valid_calibration()
+                mutate(payload["laser_planes"]["left"]["quality"])
+                with self.assertRaisesRegex(
+                    CalibrationError, "laser plane quality"
+                ):
+                    validate_calibration_payload(payload)
+
+    def test_payload_rejects_scaled_laser_plane_coefficients(self):
+        payload = valid_calibration()
+        payload["laser_planes"]["left"].update(
+            normal=[100.0, 0.0, 0.0],
+            offset_mm=-2000.0,
+        )
+
+        with self.assertRaisesRegex(CalibrationError, "laser plane is invalid"):
+            validate_calibration_payload(payload)
 
     @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
     def test_laser_extraction_ignores_off_board_reflections(self):
@@ -2837,7 +2920,7 @@ class CalibrationServiceTests(unittest.TestCase):
         pose_indexes = [0] * 30 + [1, 2]
 
         with self.assertRaisesRegex(
-            CalibrationError, "retains only 1 Pi poses"
+            CalibrationError, "no bounded pose-pair"
         ):
             self.service._fit_laser_plane_views(
                 points,
@@ -2849,58 +2932,216 @@ class CalibrationServiceTests(unittest.TestCase):
                 minimum_orientations=3,
             )
 
-    def test_robust_laser_fit_converges_after_more_than_pose_count_passes(self):
+    @staticmethod
+    def _laser_pose_groups(
+        z_values,
+        *,
+        point_counts=None,
+        poses=None,
+        point_factory=None,
+    ):
+        point_counts = point_counts or [30] * len(z_values)
+        poses = poses or [
+            {
+                "x": 195.0 - 10.0 * index,
+                "y": 10.4719755 * index,
+                "z": 20.0,
+            }
+            for index in range(len(z_values))
+        ]
+        points = []
+        labels = []
+        for pose_index, (z_value, count) in enumerate(
+            zip(z_values, point_counts)
+        ):
+            for point_index, along in enumerate(
+                np.linspace(-20.0, 20.0, count)
+            ):
+                point = (
+                    point_factory(pose_index, point_index, along)
+                    if point_factory is not None
+                    else [20.0 * pose_index, float(along), float(z_value)]
+                )
+                points.append(point)
+                labels.append(pose_index)
+        return poses, points, labels
+
+    def _fit_pose_groups(self, z_values, **kwargs):
+        poses, points, labels = self._laser_pose_groups(z_values, **kwargs)
+        return self.service._fit_laser_plane_views(
+            points,
+            labels,
+            poses,
+            minimum_points=30,
+            minimum_points_per_view=10,
+            minimum_views=3,
+            minimum_orientations=3,
+            maximum_rms=2.0,
+        )
+
+    def test_pose_consensus_drops_one_offset_pose_and_keeps_three_orientations(self):
+        normal, offset, quality = self._fit_pose_groups([0.0, 0.0, 0.0, 20.0])
+
+        np.testing.assert_allclose(normal, [0.0, 0.0, 1.0], atol=1e-8)
+        self.assertAlmostEqual(offset, 0.0, places=8)
+        self.assertEqual(quality["views"], 3)
+        self.assertEqual(
+            quality["inlier_points_per_pose"],
+            [
+                {"pose_index": 0, "points": 30},
+                {"pose_index": 1, "points": 30},
+                {"pose_index": 2, "points": 30},
+            ],
+        )
+        self.assertEqual(quality["rejected_poses"][0]["pose_index"], 3)
+        self.assertEqual(len(quality["leave_one_pose_out"]), 3)
+        self.assertLess(quality["rms_mm"], 1e-8)
+
+    def test_pose_consensus_rejects_two_by_two_competing_planes_as_ambiguous(self):
+        with self.assertRaisesRegex(CalibrationError, "ambiguous competing"):
+            self._fit_pose_groups([0.0, 0.0, 30.0, 30.0])
+
+    def test_pose_consensus_detects_distinct_planes_with_same_pose_support(self):
+        with self.assertRaisesRegex(CalibrationError, "ambiguous competing"):
+            self._fit_pose_groups([0.0, 0.0, 2.0, 2.0])
+
+    def test_pose_consensus_detects_overlapping_three_of_four_planes(self):
+        def overlapping_planes(pose_index, _point_index, along):
+            x = 0.0 if pose_index < 2 else 20.0
+            z = 10.0 if pose_index == 3 else 0.0
+            return [x, float(along), z]
+
+        with self.assertRaisesRegex(CalibrationError, "ambiguous competing"):
+            self._fit_pose_groups(
+                [0.0, 0.0, 0.0, 0.0],
+                point_factory=overlapping_planes,
+            )
+
+    def test_pose_consensus_cannot_weaken_point_evidence_floors(self):
+        poses, points, labels = self._laser_pose_groups([0.0, 0.0, 0.0])
+        for minimum_points, minimum_per_view in ((3, 10), (30, 1)):
+            with self.subTest(
+                minimum_points=minimum_points,
+                minimum_per_view=minimum_per_view,
+            ):
+                with self.assertRaisesRegex(
+                    CalibrationError, "configuration is unsafe"
+                ):
+                    self.service._fit_laser_plane_views(
+                        points,
+                        labels,
+                        poses,
+                        minimum_points=minimum_points,
+                        minimum_points_per_view=minimum_per_view,
+                        minimum_views=3,
+                        minimum_orientations=3,
+                        maximum_rms=2.0,
+                    )
+
+    def test_pose_consensus_does_not_let_one_dense_pose_hide_two_sparse_poses(self):
+        with self.assertRaisesRegex(CalibrationError, "no bounded pose-pair"):
+            self._fit_pose_groups(
+                [0.0, 0.0, 0.0],
+                point_counts=[30, 1, 1],
+            )
+
+    def test_pose_consensus_removes_pose_with_too_few_surviving_points(self):
+        def mixed_pose(pose_index, point_index, along):
+            z_value = 0.0
+            if pose_index == 3 and point_index >= 5:
+                z_value = 20.0
+            return [20.0 * pose_index, float(along), z_value]
+
+        _, _, quality = self._fit_pose_groups(
+            [0.0, 0.0, 0.0, 0.0],
+            point_factory=mixed_pose,
+        )
+
+        rejected = quality["rejected_poses"]
+        self.assertEqual([entry["pose_index"] for entry in rejected], [3])
+        self.assertIn("10 required", rejected[0]["reason"])
+
+    def test_pose_consensus_fails_when_rejection_leaves_two_orientations(self):
         poses = [
             {"x": 195.0, "y": 0.0, "z": 20.0},
-            {"x": 185.0, "y": 10.0, "z": 30.0},
-            {"x": 175.0, "y": 20.0, "z": 40.0},
+            {"x": 185.0, "y": 1.0, "z": 20.0},
+            {"x": 175.0, "y": 10.0, "z": 20.0},
+            {"x": 165.0, "y": 20.0, "z": 20.0},
         ]
-        points = [
-            [float(pose_index * 20 + index), float(index % 7), 0.0]
-            for pose_index in range(3)
-            for index in range(20)
-        ]
-        pose_indexes = [
-            pose_index for pose_index in range(3) for _ in range(20)
-        ]
-        calls = 0
-
-        def slowly_converging_fit(values, **_kwargs):
-            nonlocal calls
-            calls += 1
-            mask = np.ones(len(values), dtype=bool)
-            if calls <= 4:
-                mask[-1] = False
-            return (
-                np.array([0.0, 0.0, 1.0]),
-                0.0,
-                {
-                    "accepted": True,
-                    "rms_mm": 0.1,
-                    "inliers": int(mask.sum()),
-                    "samples": len(values),
-                    "plane_spread_ratio": 0.5,
-                    "minimum_plane_spread_ratio": 0.001,
-                    "inlier_mask": mask.tolist(),
-                },
+        with self.assertRaisesRegex(
+            CalibrationError, "2 independent orientations"
+        ):
+            self._fit_pose_groups(
+                [0.0, 0.0, 0.0, 20.0],
+                poses=poses,
             )
+
+    def test_pose_consensus_rejects_curved_nonplanar_points_in_every_pose(self):
+        def curved(pose_index, _point_index, along):
+            return [
+                20.0 * pose_index,
+                float(along),
+                0.08 * float(along) ** 2,
+            ]
+
+        with self.assertRaises(CalibrationError):
+            self._fit_pose_groups(
+                [0.0, 0.0, 0.0, 0.0],
+                point_factory=curved,
+            )
+
+    def test_pose_consensus_keeps_all_clean_poses(self):
+        _, _, quality = self._fit_pose_groups([0.0, 0.0, 0.0, 0.0])
+
+        self.assertEqual(quality["views"], 4)
+        self.assertEqual(quality["retained_pose_fraction"], 1.0)
+        self.assertEqual(quality["rejected_poses"], [])
+        self.assertTrue(
+            all(entry["retained"] for entry in quality["per_pose_residuals"])
+        )
+
+    def test_pose_consensus_hypothesis_bound_is_deterministic(self):
+        self.service._config.update(
+            maximum_laser_pose_hypotheses=5,
+            maximum_laser_hypothesis_points_per_pose=16,
+        )
+
+        failures = []
+        for _ in range(2):
+            with self.assertRaisesRegex(
+                CalibrationError, "exceed the fail-closed bound"
+            ) as raised:
+                self._fit_pose_groups([0.0] * 8)
+            failures.append(raised.exception.quality)
+
+        self.assertEqual(failures[0], failures[1])
+        self.assertEqual(failures[0]["hypotheses_evaluated"], 0)
+        self.assertEqual(failures[0]["candidate_hypotheses"], 29)
+        self.assertEqual(failures[0]["maximum_pose_hypotheses"], 5)
+
+    def test_pose_consensus_preserves_diagnostics_when_final_robust_fit_fails(self):
+        poses, points, labels = self._laser_pose_groups([0.0, 0.0, 0.0])
 
         with mock.patch(
             "software.api.geometric_calibration.fit_plane_robust",
-            side_effect=slowly_converging_fit,
+            side_effect=CalibrationError("forced robust failure"),
         ):
-            _, _, quality = self.service._fit_laser_plane_views(
-                points,
-                pose_indexes,
-                poses,
-                minimum_points=30,
-                minimum_points_per_view=10,
-                minimum_views=3,
-                minimum_orientations=3,
-            )
+            with self.assertRaisesRegex(
+                CalibrationError, "balanced robust"
+            ) as raised:
+                self.service._fit_laser_plane_views(
+                    points,
+                    labels,
+                    poses,
+                    minimum_points=30,
+                    minimum_points_per_view=10,
+                    minimum_views=3,
+                    minimum_orientations=3,
+                    maximum_rms=2.0,
+                )
 
-        self.assertEqual(calls, 5)
-        self.assertEqual(quality["views"], 3)
+        self.assertEqual(len(raised.exception.quality["per_pose_residuals"]), 3)
+        self.assertEqual(raised.exception.quality["views"], 3)
 
     def test_unverified_usb_laser_path_never_replaces_or_blocks_pi_plane(self):
         poses = [

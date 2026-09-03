@@ -26,6 +26,7 @@ from software.api.geometric_calibration import (
     GeometricCalibrationService,
     BOARD_TO_SCANNER_AT_REFERENCE,
     PNP_BOARD_FRAME_ADJUSTMENTS,
+    _classify_checker_gaps,
     checkerboard_view_metrics,
     checkerboard_points,
     extract_laser_line_pixels,
@@ -38,6 +39,9 @@ from software.api.geometric_calibration import (
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRATCH = ROOT / ".test-geometric-calibration"
+RIDGE_BRIDGE_REPORT_FIXTURE = (
+    ROOT / "software" / "tests" / "fixtures" / "checker_ridge_bridge_report.json"
+)
 USB_CARRIAGE_REPORT_FIXTURE = (
     ROOT / "software" / "tests" / "fixtures" / "usb_carriage_real_reports.json"
 )
@@ -643,6 +647,121 @@ class CalibrationMathTests(unittest.TestCase):
             diagnostic["strict_unexplained_gap_limit_px"],
         )
         self.assertGreater(diagnostic["checker_boundary_contrast_min"], 20)
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_bridges_projected_subthreshold_red_ridge(self):
+        ambient, laser, corners, missing_rows = (
+            self._projected_checker_ridge_images()
+        )
+        first, last = missing_rows
+        delta = laser[first : last + 1].astype(np.float32) - ambient[
+            first : last + 1
+        ].astype(np.float32)
+        laser[first : last + 1] = np.clip(
+            ambient[first : last + 1].astype(np.float32) + delta * 0.15,
+            0,
+            255,
+        ).astype(np.uint8)
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertTrue(diagnostic["accepted"], diagnostic)
+        self.assertGreater(len(pixels), 90)
+        self.assertEqual(diagnostic["bridged_checker_gaps"], 1)
+        self.assertGreater(
+            diagnostic["checker_gap_response_p90_max"],
+            diagnostic["minimum_ridge_prominence"] * 0.9,
+        )
+
+    def test_real_report_checker_gaps_bridge_from_geometric_evidence(self):
+        report = json.loads(
+            RIDGE_BRIDGE_REPORT_FIXTURE.read_text(encoding="utf-8")
+        )
+        case = report["left_pi_pose_0"]
+        pitch = float(case["projected_checker_pitch_px_median"])
+        first_boundary = 20.0
+        boundaries = first_boundary + pitch * np.arange(6)
+        corner_grid = np.asarray(
+            [
+                [[80.0 + column * 20.0, boundary] for column in range(11)]
+                for boundary in boundaries
+            ],
+            dtype=float,
+        )
+        coefficients = np.asarray(
+            [case["line_slope_x_per_y"], 200.0], dtype=float
+        )
+        rows = np.arange(
+            int(math.ceil(boundaries[0])),
+            int(math.floor(boundaries[-1])) + 1,
+            2,
+            dtype=float,
+        )
+        missing = (
+            ((rows >= boundaries[1]) & (rows < boundaries[2]))
+            | ((rows >= boundaries[3]) & (rows < boundaries[4]))
+        )
+        selected_rows = rows[~missing]
+        selected = np.column_stack(
+            (
+                np.polyval(coefficients, selected_rows),
+                selected_rows,
+            )
+        )
+        height, width = 320, 400
+        ambient = np.full((height, width), 130.0, dtype=float)
+        ridge_response = np.zeros((height, width), dtype=float)
+        fine_response = np.zeros((height, width), dtype=float)
+        chromatic_response = np.zeros((height, width), dtype=float)
+        image_rows, image_columns = np.indices((height, width), dtype=float)
+        centers = np.polyval(coefficients, image_rows)
+        profile = np.exp(-0.5 * ((image_columns - centers) / 2.0) ** 2)
+        for cell in (1, 3):
+            start = int(math.ceil(boundaries[cell]))
+            stop = int(math.floor(boundaries[cell + 1]))
+            ambient[start:stop] = 30.0
+            ridge_response[start:stop] = profile[start:stop] * 24.0
+            fine_response[start:stop] = profile[start:stop] * 10.0
+            chromatic_response[start:stop] = profile[start:stop] * 9.0
+
+        diagnostic = _classify_checker_gaps(
+            corner_grid=corner_grid,
+            selected=selected,
+            coefficients=coefficients,
+            row_stride=2,
+            strict_gap_limit=case["strict_unexplained_gap_limit_px"],
+            maximum_residual=2.0,
+            maximum_width=12.0,
+            minimum_prominence=16.0,
+            minimum_chromatic_support=7.0,
+            minimum_sharpness_ratio=0.2,
+            ridge_response=ridge_response,
+            fine_response=fine_response,
+            chromatic_response=chromatic_response,
+            ambient_luminance=ambient,
+            reference_luminance=130.0,
+        )
+
+        self.assertEqual(
+            case["checker_gap_rejection_counts"],
+            {"ridge_response_not_low": 2},
+        )
+        self.assertEqual(diagnostic["bridged_checker_gaps"], 2)
+        self.assertEqual(diagnostic["checker_gap_rejection_counts"], {})
+        self.assertLessEqual(
+            diagnostic["unexplained_max_gap_px"],
+            case["strict_unexplained_gap_limit_px"],
+        )
 
     @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
     def test_laser_extraction_bridges_periodic_dark_checker_gaps(self):

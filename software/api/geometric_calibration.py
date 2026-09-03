@@ -25,6 +25,14 @@ class CalibrationError(RuntimeError):
     """A calibration quality or hardware guard failed."""
 
 
+class LaserPlaneConsensusError(CalibrationError):
+    """Pose-aware laser-plane consensus failed with reportable diagnostics."""
+
+    def __init__(self, message: str, quality: Mapping[str, Any]):
+        super().__init__(message)
+        self.quality = copy.deepcopy(dict(quality))
+
+
 class CalibrationCancelled(CalibrationError):
     """The operator cancelled calibration."""
 
@@ -1216,7 +1224,7 @@ def fit_plane_robust(
     if (
         len(singular_values) < 2
         or not math.isfinite(minimum_spread_ratio)
-        or not 0 < minimum_spread_ratio < 1
+        or not 1e-3 <= minimum_spread_ratio < 1
         or spread_ratio < minimum_spread_ratio
     ):
         raise CalibrationError(
@@ -1387,7 +1395,13 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
     for side in ("left", "right"):
         plane = calibration.get("laser_planes", {}).get(side, {})
         normal = np.asarray(plane.get("normal"), dtype=float)
-        if normal.shape != (3,) or not np.isfinite(normal).all() or np.linalg.norm(normal) <= 1e-9:
+        if (
+            normal.shape != (3,)
+            or not np.isfinite(normal).all()
+            or not math.isclose(
+                float(np.linalg.norm(normal)), 1.0, rel_tol=0, abs_tol=1e-6
+            )
+        ):
             raise CalibrationError(f"{side} laser plane is invalid")
         if not math.isfinite(float(plane.get("offset_mm", math.nan))):
             raise CalibrationError(f"{side} laser plane offset is invalid")
@@ -1412,9 +1426,48 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
             minimum_points_per_view = float(
                 quality.get("minimum_points_per_view", math.nan)
             )
+            minimum_points = float(
+                quality.get("minimum_points", math.nan)
+            )
+            original_poses = float(
+                quality.get("original_accepted_poses", math.nan)
+            )
+            required_retained_poses = float(
+                quality.get("required_retained_poses", math.nan)
+            )
+            retained_pose_fraction = float(
+                quality.get("retained_pose_fraction", math.nan)
+            )
+            minimum_retained_fraction = float(
+                quality.get("minimum_retained_pose_fraction", math.nan)
+            )
+            rejected_pose_fraction = float(
+                quality.get("rejected_pose_fraction", math.nan)
+            )
+            maximum_rejected_fraction = float(
+                quality.get("maximum_rejected_pose_fraction", math.nan)
+            )
+            pose_residual_threshold = float(
+                quality.get("pose_residual_threshold_mm", math.nan)
+            )
+            minimum_pose_inlier_fraction = float(
+                quality.get("minimum_pose_inlier_fraction", math.nan)
+            )
+            hypotheses_evaluated = float(
+                quality.get("hypotheses_evaluated", math.nan)
+            )
+            maximum_hypotheses = float(
+                quality.get("maximum_pose_hypotheses", math.nan)
+            )
         except (TypeError, ValueError):
             views = minimum_views = orientations = minimum_orientations = math.nan
             spread_ratio = minimum_spread_ratio = minimum_points_per_view = math.nan
+            minimum_points = math.nan
+            original_poses = required_retained_poses = retained_pose_fraction = math.nan
+            minimum_retained_fraction = rejected_pose_fraction = math.nan
+            maximum_rejected_fraction = pose_residual_threshold = math.nan
+            minimum_pose_inlier_fraction = hypotheses_evaluated = math.nan
+            maximum_hypotheses = math.nan
         inlier_points = quality.get("inlier_points_per_pose")
         inlier_points_valid = (
             isinstance(inlier_points, list)
@@ -1437,6 +1490,137 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
                 for entry in inlier_points
             )
         )
+        retained_pose_indexes = {
+            entry.get("pose_index")
+            for entry in inlier_points
+            if isinstance(entry, Mapping)
+        } if isinstance(inlier_points, list) else set()
+        per_pose_residuals = quality.get("per_pose_residuals")
+        rejected_poses = quality.get("rejected_poses")
+        leave_one_out = quality.get("leave_one_pose_out")
+        per_pose_indexes = {
+            entry.get("pose_index")
+            for entry in per_pose_residuals
+            if isinstance(entry, Mapping)
+        } if isinstance(per_pose_residuals, list) else set()
+        per_pose_retained_indexes = {
+            entry.get("pose_index")
+            for entry in per_pose_residuals
+            if isinstance(entry, Mapping) and entry.get("retained") is True
+        } if isinstance(per_pose_residuals, list) else set()
+        rejected_pose_indexes = {
+            entry.get("pose_index")
+            for entry in rejected_poses
+            if isinstance(entry, Mapping)
+        } if isinstance(rejected_poses, list) else set()
+        pose_consensus_valid = (
+            quality.get("consensus_method") == "deterministic_pose_balanced_v1"
+            and quality.get("ambiguity_checked") is True
+            and quality.get("ambiguous") is False
+            and all(
+                math.isfinite(value)
+                for value in (
+                    original_poses,
+                    required_retained_poses,
+                    retained_pose_fraction,
+                    minimum_retained_fraction,
+                    rejected_pose_fraction,
+                    maximum_rejected_fraction,
+                    pose_residual_threshold,
+                    minimum_pose_inlier_fraction,
+                    hypotheses_evaluated,
+                    maximum_hypotheses,
+                )
+            )
+            and original_poses >= views >= 3
+            and views == int(views)
+            and minimum_views == int(minimum_views)
+            and orientations == int(orientations)
+            and minimum_orientations == int(minimum_orientations)
+            and original_poses == int(original_poses)
+            and required_retained_poses == int(required_retained_poses)
+            and required_retained_poses
+            == max(
+                minimum_views,
+                math.ceil(original_poses * minimum_retained_fraction),
+                math.ceil(original_poses * (1.0 - maximum_rejected_fraction)),
+            )
+            and required_retained_poses <= original_poses
+            and views >= required_retained_poses
+            and 0.75 <= minimum_retained_fraction <= 1.0
+            and math.isclose(
+                retained_pose_fraction,
+                views / original_poses,
+                rel_tol=0,
+                abs_tol=1e-9,
+            )
+            and retained_pose_fraction >= minimum_retained_fraction
+            and 0 <= maximum_rejected_fraction <= 0.25
+            and math.isclose(
+                rejected_pose_fraction,
+                (original_poses - views) / original_poses,
+                rel_tol=0,
+                abs_tol=1e-9,
+            )
+            and rejected_pose_fraction <= maximum_rejected_fraction
+            and 0 < pose_residual_threshold <= 2.0
+            and 0.75 <= minimum_pose_inlier_fraction <= 1.0
+            and hypotheses_evaluated == int(hypotheses_evaluated)
+            and maximum_hypotheses == int(maximum_hypotheses)
+            and 1 <= hypotheses_evaluated <= maximum_hypotheses <= 128
+            and isinstance(per_pose_residuals, list)
+            and len(per_pose_residuals) == int(original_poses)
+            and len(per_pose_indexes) == len(per_pose_residuals)
+            and per_pose_retained_indexes == retained_pose_indexes
+            and all(
+                isinstance(entry, Mapping)
+                and entry.get("retained") in (True, False)
+                and finite_at_least(entry.get("pose_index"), 0)
+                and float(entry["pose_index"])
+                == int(float(entry["pose_index"]))
+                and finite_at_least(entry.get("original_points"), 1)
+                and finite_at_least(entry.get("inlier_points"), 0)
+                and float(entry["original_points"])
+                == int(float(entry["original_points"]))
+                and float(entry["inlier_points"])
+                == int(float(entry["inlier_points"]))
+                and float(entry["inlier_points"])
+                <= float(entry["original_points"])
+                and finite_at_least(entry.get("inlier_fraction"), 0)
+                and float(entry["inlier_fraction"]) <= 1.0
+                and math.isclose(
+                    float(entry["inlier_fraction"]),
+                    float(entry["inlier_points"])
+                    / float(entry["original_points"]),
+                    rel_tol=0,
+                    abs_tol=1e-9,
+                )
+                and (
+                    entry.get("retained") is False
+                    or (
+                        finite_at_least(
+                            entry.get("inlier_points"), minimum_points_per_view
+                        )
+                        and float(entry["inlier_fraction"])
+                        >= minimum_pose_inlier_fraction
+                    )
+                )
+                for entry in per_pose_residuals
+            )
+            and isinstance(rejected_poses, list)
+            and len(rejected_poses) == int(original_poses - views)
+            and len(rejected_pose_indexes) == len(rejected_poses)
+            and rejected_pose_indexes
+            == per_pose_indexes - retained_pose_indexes
+            and isinstance(leave_one_out, list)
+            and len(leave_one_out) == int(views)
+            and {
+                entry.get("pose_index")
+                for entry in leave_one_out
+                if isinstance(entry, Mapping)
+            }
+            == retained_pose_indexes
+        )
         if (
             plane.get("source") != "pi_checkerboard_structured_light"
             or not quality.get("accepted")
@@ -1456,6 +1640,7 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
                     minimum_orientations,
                     spread_ratio,
                     minimum_spread_ratio,
+                    minimum_points,
                     minimum_points_per_view,
                 )
             )
@@ -1463,10 +1648,19 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
             or views < minimum_views
             or minimum_orientations < 3
             or orientations < minimum_orientations
-            or minimum_spread_ratio <= 0
+            or minimum_spread_ratio < 1e-3
             or spread_ratio < minimum_spread_ratio
-            or minimum_points_per_view <= 0
+            or minimum_points < 30
+            or minimum_points_per_view < 10
             or not inlier_points_valid
+            or sum(
+                int(float(entry["points"]))
+                for entry in inlier_points
+                if isinstance(entry, Mapping)
+                and finite_at_least(entry.get("points"), 0)
+            )
+            < minimum_points
+            or not pose_consensus_valid
         ):
             raise CalibrationError(f"{side} laser plane quality is not accepted")
 
@@ -4571,15 +4765,33 @@ class GeometricCalibrationService:
                     f"{minimum_points} points, {minimum_views} poses, "
                     f"{minimum_orientations} orientations"
                 )
-            normal, offset, quality = self._fit_laser_plane_views(
-                samples[side]["pi"],
-                sample_pose_indexes[side]["pi"],
-                poses,
-                minimum_points=minimum_points,
-                minimum_points_per_view=minimum_points_per_view,
-                minimum_views=minimum_views,
-                minimum_orientations=minimum_orientations,
-            )
+            try:
+                normal, offset, quality = self._fit_laser_plane_views(
+                    samples[side]["pi"],
+                    sample_pose_indexes[side]["pi"],
+                    poses,
+                    minimum_points=minimum_points,
+                    minimum_points_per_view=minimum_points_per_view,
+                    minimum_views=minimum_views,
+                    minimum_orientations=minimum_orientations,
+                    maximum_rms=maximum_rms,
+                )
+            except LaserPlaneConsensusError as exc:
+                quality = copy.deepcopy(exc.quality)
+                quality.update(
+                    accepted=False,
+                    primary_camera="pi",
+                    camera_views=len(accepted_pose_indexes[side]["pi"]),
+                    rejected_camera_views=len(poses)
+                    - len(accepted_pose_indexes[side]["pi"]),
+                    maximum_rms_mm=maximum_rms,
+                )
+                self._record_laser_pose_consensus(side, quality)
+                with self._lock:
+                    self._status["metrics"][f"laser_{side}"] = copy.deepcopy(
+                        quality
+                    )
+                raise CalibrationError(f"{side} laser plane consensus failed: {exc}") from exc
             quality.update(
                 primary_camera="pi",
                 camera_views=len(accepted_pose_indexes[side]["pi"]),
@@ -4587,6 +4799,7 @@ class GeometricCalibrationService:
                 - len(accepted_pose_indexes[side]["pi"]),
             )
             quality["maximum_rms_mm"] = maximum_rms
+            self._record_laser_pose_consensus(side, quality)
             if quality["rms_mm"] > maximum_rms:
                 quality["accepted"] = False
                 with self._lock:
@@ -4642,6 +4855,70 @@ class GeometricCalibrationService:
                 self._status["metrics"][f"laser_{side}"] = copy.deepcopy(quality)
         return result
 
+    def _record_laser_pose_consensus(
+        self, side: str, quality: Mapping[str, Any]
+    ) -> None:
+        per_pose = {
+            entry.get("pose_index"): entry
+            for entry in quality.get("per_pose_residuals", [])
+            if isinstance(entry, Mapping)
+        }
+        with self._lock:
+            for diagnostic in self._status["laser_views"][side]["pi"]:
+                pose_quality = per_pose.get(diagnostic.get("pose_index"))
+                if not diagnostic.get("accepted") or pose_quality is None:
+                    continue
+                diagnostic["plane_consensus_retained"] = bool(
+                    pose_quality.get("retained")
+                )
+                diagnostic["plane_consensus_reason"] = pose_quality.get("reason")
+                diagnostic["plane_consensus_rms_mm"] = pose_quality.get("rms_mm")
+                diagnostic["plane_consensus_inlier_points"] = pose_quality.get(
+                    "inlier_points"
+                )
+                diagnostic["plane_consensus_inlier_fraction"] = pose_quality.get(
+                    "inlier_fraction"
+                )
+
+    @staticmethod
+    def _canonical_plane(
+        normal: np.ndarray, offset: float
+    ) -> tuple[np.ndarray, float]:
+        normal = np.asarray(normal, dtype=float)
+        pivot = int(np.argmax(np.abs(normal)))
+        if normal[pivot] < 0:
+            return -normal, -float(offset)
+        return normal, float(offset)
+
+    @staticmethod
+    def _fit_plane_tls(points: np.ndarray) -> tuple[np.ndarray, float]:
+        values = np.asarray(points, dtype=float)
+        if values.ndim != 2 or values.shape[1] != 3 or len(values) < 3:
+            raise CalibrationError("laser plane hypothesis has insufficient points")
+        center = values.mean(axis=0)
+        _, singular_values, vh = np.linalg.svd(
+            values - center, full_matrices=False
+        )
+        if (
+            len(singular_values) < 2
+            or singular_values[0] <= 1e-12
+            or singular_values[1] / singular_values[0] <= 1e-6
+        ):
+            raise CalibrationError("laser plane hypothesis has insufficient 2D spread")
+        normal = vh[-1]
+        normal /= np.linalg.norm(normal)
+        return GeometricCalibrationService._canonical_plane(
+            normal, -float(np.dot(normal, center))
+        )
+
+    @staticmethod
+    def _bounded_group_indexes(indexes: np.ndarray, limit: int) -> np.ndarray:
+        indexes = np.asarray(indexes, dtype=int)
+        if len(indexes) <= limit:
+            return indexes
+        positions = np.linspace(0, len(indexes) - 1, limit)
+        return indexes[np.rint(positions).astype(int)]
+
     def _fit_laser_plane_views(
         self,
         points: list[list[float]],
@@ -4652,74 +4929,597 @@ class GeometricCalibrationService:
         minimum_points_per_view: int,
         minimum_views: int,
         minimum_orientations: int,
+        maximum_rms: float = 2.0,
     ) -> tuple[np.ndarray, float, dict[str, Any]]:
         values = np.asarray(points, dtype=float)
         labels = np.asarray(pose_indexes, dtype=int)
         if len(values) != len(labels):
             raise CalibrationError("laser point and pose labels differ")
+        if (
+            values.ndim != 2
+            or values.shape[1] != 3
+            or not np.isfinite(values).all()
+            or len(values) < minimum_points
+        ):
+            raise CalibrationError("laser plane points are insufficient or invalid")
         if minimum_points_per_view <= 0:
             raise CalibrationError(
                 "minimum laser points per view must be positive"
             )
-        spread_ratio = float(
+        if (
+            minimum_views < 3
+            or minimum_orientations < 3
+            or not math.isfinite(maximum_rms)
+            or not 0 < maximum_rms <= 2.0
+        ):
+            raise CalibrationError("laser plane consensus safety limits are invalid")
+        unique_pose_indexes = sorted(int(index) for index in np.unique(labels))
+        if (
+            not unique_pose_indexes
+            or unique_pose_indexes[0] < 0
+            or unique_pose_indexes[-1] >= len(poses)
+        ):
+            raise CalibrationError("laser point pose label is outside the trajectory")
+
+        residual_threshold = float(
+            self._config.get(
+                "laser_pose_residual_threshold_mm", min(maximum_rms, 2.0)
+            )
+        )
+        minimum_inlier_fraction = float(
+            self._config.get("minimum_laser_pose_inlier_fraction", 0.75)
+        )
+        minimum_retained_fraction = float(
+            self._config.get("minimum_laser_pose_consensus_fraction", 0.75)
+        )
+        maximum_rejected_fraction = float(
+            self._config.get("maximum_laser_rejected_pose_fraction", 0.25)
+        )
+        maximum_hypotheses = int(
+            self._config.get("maximum_laser_pose_hypotheses", 128)
+        )
+        maximum_points_per_pose = int(
+            self._config.get("maximum_laser_hypothesis_points_per_pose", 64)
+        )
+        minimum_spread_ratio = float(
             self._config.get("minimum_laser_plane_spread_ratio", 1e-3)
         )
-        eligible = np.ones(len(values), dtype=bool)
-        for _ in range(len(values) + 1):
-            eligible_indexes = np.flatnonzero(eligible)
-            normal, offset, quality = fit_plane_robust(
-                values[eligible_indexes],
-                minimum_points=minimum_points,
-                minimum_spread_ratio=spread_ratio,
-                return_inlier_mask=True,
+        ambiguity_angle = float(
+            self._config.get("laser_plane_ambiguity_normal_deg", 3.0)
+        )
+        ambiguity_offset = float(
+            self._config.get("laser_plane_ambiguity_offset_mm", 2.0)
+        )
+        similar_support_fraction = float(
+            self._config.get(
+                "laser_plane_ambiguity_support_difference_fraction", 0.10
             )
-            local_mask = np.asarray(quality.pop("inlier_mask"), dtype=bool)
-            robust_mask = np.zeros(len(values), dtype=bool)
-            robust_mask[eligible_indexes[local_mask]] = True
-            surviving_counts = {
-                int(index): int(np.count_nonzero(robust_mask & (labels == index)))
-                for index in np.unique(labels[robust_mask])
-            }
-            retained_indexes = sorted(
-                index
-                for index, count in surviving_counts.items()
-                if count >= minimum_points_per_view
+        )
+        if (
+            not 0 < residual_threshold <= min(maximum_rms, 2.0)
+            or minimum_points < 30
+            or minimum_points_per_view < 10
+            or not 0.75 <= minimum_inlier_fraction <= 1.0
+            or not 0.75 <= minimum_retained_fraction <= 1.0
+            or not 0 <= maximum_rejected_fraction <= 0.25
+            or not 1 <= maximum_hypotheses <= 128
+            or not minimum_points_per_view
+            <= maximum_points_per_pose
+            <= 256
+            or not 1e-3 <= minimum_spread_ratio < 1.0
+            or not 0 < ambiguity_angle <= 15.0
+            or not 0 < ambiguity_offset <= 2.0
+            or not 0 <= similar_support_fraction <= 0.25
+        ):
+            raise CalibrationError("laser pose consensus configuration is unsafe")
+
+        groups = {
+            index: np.flatnonzero(labels == index) for index in unique_pose_indexes
+        }
+        original_pose_count = len(unique_pose_indexes)
+        required_retained_poses = max(
+            minimum_views,
+            int(math.ceil(original_pose_count * minimum_retained_fraction)),
+            int(math.ceil(original_pose_count * (1.0 - maximum_rejected_fraction))),
+        )
+
+        def balanced_indexes(
+            selected_groups: list[int],
+            masks: Mapping[int, np.ndarray] | None = None,
+        ) -> np.ndarray:
+            available = []
+            for index in selected_groups:
+                indexes = groups[index]
+                if masks is not None:
+                    indexes = indexes[np.asarray(masks[index], dtype=bool)]
+                if len(indexes):
+                    available.append(indexes)
+            if not available:
+                return np.asarray([], dtype=int)
+            count = min(maximum_points_per_pose, *(len(indexes) for indexes in available))
+            return np.concatenate(
+                [
+                    self._bounded_group_indexes(indexes, count)
+                    for indexes in available
+                ]
             )
-            retained_mask = robust_mask & np.isin(labels, retained_indexes)
-            if np.array_equal(retained_mask, eligible):
-                retained_poses = [poses[index] for index in retained_indexes]
-                orientation_count = self._independent_board_orientation_count(
-                    retained_poses
+
+        def score_plane(normal: np.ndarray, offset: float) -> dict[str, Any]:
+            distances = np.abs(values @ normal + offset)
+            per_pose = []
+            retained = []
+            masks = {}
+            pose_rms = []
+            for index in unique_pose_indexes:
+                pose_distances = distances[groups[index]]
+                mask = pose_distances <= residual_threshold
+                masks[index] = mask
+                inlier_count = int(np.count_nonzero(mask))
+                fraction = inlier_count / len(pose_distances)
+                keep = (
+                    inlier_count >= minimum_points_per_view
+                    and fraction >= minimum_inlier_fraction
                 )
-                quality.update(
-                    views=len(retained_indexes),
-                    independent_board_orientations=orientation_count,
-                    minimum_views=minimum_views,
-                    minimum_board_orientations=minimum_orientations,
-                    minimum_points_per_view=minimum_points_per_view,
-                    inlier_points_per_pose=[
-                        {
-                            "pose_index": index,
-                            "points": surviving_counts[index],
-                        }
-                        for index in retained_indexes
-                    ],
-                )
-                if (
-                    len(retained_indexes) < minimum_views
-                    or orientation_count < minimum_orientations
-                ):
-                    raise CalibrationError(
-                        "laser robust fit retains only "
-                        f"{len(retained_indexes)} Pi poses and "
-                        f"{orientation_count} independent orientations after "
-                        f"requiring {minimum_points_per_view} inlier points per "
-                        f"pose; requires {minimum_views} poses and "
-                        f"{minimum_orientations} orientations"
+                if keep:
+                    retained.append(index)
+                    pose_rms.append(
+                        float(np.sqrt(np.mean(pose_distances[mask] ** 2)))
                     )
-                return normal, offset, quality
-            eligible = retained_mask
-        raise CalibrationError("laser robust per-view rejection did not converge")
+                    reason = None
+                elif inlier_count < minimum_points_per_view:
+                    reason = (
+                        f"{inlier_count} points within {residual_threshold:.2f}mm; "
+                        f"{minimum_points_per_view} required"
+                    )
+                else:
+                    reason = (
+                        f"inlier fraction {fraction:.3f} below "
+                        f"{minimum_inlier_fraction:.3f}"
+                    )
+                per_pose.append(
+                    {
+                        "pose_index": index,
+                        "original_points": int(len(pose_distances)),
+                        "inlier_points": inlier_count,
+                        "inlier_fraction": float(fraction),
+                        "retained": keep,
+                        "reason": reason,
+                        "rms_mm": float(np.sqrt(np.mean(pose_distances**2))),
+                        "inlier_rms_mm": (
+                            float(np.sqrt(np.mean(pose_distances[mask] ** 2)))
+                            if inlier_count
+                            else None
+                        ),
+                        "median_mm": float(np.median(pose_distances)),
+                        "p90_mm": float(np.percentile(pose_distances, 90)),
+                        "p95_mm": float(np.percentile(pose_distances, 95)),
+                        "maximum_mm": float(np.max(pose_distances)),
+                    }
+                )
+            orientations = self._independent_board_orientation_count(
+                [poses[index] for index in retained]
+            )
+            return {
+                "normal": normal,
+                "offset": offset,
+                "retained": tuple(retained),
+                "masks": masks,
+                "per_pose": per_pose,
+                "orientations": orientations,
+                "balanced_rms": (
+                    float(np.sqrt(np.mean(np.square(pose_rms))))
+                    if pose_rms
+                    else math.inf
+                ),
+            }
+
+        eligible_groups = [
+            index
+            for index in unique_pose_indexes
+            if len(groups[index]) >= minimum_points_per_view
+        ]
+        hypothesis_groups: list[tuple[int, ...]] = []
+        if len(eligible_groups) >= 3:
+            hypothesis_groups.append(tuple(eligible_groups))
+        hypothesis_groups.extend(
+            (eligible_groups[left], eligible_groups[right])
+            for left in range(len(eligible_groups))
+            for right in range(left + 1, len(eligible_groups))
+        )
+        base_quality = {
+            "accepted": False,
+            "consensus_method": "deterministic_pose_balanced_v1",
+            "original_accepted_poses": original_pose_count,
+            "required_retained_poses": required_retained_poses,
+            "minimum_retained_pose_fraction": minimum_retained_fraction,
+            "maximum_rejected_pose_fraction": maximum_rejected_fraction,
+            "pose_residual_threshold_mm": residual_threshold,
+            "minimum_pose_inlier_fraction": minimum_inlier_fraction,
+            "hypotheses_evaluated": 0,
+            "candidate_hypotheses": len(hypothesis_groups),
+            "maximum_pose_hypotheses": maximum_hypotheses,
+            "maximum_hypothesis_points_per_pose": maximum_points_per_pose,
+            "ambiguity_checked": False,
+            "ambiguous": False,
+            "minimum_views": minimum_views,
+            "minimum_board_orientations": minimum_orientations,
+            "minimum_points": minimum_points,
+            "minimum_points_per_view": minimum_points_per_view,
+            "minimum_plane_spread_ratio": minimum_spread_ratio,
+        }
+        if len(hypothesis_groups) > maximum_hypotheses:
+            raise LaserPlaneConsensusError(
+                f"{len(hypothesis_groups)} pose hypotheses exceed the fail-closed "
+                f"bound of {maximum_hypotheses}",
+                base_quality,
+            )
+
+        candidates: list[dict[str, Any]] = []
+        raw_candidates: list[dict[str, Any]] = []
+        for hypothesis_index, source_groups in enumerate(hypothesis_groups):
+            indexes = balanced_indexes(list(source_groups))
+            try:
+                normal, offset = self._fit_plane_tls(values[indexes])
+            except CalibrationError:
+                continue
+            scored = score_plane(normal, offset)
+            raw_scored = dict(scored)
+            raw_scored["hypothesis_index"] = hypothesis_index
+            raw_scored["source_groups"] = source_groups
+            raw_scored["rank"] = (
+                len(raw_scored["retained"]),
+                raw_scored["orientations"],
+                -raw_scored["balanced_rms"],
+                -hypothesis_index,
+            )
+            raw_candidates.append(raw_scored)
+            for _ in range(original_pose_count + 2):
+                if len(scored["retained"]) < 2:
+                    break
+                indexes = balanced_indexes(
+                    list(scored["retained"]), scored["masks"]
+                )
+                try:
+                    refined_normal, refined_offset = self._fit_plane_tls(
+                        values[indexes]
+                    )
+                except CalibrationError:
+                    break
+                refined = score_plane(refined_normal, refined_offset)
+                if (
+                    refined["retained"] == scored["retained"]
+                    and math.degrees(
+                        math.acos(
+                            np.clip(
+                                abs(float(np.dot(refined_normal, normal))),
+                                0.0,
+                                1.0,
+                            )
+                        )
+                    )
+                    < 1e-8
+                    and abs(refined_offset - offset) < 1e-8
+                ):
+                    scored = refined
+                    break
+                normal, offset, scored = refined_normal, refined_offset, refined
+            scored["hypothesis_index"] = hypothesis_index
+            scored["source_groups"] = source_groups
+            scored["rank"] = (
+                len(scored["retained"]),
+                scored["orientations"],
+                -scored["balanced_rms"],
+                -hypothesis_index,
+            )
+            equivalent = any(
+                prior["retained"] == scored["retained"]
+                and math.degrees(
+                    math.acos(
+                        np.clip(
+                            abs(float(np.dot(prior["normal"], scored["normal"]))),
+                            0.0,
+                            1.0,
+                        )
+                    )
+                )
+                < 1e-6
+                and abs(prior["offset"] - scored["offset"]) < 1e-6
+                for prior in candidates
+            )
+            if not equivalent:
+                candidates.append(scored)
+
+        base_quality.update(
+            hypotheses_evaluated=len(hypothesis_groups),
+            ambiguity_checked=True,
+        )
+        if not candidates:
+            raise LaserPlaneConsensusError(
+                "no bounded pose-pair plane hypothesis had adequate 2D spread",
+                base_quality,
+            )
+
+        ordered = sorted(candidates, key=lambda item: item["rank"], reverse=True)
+        ambiguity_candidates: list[dict[str, Any]] = []
+        for candidate in raw_candidates + ordered:
+            if any(
+                prior["retained"] == candidate["retained"]
+                and math.degrees(
+                    math.acos(
+                        np.clip(
+                            abs(
+                                float(
+                                    np.dot(
+                                        prior["normal"], candidate["normal"]
+                                    )
+                                )
+                            ),
+                            0.0,
+                            1.0,
+                        )
+                    )
+                )
+                < 1e-6
+                and abs(prior["offset"] - candidate["offset"]) < 1e-6
+                for prior in ambiguity_candidates
+            ):
+                continue
+            ambiguity_candidates.append(candidate)
+        ambiguity_candidates.sort(key=lambda item: item["rank"], reverse=True)
+        support_difference = int(
+            math.floor(original_pose_count * similar_support_fraction)
+        )
+        ambiguity_minimum_support = (
+            required_retained_poses
+            if any(
+                len(candidate["retained"]) >= required_retained_poses
+                for candidate in ambiguity_candidates
+            )
+            else max(
+                len(candidate["retained"]) for candidate in ambiguity_candidates
+            )
+        )
+        ambiguity = None
+        for left_position, left in enumerate(ambiguity_candidates):
+            if len(left["retained"]) < max(2, ambiguity_minimum_support):
+                continue
+            for right in ambiguity_candidates[left_position + 1 :]:
+                if (
+                    len(right["retained"]) < max(2, ambiguity_minimum_support)
+                    or abs(len(left["retained"]) - len(right["retained"]))
+                    > support_difference
+                ):
+                    continue
+                normal_angle = math.degrees(
+                    math.acos(
+                        np.clip(
+                            abs(float(np.dot(left["normal"], right["normal"]))),
+                            0.0,
+                            1.0,
+                        )
+                    )
+                )
+                offset_delta = abs(left["offset"] - right["offset"])
+                if (
+                    normal_angle >= ambiguity_angle
+                    or offset_delta >= ambiguity_offset
+                ):
+                    ambiguity = {
+                        "first_pose_indexes": list(left["retained"]),
+                        "second_pose_indexes": list(right["retained"]),
+                        "normal_angle_deg": normal_angle,
+                        "offset_delta_mm": offset_delta,
+                    }
+                    break
+            if ambiguity is not None:
+                break
+        if ambiguity is not None:
+            base_quality.update(
+                ambiguous=True,
+                ambiguity=ambiguity,
+                per_pose_residuals=ordered[0]["per_pose"],
+            )
+            raise LaserPlaneConsensusError(
+                "ambiguous competing laser planes have similar pose support",
+                base_quality,
+            )
+
+        viable = [
+            candidate
+            for candidate in ordered
+            if len(candidate["retained"]) >= required_retained_poses
+            and candidate["orientations"] >= minimum_orientations
+        ]
+        selected = viable[0] if viable else ordered[0]
+        if (
+            len(selected["retained"]) < required_retained_poses
+            or selected["orientations"] < minimum_orientations
+        ):
+            base_quality.update(
+                views=len(selected["retained"]),
+                independent_board_orientations=selected["orientations"],
+                retained_pose_fraction=(
+                    len(selected["retained"]) / original_pose_count
+                ),
+                per_pose_residuals=selected["per_pose"],
+                rejected_poses=[
+                    {
+                        "pose_index": entry["pose_index"],
+                        "reason": entry["reason"],
+                    }
+                    for entry in selected["per_pose"]
+                    if not entry["retained"]
+                ],
+            )
+            raise LaserPlaneConsensusError(
+                "laser robust fit retains only "
+                f"{len(selected['retained'])} Pi poses and "
+                f"{selected['orientations']} independent orientations; requires "
+                f"{required_retained_poses} poses and {minimum_orientations} orientations",
+                base_quality,
+            )
+
+        final_score = selected
+        fit_quality = None
+        for _ in range(original_pose_count + 2):
+            indexes = balanced_indexes(
+                list(final_score["retained"]), final_score["masks"]
+            )
+            try:
+                normal, offset, fit_quality = fit_plane_robust(
+                    values[indexes],
+                    minimum_points=minimum_points,
+                    minimum_spread_ratio=minimum_spread_ratio,
+                )
+            except CalibrationError as exc:
+                base_quality.update(
+                    views=len(final_score["retained"]),
+                    independent_board_orientations=final_score["orientations"],
+                    per_pose_residuals=final_score["per_pose"],
+                )
+                raise LaserPlaneConsensusError(
+                    f"balanced robust laser-plane refit failed: {exc}",
+                    base_quality,
+                ) from exc
+            normal, offset = self._canonical_plane(normal, offset)
+            rescored = score_plane(normal, offset)
+            if rescored["retained"] == final_score["retained"]:
+                final_score = rescored
+                break
+            final_score = rescored
+            if (
+                len(final_score["retained"]) < required_retained_poses
+                or final_score["orientations"] < minimum_orientations
+            ):
+                base_quality.update(
+                    views=len(final_score["retained"]),
+                    independent_board_orientations=final_score["orientations"],
+                    retained_pose_fraction=(
+                        len(final_score["retained"]) / original_pose_count
+                    ),
+                    per_pose_residuals=final_score["per_pose"],
+                )
+                raise LaserPlaneConsensusError(
+                    "pose support fell below the safety gates during balanced robust refit",
+                    base_quality,
+                )
+        else:
+            raise LaserPlaneConsensusError(
+                "laser pose consensus did not converge within its deterministic bound",
+                base_quality,
+            )
+
+        retained_indexes = list(final_score["retained"])
+        final_inlier_indexes = np.concatenate(
+            [
+                groups[index][final_score["masks"][index]]
+                for index in retained_indexes
+            ]
+        )
+        final_residuals = values[final_inlier_indexes] @ normal + offset
+        final_rms = float(np.sqrt(np.mean(final_residuals**2)))
+        if final_rms > maximum_rms:
+            base_quality.update(
+                rms_mm=final_rms,
+                views=len(retained_indexes),
+                independent_board_orientations=final_score["orientations"],
+                per_pose_residuals=final_score["per_pose"],
+            )
+            raise LaserPlaneConsensusError(
+                f"no pose consensus subset passes the {maximum_rms:.2f}mm RMS gate",
+                base_quality,
+            )
+
+        leave_one_out = []
+        for omitted in retained_indexes:
+            training_groups = [
+                index for index in retained_indexes if index != omitted
+            ]
+            training_indexes = balanced_indexes(
+                training_groups, final_score["masks"]
+            )
+            diagnostic = {"pose_index": omitted, "fit_available": False}
+            try:
+                loo_normal, loo_offset = self._fit_plane_tls(
+                    values[training_indexes]
+                )
+                held_residuals = values[groups[omitted]] @ loo_normal + loo_offset
+                training_residuals = (
+                    values[training_indexes] @ loo_normal + loo_offset
+                )
+                diagnostic.update(
+                    fit_available=True,
+                    training_rms_mm=float(
+                        np.sqrt(np.mean(training_residuals**2))
+                    ),
+                    held_out_rms_mm=float(
+                        np.sqrt(np.mean(held_residuals**2))
+                    ),
+                    normal_delta_deg=math.degrees(
+                        math.acos(
+                            np.clip(
+                                abs(float(np.dot(normal, loo_normal))),
+                                0.0,
+                                1.0,
+                            )
+                        )
+                    ),
+                    offset_delta_mm=abs(offset - loo_offset),
+                )
+            except CalibrationError as exc:
+                diagnostic["reason"] = str(exc)
+            leave_one_out.append(diagnostic)
+
+        assert fit_quality is not None
+        fit_quality.update(
+            accepted=True,
+            rms_mm=final_rms,
+            inliers=int(len(final_inlier_indexes)),
+            samples=int(len(values)),
+            views=len(retained_indexes),
+            independent_board_orientations=final_score["orientations"],
+            minimum_views=minimum_views,
+            minimum_board_orientations=minimum_orientations,
+            minimum_points=minimum_points,
+            minimum_points_per_view=minimum_points_per_view,
+            inlier_points_per_pose=[
+                {
+                    "pose_index": index,
+                    "points": int(
+                        np.count_nonzero(final_score["masks"][index])
+                    ),
+                }
+                for index in retained_indexes
+            ],
+            consensus_method="deterministic_pose_balanced_v1",
+            original_accepted_poses=original_pose_count,
+            required_retained_poses=required_retained_poses,
+            retained_pose_fraction=len(retained_indexes) / original_pose_count,
+            minimum_retained_pose_fraction=minimum_retained_fraction,
+            rejected_pose_fraction=(
+                (original_pose_count - len(retained_indexes))
+                / original_pose_count
+            ),
+            maximum_rejected_pose_fraction=maximum_rejected_fraction,
+            pose_residual_threshold_mm=residual_threshold,
+            minimum_pose_inlier_fraction=minimum_inlier_fraction,
+            hypotheses_evaluated=len(hypothesis_groups),
+            maximum_pose_hypotheses=maximum_hypotheses,
+            maximum_hypothesis_points_per_pose=maximum_points_per_pose,
+            ambiguity_checked=True,
+            ambiguous=False,
+            per_pose_residuals=final_score["per_pose"],
+            rejected_poses=[
+                {
+                    "pose_index": entry["pose_index"],
+                    "reason": entry["reason"],
+                }
+                for entry in final_score["per_pose"]
+                if not entry["retained"]
+            ],
+            leave_one_pose_out=leave_one_out,
+        )
+        return normal, offset, fit_quality
 
     @staticmethod
     def _checkerboard_view_for_pose(

@@ -231,11 +231,34 @@ VALID_CALIBRATION = {
                 "minimum_board_orientations": 3,
                 "plane_spread_ratio": 0.5,
                 "minimum_plane_spread_ratio": 0.001,
+                "minimum_points": 30,
                 "minimum_points_per_view": 10,
                 "inlier_points_per_pose": [
                     {"pose_index": 0, "points": 10},
                     {"pose_index": 1, "points": 10},
                     {"pose_index": 2, "points": 10},
+                ],
+                "consensus_method": "deterministic_pose_balanced_v1",
+                "original_accepted_poses": 3,
+                "required_retained_poses": 3,
+                "retained_pose_fraction": 1.0,
+                "minimum_retained_pose_fraction": 0.75,
+                "rejected_pose_fraction": 0.0,
+                "maximum_rejected_pose_fraction": 0.25,
+                "pose_residual_threshold_mm": 2.0,
+                "minimum_pose_inlier_fraction": 0.75,
+                "hypotheses_evaluated": 4,
+                "maximum_pose_hypotheses": 128,
+                "ambiguity_checked": True,
+                "ambiguous": False,
+                "per_pose_residuals": [
+                    {"pose_index": index, "original_points": 10, "inlier_points": 10, "inlier_fraction": 1.0, "retained": True, "reason": None}
+                    for index in range(3)
+                ],
+                "rejected_poses": [],
+                "leave_one_pose_out": [
+                    {"pose_index": index, "fit_available": True}
+                    for index in range(3)
                 ],
             },
         },
@@ -254,11 +277,34 @@ VALID_CALIBRATION = {
                 "minimum_board_orientations": 3,
                 "plane_spread_ratio": 0.5,
                 "minimum_plane_spread_ratio": 0.001,
+                "minimum_points": 30,
                 "minimum_points_per_view": 10,
                 "inlier_points_per_pose": [
                     {"pose_index": 0, "points": 10},
                     {"pose_index": 1, "points": 10},
                     {"pose_index": 2, "points": 10},
+                ],
+                "consensus_method": "deterministic_pose_balanced_v1",
+                "original_accepted_poses": 3,
+                "required_retained_poses": 3,
+                "retained_pose_fraction": 1.0,
+                "minimum_retained_pose_fraction": 0.75,
+                "rejected_pose_fraction": 0.0,
+                "maximum_rejected_pose_fraction": 0.25,
+                "pose_residual_threshold_mm": 2.0,
+                "minimum_pose_inlier_fraction": 0.75,
+                "hypotheses_evaluated": 4,
+                "maximum_pose_hypotheses": 128,
+                "ambiguity_checked": True,
+                "ambiguous": False,
+                "per_pose_residuals": [
+                    {"pose_index": index, "original_points": 10, "inlier_points": 10, "inlier_fraction": 1.0, "retained": True, "reason": None}
+                    for index in range(3)
+                ],
+                "rejected_poses": [],
+                "leave_one_pose_out": [
+                    {"pose_index": index, "fit_available": True}
+                    for index in range(3)
                 ],
             },
         },
@@ -633,6 +679,54 @@ class RealScanSessionTests(unittest.TestCase):
 
         self.assertTrue(
             any("Laser 'left' calibration quality" in item for item in blockers)
+        )
+
+    def test_runtime_rejects_laser_plane_without_pose_consensus_evidence(self):
+        calibration = copy.deepcopy(VALID_CALIBRATION)
+        calibration["laser_planes"]["left"]["quality"].pop("consensus_method")
+
+        blockers = self.make_session(calibration=calibration).readiness()["blockers"]
+
+        self.assertTrue(
+            any("Laser 'left' calibration quality" in item for item in blockers)
+        )
+
+    def test_runtime_rejects_fractional_or_inconsistent_pose_consensus(self):
+        mutations = (
+            lambda quality: quality.update(views=3.5),
+            lambda quality: quality["per_pose_residuals"][0].update(
+                inlier_points=11
+            ),
+            lambda quality: quality.update(minimum_plane_spread_ratio=1e-6),
+            lambda quality: quality.update(independent_board_orientations=3.5),
+            lambda quality: quality.update(minimum_points=3),
+            lambda quality: quality.update(minimum_points_per_view=1),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                calibration = copy.deepcopy(VALID_CALIBRATION)
+                mutate(calibration["laser_planes"]["left"]["quality"])
+                blockers = self.make_session(
+                    calibration=calibration
+                ).readiness()["blockers"]
+                self.assertTrue(
+                    any(
+                        "Laser 'left' calibration quality" in item
+                        for item in blockers
+                    )
+                )
+
+    def test_runtime_rejects_scaled_laser_plane_coefficients(self):
+        calibration = copy.deepcopy(VALID_CALIBRATION)
+        calibration["laser_planes"]["left"].update(
+            normal=[100.0, 0.0, 0.0],
+            offset_mm=-10000.0,
+        )
+
+        blockers = self.make_session(calibration=calibration).readiness()["blockers"]
+
+        self.assertTrue(
+            any("Laser 'left' calibrated plane normal" in item for item in blockers)
         )
 
     def test_usb_translation_uses_absolute_calibration_reference_not_scan_origin(self):

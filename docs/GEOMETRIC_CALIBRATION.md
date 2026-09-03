@@ -48,7 +48,14 @@ camera's commanded Z displacement is removed before fitting its reference
 transform. Ambiguous directions, an out-of-tolerance scale, insufficient axis
 travel, or excessive robust residuals fail calibration; motor
 `rotation_distance` is never changed. The fitted signed Y scale is persisted and
-used to undo turntable motion during scans.
+used to undo turntable motion during scans. For every scan frame, runtime derives
+the physical turntable center as
+`reference_center + signed_x_scale * (current_x - reference_x) * scanner_+X`,
+undoes Y rotation about that current center, then maps the result to the
+trajectory-origin X center. This prevents pivot warp when automatic centering
+moves X from 195 mm to 97.5 mm and also keeps future per-frame X trajectory
+changes registered. Missing or inconsistent signed-X/reference metadata blocks
+physical scans.
 The workflow suspends TF-Luna ranging output once before checkerboard camera
 capture, waits for the optical spot to clear, and restores ranging output in a
 `finally` guard before any LiDAR measurements. Cancellation and failure paths

@@ -46,6 +46,10 @@ BOARD_TO_SCANNER_AT_REFERENCE = np.array(
     [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
     dtype=float,
 )
+PNP_BOARD_FRAME_ADJUSTMENTS = {
+    "identity": np.eye(3, dtype=float),
+    "rotate_180_about_board_normal": np.diag([-1.0, -1.0, 1.0]),
+}
 
 
 def checkerboard_points(
@@ -323,6 +327,13 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
         transform = matrix(camera.get("camera_to_scanner"), (4, 4), f"{name} camera_to_scanner")
         if not np.allclose(transform[3], [0, 0, 0, 1], atol=1e-6):
             raise CalibrationError(f"{name} camera_to_scanner is not homogeneous")
+        rotation = transform[:3, :3]
+        if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6) or not math.isclose(
+            float(np.linalg.det(rotation)), 1.0, rel_tol=0, abs_tol=1e-6
+        ):
+            raise CalibrationError(
+                f"{name} camera_to_scanner rotation must be right-handed and orthonormal"
+            )
         distortion = np.asarray(camera.get("distortion_coefficients"), dtype=float).reshape(-1)
         if len(distortion) < 4 or not np.isfinite(distortion).all():
             raise CalibrationError(f"{name} distortion coefficients are missing")
@@ -1297,7 +1308,12 @@ class GeometricCalibrationService:
             self._status["metrics"]["axis_model"] = copy.deepcopy(self._motion_model)
         for name in ("pi", "usb"):
             camera = calibration["cameras"][name]
-            self._set_phase("extrinsics", f"Solving {name} camera scanner transform", 50)
+            step = (
+                "Solving fixed Pi reference camera scanner transform"
+                if name == "pi"
+                else "Cross-validating moving USB camera in the scanner frame"
+            )
+            self._set_phase("extrinsics", step, 50)
             camera.update(self._calibrate_camera_extrinsics(name, views[name], camera, options))
             if name == "usb":
                 camera.update(
@@ -1654,6 +1670,13 @@ class GeometricCalibrationService:
         return fitted, candidates
 
     def _estimate_motion_model(self, views: Mapping[str, list[dict]]) -> dict:
+        reference_camera = "pi"
+        reference_views = views.get(reference_camera)
+        if reference_views is None:
+            raise CalibrationError(
+                "fixed Pi reference camera views are required to determine command signs"
+            )
+        sign_views = {reference_camera: reference_views}
         diameter = float(self._config.get("turntable_diameter_mm", 200.0))
         expected_y_scale = 2.0 / diameter
         y_tolerance = float(
@@ -1661,10 +1684,10 @@ class GeometricCalibrationService:
         )
         y_candidates = {
             "positive": self._best_y_candidate(
-                views, 1.0, expected_y_scale, y_tolerance
+                sign_views, 1.0, expected_y_scale, y_tolerance
             ),
             "negative": self._best_y_candidate(
-                views, -1.0, expected_y_scale, y_tolerance
+                sign_views, -1.0, expected_y_scale, y_tolerance
             ),
         }
         selected_y_name = min(
@@ -1683,7 +1706,7 @@ class GeometricCalibrationService:
             self._config.get("maximum_axis_fit_rotation_rms_deg", 2.0)
         )
         y_scale = float(selected_y["signed_radians_per_commanded_mm"])
-        fitted_x, x_candidates = self._fit_x_scale(views, y_scale=y_scale)
+        fitted_x, x_candidates = self._fit_x_scale(sign_views, y_scale=y_scale)
         selected_x_name = "positive" if fitted_x >= 0 else "negative"
         other_x_name = "negative" if selected_x_name == "positive" else "positive"
         x_ratio = (
@@ -1694,6 +1717,9 @@ class GeometricCalibrationService:
             self._config.get("maximum_x_repeatability_mm", 3.0)
         )
         diagnostics = {
+            "command_sign_reference_camera": reference_camera,
+            "reference_camera_role": "fixed_primary_observable",
+            "usb_camera_role": "moving_cross_validation_after_z_correction",
             "y": {
                 "selected": selected_y_name,
                 "direction_score_ratio": y_ratio,
@@ -1723,7 +1749,8 @@ class GeometricCalibrationService:
             )
         if y_ratio < minimum_ratio:
             failures.append(
-                f"Y rotation direction is ambiguous (candidate score ratio {y_ratio:.2f})"
+                "Y rotation direction from fixed Pi reference camera is ambiguous "
+                f"(candidate score ratio {y_ratio:.2f})"
             )
         if abs(abs(fitted_x) - 1.0) > x_tolerance:
             failures.append(
@@ -1738,7 +1765,8 @@ class GeometricCalibrationService:
             )
         if x_ratio < minimum_ratio:
             failures.append(
-                f"X translation direction is ambiguous (candidate score ratio {x_ratio:.2f})"
+                "X translation direction from fixed Pi reference camera is ambiguous "
+                f"(candidate score ratio {x_ratio:.2f})"
             )
         if failures:
             raise CalibrationError(
@@ -1762,11 +1790,12 @@ class GeometricCalibrationService:
             "expected_y_radians_per_commanded_mm": expected_y_scale,
             "y_angular_scale_tolerance_fraction": y_tolerance,
             "minimum_direction_score_ratio": minimum_ratio,
+            "command_sign_reference_camera": reference_camera,
             "candidate_residuals": diagnostics,
             "frame_convention": (
                 "reference board +X -> scanner +Y, board +Y -> scanner +Z, "
                 "board normal -> scanner +X; signed X and Y command directions "
-                "are estimated from PnP"
+                "are estimated from the fixed Pi camera PnP observations"
             ),
         }
 
@@ -1777,27 +1806,114 @@ class GeometricCalibrationService:
         camera: Mapping[str, Any],
         options: Mapping[str, Any],
     ) -> dict:
-        candidates = []
-        for view in views:
-            board_to_camera = view.get("board_to_camera")
-            if board_to_camera is None:
-                continue
-            scanner_from_board = self._board_to_scanner(view["pose"])
-            candidate = scanner_from_board @ np.linalg.inv(
-                np.asarray(board_to_camera, dtype=float)
+        minimum = int(self._config.get("minimum_views", 6))
+        max_translation = float(self._config.get("maximum_extrinsic_rms_mm", 5.0))
+        max_rotation = float(self._config.get("maximum_extrinsic_rms_deg", 3.0))
+        adjustments = (
+            {"identity": PNP_BOARD_FRAME_ADJUSTMENTS["identity"]}
+            if name == "pi"
+            else PNP_BOARD_FRAME_ADJUSTMENTS
+        )
+        fits: dict[str, dict[str, Any]] = {}
+        for adjustment_name, adjustment in adjustments.items():
+            if not math.isclose(
+                float(np.linalg.det(adjustment)), 1.0, rel_tol=0, abs_tol=1e-9
+            ):
+                raise CalibrationError(
+                    f"{name} PnP board-frame adjustment would reflect handedness"
+                )
+            candidates = []
+            for view in views:
+                board_to_camera = view.get("board_to_camera")
+                if board_to_camera is None:
+                    continue
+                observed = np.asarray(board_to_camera, dtype=float).copy()
+                if observed.shape != (4, 4) or not np.isfinite(observed).all():
+                    raise CalibrationError(
+                        f"{name} PnP transform must be finite, rigid, and right-handed"
+                    )
+                observed_rotation = observed[:3, :3]
+                if (
+                    not np.allclose(
+                        observed_rotation.T @ observed_rotation, np.eye(3), atol=1e-5
+                    )
+                    or not math.isclose(
+                        float(np.linalg.det(observed_rotation)),
+                        1.0,
+                        rel_tol=0,
+                        abs_tol=1e-5,
+                    )
+                ):
+                    raise CalibrationError(
+                        f"{name} PnP transform must be finite, rigid, and right-handed"
+                    )
+                observed[:3, :3] = observed_rotation @ adjustment
+                scanner_from_board = self._board_to_scanner(view["pose"])
+                candidate = scanner_from_board @ np.linalg.inv(observed)
+                if name == "usb":
+                    reference_z = float(self._reference_pose["z"])
+                    candidate[:3, 3] -= np.array(
+                        [0.0, 0.0, float(view["pose"]["z"]) - reference_z]
+                    )
+                candidates.append(candidate)
+            if len(candidates) < minimum:
+                raise CalibrationError(
+                    f"{name} extrinsics have insufficient valid PnP views"
+                )
+            (
+                transform,
+                translation_rms,
+                rotation_rms,
+                candidate_residuals,
+            ) = self._robust_average_transforms(candidates)
+            inliers = sum(item["inlier"] for item in candidate_residuals)
+            fits[adjustment_name] = {
+                "transform": transform,
+                "translation_rms_mm": translation_rms,
+                "rotation_rms_deg": rotation_rms,
+                "candidate_residuals": candidate_residuals,
+                "robust_pnp_inliers": inliers,
+                "accepted": (
+                    inliers >= minimum
+                    and translation_rms <= max_translation
+                    and rotation_rms <= max_rotation
+                ),
+                "score": (
+                    translation_rms / max_translation
+                    + rotation_rms / max_rotation
+                    + max(0, minimum - inliers)
+                ),
+            }
+        accepted_fits = [
+            adjustment_name
+            for adjustment_name, fit in fits.items()
+            if fit["accepted"]
+        ]
+        fit_diagnostics = self._extrinsic_fit_diagnostics(fits)
+        with self._lock:
+            self._status["metrics"][name] = {
+                **copy.deepcopy(camera["quality"]),
+                "command_sign_reference_camera": "pi",
+                "pnp_board_frame_candidate_fits": copy.deepcopy(fit_diagnostics),
+            }
+        if len(accepted_fits) > 1:
+            raise CalibrationError(
+                f"{name} PnP board-frame convention is ambiguous; candidates "
+                + json.dumps(
+                    fit_diagnostics,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
             )
-            if name == "usb":
-                reference_z = float(self._reference_pose["z"])
-                candidate[:3, 3] -= np.array([0.0, 0.0, view["pose"]["z"] - reference_z])
-            candidates.append(candidate)
-        if len(candidates) < int(self._config.get("minimum_views", 6)):
-            raise CalibrationError(f"{name} extrinsics have insufficient valid PnP views")
-        (
-            transform,
-            translation_rms,
-            rotation_rms,
-            candidate_residuals,
-        ) = self._robust_average_transforms(candidates)
+        selected_adjustment = min(
+            accepted_fits or fits,
+            key=lambda adjustment_name: fits[adjustment_name]["score"],
+        )
+        selected_fit = fits[selected_adjustment]
+        transform = selected_fit["transform"]
+        translation_rms = float(selected_fit["translation_rms_mm"])
+        rotation_rms = float(selected_fit["rotation_rms_deg"])
+        candidate_residuals = selected_fit["candidate_residuals"]
         with self._lock:
             residual_index = 0
             for diagnostic in self._status["pnp_views"][name]:
@@ -1806,16 +1922,13 @@ class GeometricCalibrationService:
                         candidate_residuals[residual_index]
                     )
                     residual_index += 1
-        minimum = int(self._config.get("minimum_views", 6))
-        inliers = sum(item["inlier"] for item in candidate_residuals)
+        inliers = int(selected_fit["robust_pnp_inliers"])
         if inliers < minimum:
             raise CalibrationError(
                 f"{name} extrinsics retain only {inliers} robust PnP inliers; "
                 f"{minimum} required; residuals "
                 + json.dumps(candidate_residuals, separators=(",", ":"))
             )
-        max_translation = float(self._config.get("maximum_extrinsic_rms_mm", 5.0))
-        max_rotation = float(self._config.get("maximum_extrinsic_rms_deg", 3.0))
         if translation_rms > max_translation or rotation_rms > max_rotation:
             with self._lock:
                 self._status["metrics"][name] = {
@@ -1825,12 +1938,20 @@ class GeometricCalibrationService:
                     "candidate_residuals": copy.deepcopy(
                         self._status["axis_model_candidates"]
                     ),
+                    "pnp_board_frame_candidate_fits": copy.deepcopy(
+                        fit_diagnostics
+                    ),
                 }
             raise CalibrationError(
                 f"{name} extrinsic residual too high: {translation_rms:.2f}mm, "
                 f"{rotation_rms:.2f}deg; commanded poses and PnP summaries are "
                 "available in status.pnp_views; axis candidates are available in "
-                "status.axis_model_candidates"
+                "status.axis_model_candidates; PnP board-frame candidates "
+                + json.dumps(
+                    fit_diagnostics,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
             )
         quality = dict(camera["quality"])
         quality.update(
@@ -1841,8 +1962,37 @@ class GeometricCalibrationService:
             frame="turntable_center_x-radial_y-tangential_z-up",
             robust_pnp_inliers=inliers,
             pnp_candidate_residuals=candidate_residuals,
+            command_sign_reference_camera="pi",
+            calibration_role=(
+                "fixed_primary_observable"
+                if name == "pi"
+                else "moving_cross_validation_after_z_correction"
+            ),
+            pnp_board_frame_adjustment=selected_adjustment,
+            pnp_board_frame_adjustment_matrix=PNP_BOARD_FRAME_ADJUSTMENTS[
+                selected_adjustment
+            ].tolist(),
+            pnp_board_frame_candidate_fits=fit_diagnostics,
         )
         return {"camera_to_scanner": transform.tolist(), "quality": quality}
+
+    @staticmethod
+    def _extrinsic_fit_diagnostics(
+        fits: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        return {
+            name: {
+                key: copy.deepcopy(fit[key])
+                for key in (
+                    "translation_rms_mm",
+                    "rotation_rms_deg",
+                    "robust_pnp_inliers",
+                    "accepted",
+                    "score",
+                )
+            }
+            for name, fit in fits.items()
+        }
 
     def _validate_x_scale(self) -> dict:
         self._set_phase("x-scale", "Validating X scale and repeatability", 60)

@@ -523,6 +523,407 @@ class CalibrationMathTests(unittest.TestCase):
         self.assertFalse(diagnostic["accepted"])
         self.assertIn("gap", diagnostic["reason"])
 
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_bridges_one_projected_checker_square(self):
+        ambient, laser, corners, missing_rows = (
+            self._projected_checker_ridge_images()
+        )
+        laser[missing_rows[0] : missing_rows[1] + 1] = ambient[
+            missing_rows[0] : missing_rows[1] + 1
+        ]
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertTrue(diagnostic["accepted"], diagnostic)
+        self.assertGreater(len(pixels), 90)
+        self.assertEqual(diagnostic["bridged_checker_gaps"], 1)
+        self.assertGreater(diagnostic["raw_max_gap_px"], 25)
+        self.assertLessEqual(
+            diagnostic["raw_max_gap_px"],
+            diagnostic["checker_gap_limit_px_max"],
+        )
+        self.assertLessEqual(
+            diagnostic["unexplained_max_gap_px"],
+            diagnostic["strict_unexplained_gap_limit_px"],
+        )
+        self.assertGreater(diagnostic["checker_boundary_contrast_min"], 20)
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_bridges_periodic_dark_checker_gaps(self):
+        ambient, laser, corners = self._checker_ridge_images()
+        laser[72:104] = ambient[72:104]
+        laser[136:168] = ambient[136:168]
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertTrue(diagnostic["accepted"], diagnostic)
+        self.assertEqual(diagnostic["bridged_checker_gaps"], 2)
+        self.assertEqual(diagnostic["observed_line_segments"], 3)
+        self.assertEqual(diagnostic["checker_gap_rejection_counts"], {})
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_same_size_nonchecker_gap(self):
+        ambient, laser, corners = self._checker_ridge_images()
+        laser[80:112] = ambient[80:112]
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertEqual(diagnostic["bridged_checker_gaps"], 0)
+        self.assertGreater(
+            diagnostic["unexplained_max_gap_px"],
+            diagnostic["strict_unexplained_gap_limit_px"],
+        )
+        self.assertEqual(
+            diagnostic["checker_gap_rejection_counts"]["not_one_checker_square"],
+            1,
+        )
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_gap_on_bright_checker_band(self):
+        ambient, laser, corners = self._checker_ridge_images()
+        laser[104:136] = ambient[104:136]
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertEqual(diagnostic["bridged_checker_gaps"], 0)
+        self.assertEqual(
+            diagnostic["checker_gap_rejection_counts"][
+                "reflectance_boundary_mismatch"
+            ],
+            1,
+        )
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_aligned_gap_with_ridge_response(self):
+        ambient, laser, corners = self._checker_ridge_images()
+        grayscale_response = self._add_vertical_laser_profiles(
+            ambient.copy(),
+            ((150.0, 2.0, (110.0, 110.0, 110.0)),),
+        )
+        laser[72:104] = grayscale_response[72:104]
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertEqual(diagnostic["bridged_checker_gaps"], 0)
+        self.assertEqual(
+            diagnostic["checker_gap_rejection_counts"]["ridge_response_not_low"],
+            1,
+        )
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_shifted_stub_inside_checker_gap(self):
+        ambient, laser, corners = self._checker_ridge_images()
+        _, shifted, _ = self._checker_ridge_images(center=164.0)
+        laser[72:104] = ambient[72:104]
+        laser[82:92] = shifted[82:92]
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertEqual(diagnostic["bridged_checker_gaps"], 0)
+        self.assertEqual(
+            diagnostic["checker_gap_rejection_counts"]["ridge_response_not_low"],
+            1,
+        )
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_aligned_gap_without_reflectance_boundary(self):
+        ambient, _, corners = self._synthetic_laser_images(draw_line=False)
+        laser = self._add_vertical_laser_profiles(
+            ambient.copy(),
+            ((150.0, 2.0, (90.0, 90.0, 195.0)),),
+        )
+        laser[72:104] = ambient[72:104]
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertEqual(diagnostic["bridged_checker_gaps"], 0)
+        self.assertEqual(
+            diagnostic["checker_gap_rejection_counts"][
+                "reflectance_boundary_mismatch"
+            ],
+            1,
+        )
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_two_checker_square_gap(self):
+        ambient, laser, corners = self._checker_ridge_images()
+        laser[72:136] = ambient[72:136]
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertEqual(diagnostic["bridged_checker_gaps"], 0)
+        self.assertGreater(
+            diagnostic["raw_max_gap_px"],
+            diagnostic["checker_gap_limit_px_max"],
+        )
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_checker_gap_with_sparse_adjacent_stub(self):
+        ambient, laser, corners = self._checker_ridge_images()
+        laser[45:61] = ambient[45:61]
+        laser[72:104] = ambient[72:104]
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertEqual(diagnostic["bridged_checker_gaps"], 0)
+        self.assertEqual(
+            diagnostic["checker_gap_rejection_counts"]["insufficient_long_segments"],
+            1,
+        )
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_shifted_segment_across_checker_gap(self):
+        ambient, straight, corners = self._checker_ridge_images()
+        _, shifted, _ = self._checker_ridge_images(center=158.0)
+        laser = straight.copy()
+        laser[72:104] = ambient[72:104]
+        laser[104:] = shifted[104:]
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertEqual(diagnostic["bridged_checker_gaps"], 0)
+        self.assertIn("gap", diagnostic["reason"])
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_robustly_discards_outlier_segment(self):
+        ambient, straight, corners = self._checker_ridge_images()
+        _, shifted, _ = self._checker_ridge_images(center=164.0)
+        laser = straight.copy()
+        laser[116:126] = shifted[116:126]
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertTrue(diagnostic["accepted"], diagnostic)
+        self.assertGreater(len(pixels), 120)
+        self.assertGreaterEqual(diagnostic["line_fit_outlier_rows"], 8)
+        self.assertGreaterEqual(diagnostic["line_fit_outlier_segments"], 1)
+        self.assertLess(diagnostic["line_residual_rms_px"], 2.0)
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_broadly_incoherent_ridge(self):
+        ambient, _, corners = self._checker_ridge_images()
+        reflectance = self._paint_checkerboard(ambient)
+        rows, columns = np.indices(ambient.shape[:2], dtype=np.float32)
+        center = (
+            150.0
+            + 5.0 * np.sin(rows * 0.31)
+            + 3.0 * np.sin(rows * 0.83)
+        )
+        profile = np.exp(-0.5 * ((columns - center) / 2.0) ** 2)
+        laser = ambient.astype(np.float32)
+        laser += (
+            reflectance[:, :, None]
+            * profile[:, :, None]
+            * np.asarray((90.0, 90.0, 195.0), dtype=np.float32)
+        )
+        laser = np.clip(laser, 0, 255).astype(np.uint8)
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertGreater(diagnostic["line_residual_rms_px"], 2.0)
+        self.assertIn("residual", diagnostic["reason"])
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_smoothly_curved_ridge(self):
+        ambient, _, corners = self._checker_ridge_images()
+        reflectance = self._paint_checkerboard(ambient)
+        rows, columns = np.indices(ambient.shape[:2], dtype=np.float32)
+        normalized_row = (rows - 120.0) / 75.0
+        center = 150.0 + 20.0 * np.square(normalized_row)
+        profile = np.exp(-0.5 * ((columns - center) / 2.0) ** 2)
+        laser = ambient.astype(np.float32)
+        laser += (
+            reflectance[:, :, None]
+            * profile[:, :, None]
+            * np.asarray((90.0, 90.0, 195.0), dtype=np.float32)
+        )
+        laser = np.clip(laser, 0, 255).astype(np.uint8)
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertGreater(diagnostic["line_residual_rms_px"], 2.0)
+        self.assertIn("residual", diagnostic["reason"])
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_broad_halo_and_reflections_with_gap(self):
+        ambient, _, corners = self._checker_ridge_images()
+        laser = self._add_vertical_laser_profiles(
+            ambient.copy(),
+            ((150.0, 42.0 / 2.355, (8.0, 8.0, 78.0)),),
+        )
+        cv2.rectangle(laser, (105, 82), (122, 102), (0, 0, 235), -1)
+        cv2.rectangle(laser, (190, 138), (214, 158), (0, 0, 245), -1)
+        laser[72:104] = ambient[72:104]
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertLess(
+            diagnostic["sharp_ridge_candidates"],
+            diagnostic["background_suppressed_ridge_candidates"],
+        )
+
     @staticmethod
     def _synthetic_laser_images(*, draw_line=True):
         ambient = np.full((240, 320, 3), 40, dtype=np.uint8)
@@ -539,6 +940,90 @@ class CalibrationMathTests(unittest.TestCase):
         if draw_line:
             cv2.line(laser, (156, 45), (164, 195), (0, 0, 255), 3)
         return ambient, laser, corners
+
+    @classmethod
+    def _checker_ridge_images(cls, *, center=150.0):
+        ambient, _, corners = cls._synthetic_laser_images(draw_line=False)
+        reflectance = cls._paint_checkerboard(ambient)
+        laser = cls._add_vertical_laser_profiles(
+            ambient.copy(),
+            ((center, 2.0, (90.0, 90.0, 195.0)),),
+            gain=reflectance,
+        )
+        return ambient, laser, corners
+
+    @classmethod
+    def _projected_checker_ridge_images(cls):
+        height, width = 260, 340
+        ambient = np.full((height, width, 3), 40, dtype=np.uint8)
+        reflectance = np.ones((height, width), dtype=np.float32)
+        source = np.asarray(
+            ((0, 0), (10, 0), (10, 5), (0, 5)),
+            dtype=np.float32,
+        )
+        destination = np.asarray(
+            ((55, 35), (282, 48), (252, 226), (73, 202)),
+            dtype=np.float32,
+        )
+        homography = cv2.getPerspectiveTransform(source, destination)
+        grid = np.asarray(
+            [
+                [float(column), float(row)]
+                for row in range(6)
+                for column in range(11)
+            ],
+            dtype=np.float32,
+        )
+        corners = cv2.perspectiveTransform(
+            grid.reshape(-1, 1, 2),
+            homography,
+        ).reshape(-1, 2)
+        corner_grid = corners.reshape(6, 11, 2)
+        for row in range(5):
+            for column in range(10):
+                polygon = np.rint(
+                    (
+                        corner_grid[row, column],
+                        corner_grid[row, column + 1],
+                        corner_grid[row + 1, column + 1],
+                        corner_grid[row + 1, column],
+                    )
+                ).astype(np.int32)
+                is_light = (row + column) % 2 == 0
+                cv2.fillConvexPoly(ambient, polygon, 130 if is_light else 30)
+                cv2.fillConvexPoly(
+                    reflectance,
+                    polygon,
+                    1.0 if is_light else 0.55,
+                )
+
+        projected_centerline = cv2.perspectiveTransform(
+            np.asarray([[[4.5, 0.0]], [[4.5, 5.0]]], dtype=np.float32),
+            homography,
+        ).reshape(-1, 2)
+        slope = float(
+            (projected_centerline[1, 0] - projected_centerline[0, 0])
+            / (projected_centerline[1, 1] - projected_centerline[0, 1])
+        )
+        center = float(
+            np.mean(projected_centerline[:, 0])
+            - slope * (np.mean(projected_centerline[:, 1]) - (height - 1) / 2.0)
+        )
+        laser = cls._add_vertical_laser_profiles(
+            ambient.copy(),
+            ((center, 2.0, (90.0, 90.0, 195.0)),),
+            gain=reflectance,
+            slope=slope,
+        )
+        gap_boundaries = cv2.perspectiveTransform(
+            np.asarray([[[4.5, 1.0]], [[4.5, 2.0]]], dtype=np.float32),
+            homography,
+        ).reshape(-1, 2)
+        missing_rows = (
+            int(math.ceil(float(gap_boundaries[0, 1]))),
+            int(math.floor(float(gap_boundaries[1, 1]))),
+        )
+        return ambient, laser, corners, missing_rows
 
     @staticmethod
     def _paint_checkerboard(image):

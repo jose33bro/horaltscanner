@@ -242,6 +242,398 @@ def _gaussian_blur_rows(cv: Any, image: np.ndarray, sigma: float) -> np.ndarray:
     )
 
 
+def _contiguous_row_groups(rows: np.ndarray, row_stride: int) -> list[np.ndarray]:
+    if not len(rows):
+        return []
+    ordered = np.sort(np.asarray(rows, dtype=float))
+    split_at = np.flatnonzero(np.diff(ordered) > row_stride * 2.0) + 1
+    return [group for group in np.split(ordered, split_at) if len(group)]
+
+
+def _robust_ridge_line(
+    selected: np.ndarray,
+    *,
+    maximum_residual: float,
+    inlier_tolerance: float,
+    minimum_rows: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fit x(y) from a bounded Theil-Sen seed, then trim row outliers."""
+    ordered = selected[np.argsort(selected[:, 1])]
+    ordinary = np.polyfit(ordered[:, 1], ordered[:, 0], 1)
+    ordinary_residuals = ordered[:, 0] - np.polyval(ordinary, ordered[:, 1])
+    if float(np.sqrt(np.mean(np.square(ordinary_residuals)))) <= maximum_residual:
+        return ordered, np.asarray(ordinary, dtype=float)
+
+    sample = ordered
+    if len(sample) > 256:
+        indexes = np.linspace(0, len(sample) - 1, 256).round().astype(int)
+        sample = sample[indexes]
+    first, second = np.triu_indices(len(sample), 1)
+    delta_rows = sample[second, 1] - sample[first, 1]
+    usable = np.abs(delta_rows) > 1e-9
+    if not np.any(usable):
+        raise CalibrationError("laser ridge rows do not span a line")
+    slopes = (
+        sample[second[usable], 0] - sample[first[usable], 0]
+    ) / delta_rows[usable]
+    slope = float(np.median(slopes))
+    intercept = float(np.median(ordered[:, 0] - slope * ordered[:, 1]))
+    seed_residuals = ordered[:, 0] - (slope * ordered[:, 1] + intercept)
+    retained = ordered[np.abs(seed_residuals) <= inlier_tolerance]
+    minimum_retained = max(minimum_rows, int(math.ceil(len(ordered) * 0.88)))
+    if len(retained) < minimum_retained:
+        return ordered, np.asarray(ordinary, dtype=float)
+    while len(retained) >= minimum_retained:
+        slope, intercept = np.polyfit(retained[:, 1], retained[:, 0], 1)
+        residuals = retained[:, 0] - (slope * retained[:, 1] + intercept)
+        if float(np.sqrt(np.mean(np.square(residuals)))) <= maximum_residual:
+            break
+        if len(retained) == minimum_retained:
+            return retained, np.array([float(slope), float(intercept)], dtype=float)
+        retained = np.delete(retained, int(np.argmax(np.abs(residuals))), axis=0)
+    removed_rows = np.setdiff1d(ordered[:, 1], retained[:, 1])
+    ordered_steps = np.diff(np.unique(ordered[:, 1]))
+    inferred_stride = max(
+        1,
+        int(round(float(np.median(ordered_steps)))) if len(ordered_steps) else 1,
+    )
+    maximum_outlier_groups = max(3, int(math.ceil(len(ordered) * 0.04)))
+    maximum_outlier_group_rows = max(4, int(math.ceil(len(ordered) * 0.08)))
+    outlier_groups = _contiguous_row_groups(removed_rows, inferred_stride)
+    if (
+        len(outlier_groups) > maximum_outlier_groups
+        or any(len(group) > maximum_outlier_group_rows for group in outlier_groups)
+    ):
+        return ordered, np.asarray(ordinary, dtype=float)
+    return retained, np.array([float(slope), float(intercept)], dtype=float)
+
+
+def _checker_row_crossings(
+    corner_grid: np.ndarray,
+    coefficients: np.ndarray,
+) -> np.ndarray:
+    """Intersect the fitted ridge with each perspective-projected checker row."""
+    slope, intercept = (float(value) for value in coefficients)
+    crossings = []
+    for checker_row in corner_grid:
+        design = np.column_stack(
+            (
+                checker_row[:, 0],
+                checker_row[:, 1],
+                np.ones(len(checker_row), dtype=float),
+            )
+        )
+        _, _, vectors = np.linalg.svd(design, full_matrices=False)
+        line_x, line_y, line_offset = vectors[-1]
+        denominator = line_x * slope + line_y
+        if abs(float(denominator)) <= 1e-9:
+            continue
+        row = -float(line_x * intercept + line_offset) / float(denominator)
+        column = slope * row + intercept
+        minimum_column = float(np.min(checker_row[:, 0]))
+        maximum_column = float(np.max(checker_row[:, 0]))
+        if (
+            math.isfinite(row)
+            and math.isfinite(column)
+            and minimum_column - 1.0 <= column <= maximum_column + 1.0
+        ):
+            crossings.append(row)
+    return np.sort(np.asarray(crossings, dtype=float))
+
+
+def _sample_along_line(
+    image: np.ndarray,
+    coefficients: np.ndarray,
+    start_row: float,
+    stop_row: float,
+) -> np.ndarray:
+    height, width = image.shape[:2]
+    first = max(0, int(math.ceil(min(start_row, stop_row))))
+    last = min(height - 1, int(math.floor(max(start_row, stop_row))))
+    if last < first:
+        return np.empty(0, dtype=float)
+    rows = np.arange(first, last + 1, dtype=int)
+    columns = np.rint(np.polyval(coefficients, rows)).astype(int)
+    valid = (columns >= 0) & (columns < width)
+    return np.asarray(image[rows[valid], columns[valid]], dtype=float)
+
+
+def _sample_line_band_max(
+    image: np.ndarray,
+    coefficients: np.ndarray,
+    start_row: float,
+    stop_row: float,
+    radius: int,
+) -> np.ndarray:
+    height, width = image.shape[:2]
+    first = max(0, int(math.ceil(min(start_row, stop_row))))
+    last = min(height - 1, int(math.floor(max(start_row, stop_row))))
+    if last < first:
+        return np.empty(0, dtype=float)
+    rows = np.arange(first, last + 1, dtype=int)
+    centers = np.rint(np.polyval(coefficients, rows)).astype(int)
+    maxima = []
+    for row, center in zip(rows, centers):
+        left = max(0, int(center) - radius)
+        right = min(width, int(center) + radius + 1)
+        if right > left:
+            maxima.append(float(np.max(image[row, left:right])))
+    return np.asarray(maxima, dtype=float)
+
+
+def _classify_checker_gaps(
+    *,
+    corner_grid: np.ndarray,
+    selected: np.ndarray,
+    coefficients: np.ndarray,
+    residuals: np.ndarray,
+    row_stride: int,
+    strict_gap_limit: float,
+    maximum_residual: float,
+    maximum_width: float,
+    minimum_prominence: float,
+    ridge_response: np.ndarray,
+    ambient_luminance: np.ndarray,
+    reference_luminance: float,
+) -> dict[str, Any]:
+    ordered_indexes = np.argsort(selected[:, 1])
+    ordered = selected[ordered_indexes]
+    ordered_residuals = np.asarray(residuals, dtype=float)[ordered_indexes]
+    line_rows = ordered[:, 1]
+    gaps = np.diff(line_rows)
+    raw_max_gap = float(np.max(gaps)) if len(gaps) else math.inf
+    crossings = _checker_row_crossings(corner_grid, coefficients)
+    vertical_pitches = np.diff(crossings)
+    vertical_pitches = vertical_pitches[vertical_pitches > row_stride]
+    path_scale = math.hypot(1.0, float(coefficients[0]))
+    projected_pitches = vertical_pitches * path_scale
+    gap_limits = projected_pitches * 1.25
+
+    split_indexes = np.flatnonzero(gaps > strict_gap_limit)
+    starts = np.concatenate(([0], split_indexes + 1))
+    stops = np.concatenate((split_indexes + 1, [len(line_rows)]))
+    segments = [
+        {
+            "start": int(start),
+            "stop": int(stop),
+            "span": float(
+                max(line_rows[stop - 1] - line_rows[start], 0.0) * path_scale
+            ),
+            "rms": float(
+                np.sqrt(np.mean(np.square(ordered_residuals[start:stop])))
+            ),
+        }
+        for start, stop in zip(starts, stops)
+    ]
+    gap_segments = {
+        int(gap_index): (segment_index, segment_index + 1)
+        for segment_index, gap_index in enumerate(split_indexes)
+    }
+    median_pitch = (
+        float(np.median(projected_pitches)) if len(projected_pitches) else math.inf
+    )
+    long_segment_threshold = max(
+        row_stride * 3.0 * path_scale,
+        median_pitch * 0.5,
+    )
+    long_segments = sum(
+        segment["span"] >= long_segment_threshold
+        and segment["rms"] <= maximum_residual
+        for segment in segments
+    )
+
+    bridged: set[int] = set()
+    response_p90: list[float] = []
+    boundary_contrasts: list[float] = []
+    rejection_counts: dict[str, int] = {}
+
+    def reject(reason: str) -> None:
+        rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+
+    if len(crossings) >= 2 and long_segments >= 2:
+        minimum_contrast = max(6.0, reference_luminance * 0.08)
+        for gap_index in split_indexes:
+            lower = float(line_rows[gap_index])
+            upper = float(line_rows[gap_index + 1])
+            missing_start = lower + row_stride
+            missing_stop = upper - row_stride
+            missing_length = max(upper - lower - row_stride, 0.0) * path_scale
+            segment_indexes = gap_segments[int(gap_index)]
+            left_segment = segments[segment_indexes[0]]
+            right_segment = segments[segment_indexes[1]]
+            if (
+                left_segment["rms"] > maximum_residual
+                or right_segment["rms"] > maximum_residual
+                or abs(float(ordered_residuals[gap_index])) > maximum_residual
+                or abs(float(ordered_residuals[gap_index + 1])) > maximum_residual
+            ):
+                reject("noncoherent_endpoints")
+                continue
+
+            aligned_pair = None
+            for boundary_index in range(len(crossings) - 1):
+                first_boundary = float(crossings[boundary_index])
+                second_boundary = float(crossings[boundary_index + 1])
+                pitch_y = second_boundary - first_boundary
+                pitch = pitch_y * path_scale
+                alignment_tolerance = max(
+                    row_stride * 2.0 * path_scale,
+                    pitch * 0.18,
+                )
+                start_error = abs(missing_start - first_boundary) * path_scale
+                stop_error = abs(missing_stop - second_boundary) * path_scale
+                if (
+                    0.5 * pitch <= missing_length <= 1.25 * pitch
+                    and start_error <= alignment_tolerance
+                    and stop_error <= alignment_tolerance
+                ):
+                    aligned_pair = (first_boundary, second_boundary, pitch_y, pitch)
+                    break
+            if aligned_pair is None:
+                reject("not_one_checker_square")
+                continue
+
+            first_boundary, second_boundary, pitch_y, pitch = aligned_pair
+            minimum_adjacent_span = max(
+                row_stride * 3.0 * path_scale,
+                pitch * 0.5,
+            )
+            if (
+                left_segment["span"] < minimum_adjacent_span
+                or right_segment["span"] < minimum_adjacent_span
+            ):
+                reject("short_adjacent_segment")
+                continue
+
+            missing_response = _sample_line_band_max(
+                ridge_response,
+                coefficients,
+                missing_start,
+                missing_stop,
+                max(1, int(math.ceil(maximum_width * 2.0))),
+            )
+            if not len(missing_response):
+                reject("missing_response_unavailable")
+                continue
+            local_response_p90 = float(np.percentile(missing_response, 90))
+            active_fraction = float(
+                np.mean(missing_response >= minimum_prominence)
+            )
+            if (
+                local_response_p90 > minimum_prominence * 0.9
+                or active_fraction > 0.2
+            ):
+                reject("ridge_response_not_low")
+                continue
+
+            window = max(2.0, pitch_y * 0.18)
+            first_context = _sample_along_line(
+                ambient_luminance,
+                coefficients,
+                first_boundary - 2.0 * window,
+                first_boundary + 2.0 * window,
+            )
+            second_context = _sample_along_line(
+                ambient_luminance,
+                coefficients,
+                second_boundary - 2.0 * window,
+                second_boundary + 2.0 * window,
+            )
+            if not all(len(values) for values in (first_context, second_context)):
+                reject("reflectance_samples_unavailable")
+                continue
+            first_contrast = float(
+                np.percentile(first_context, 90) - np.percentile(first_context, 10)
+            )
+            second_contrast = float(
+                np.percentile(second_context, 90) - np.percentile(second_context, 10)
+            )
+            gap_reflectance = _sample_along_line(
+                ambient_luminance,
+                coefficients,
+                first_boundary + row_stride,
+                second_boundary - row_stride,
+            )
+            before_reflectance = _sample_along_line(
+                ambient_luminance,
+                coefficients,
+                first_boundary - pitch_y + row_stride,
+                first_boundary - row_stride,
+            )
+            after_reflectance = _sample_along_line(
+                ambient_luminance,
+                coefficients,
+                second_boundary + row_stride,
+                second_boundary + pitch_y - row_stride,
+            )
+            if not all(
+                len(values)
+                for values in (
+                    gap_reflectance,
+                    before_reflectance,
+                    after_reflectance,
+                )
+            ):
+                reject("reflectance_samples_unavailable")
+                continue
+            gap_level = float(np.median(gap_reflectance))
+            adjacent_level = max(
+                float(np.median(before_reflectance)),
+                float(np.median(after_reflectance)),
+            )
+            if (
+                first_contrast < minimum_contrast
+                or second_contrast < minimum_contrast
+                or gap_level > adjacent_level - minimum_contrast * 0.5
+            ):
+                reject("reflectance_boundary_mismatch")
+                continue
+
+            bridged.add(int(gap_index))
+            response_p90.append(local_response_p90)
+            boundary_contrasts.append(min(first_contrast, second_contrast))
+    elif len(split_indexes):
+        reason = (
+            "checker_geometry_unavailable"
+            if len(crossings) < 2
+            else "insufficient_long_segments"
+        )
+        for _ in split_indexes:
+            reject(reason)
+
+    unexplained_gaps = [
+        float(gap)
+        for gap_index, gap in enumerate(gaps)
+        if gap_index not in bridged
+    ]
+    unexplained_max_gap = max(unexplained_gaps, default=0.0)
+    return {
+        "raw_max_gap_px": max(raw_max_gap, 0.0),
+        "bridged_checker_gaps": len(bridged),
+        "unexplained_max_gap_px": max(unexplained_max_gap, 0.0),
+        "projected_checker_pitch_px_median": (
+            float(np.median(projected_pitches)) if len(projected_pitches) else 0.0
+        ),
+        "projected_checker_pitch_px_min": (
+            float(np.min(projected_pitches)) if len(projected_pitches) else 0.0
+        ),
+        "projected_checker_pitch_px_max": (
+            float(np.max(projected_pitches)) if len(projected_pitches) else 0.0
+        ),
+        "checker_gap_limit_px_median": (
+            float(np.median(gap_limits)) if len(gap_limits) else 0.0
+        ),
+        "checker_gap_limit_px_max": (
+            float(np.max(gap_limits)) if len(gap_limits) else 0.0
+        ),
+        "observed_line_segments": len(segments),
+        "sufficiently_long_line_segments": int(long_segments),
+        "checker_gap_response_p90_max": max(response_p90, default=0.0),
+        "checker_boundary_contrast_min": min(boundary_contrasts, default=0.0),
+        "checker_gap_rejection_counts": rejection_counts,
+    }
+
+
 def extract_laser_line_pixels(
     cv: Any,
     ambient: np.ndarray,
@@ -690,20 +1082,20 @@ def extract_laser_line_pixels(
         diagnostic["reason"] = "no coherent laser ridge spans the checkerboard interior"
         return [], diagnostic
 
-    selected = best[1]
-    for _ in range(2):
-        coefficients = np.polyfit(selected[:, 1], selected[:, 0], 1)
-        residuals = selected[:, 0] - np.polyval(coefficients, selected[:, 1])
-        keep = np.abs(residuals) <= inlier_tolerance
-        selected = selected[keep]
-        if len(selected) < minimum_rows:
-            diagnostic["reason"] = (
-                f"laser ridge retains {len(selected)} rows after line fitting; "
-                f"{minimum_rows} required"
-            )
-            return [], diagnostic
+    initially_selected = best[1]
+    selected, coefficients = _robust_ridge_line(
+        initially_selected,
+        maximum_residual=maximum_residual,
+        inlier_tolerance=inlier_tolerance,
+        minimum_rows=minimum_rows,
+    )
+    if len(selected) < minimum_rows:
+        diagnostic["reason"] = (
+            f"laser ridge retains {len(selected)} rows after robust line fitting; "
+            f"{minimum_rows} required"
+        )
+        return [], diagnostic
 
-    coefficients = np.polyfit(selected[:, 1], selected[:, 0], 1)
     residuals = selected[:, 0] - np.polyval(coefficients, selected[:, 1])
     residual_rms = float(np.sqrt(np.mean(residuals**2)))
     line_rows = np.sort(selected[:, 1])
@@ -711,18 +1103,44 @@ def extract_laser_line_pixels(
     continuity = float(
         len(line_rows) * row_stride / max(line_span + row_stride, row_stride)
     )
-    maximum_gap = float(np.max(np.diff(line_rows))) if len(line_rows) > 1 else math.inf
     median_width = float(np.median(selected[:, 3]))
-    maximum_gap = max(maximum_gap, 0.0)
+    strict_gap_limit = max(
+        row_stride * 2.0,
+        board_height * maximum_gap_fraction,
+    )
+    gap_diagnostic = _classify_checker_gaps(
+        corner_grid=corner_grid,
+        selected=selected,
+        coefficients=coefficients,
+        residuals=residuals,
+        row_stride=row_stride,
+        strict_gap_limit=strict_gap_limit,
+        maximum_residual=maximum_residual,
+        maximum_width=maximum_width,
+        minimum_prominence=minimum_prominence,
+        ridge_response=ridge_response,
+        ambient_luminance=ambient_luminance,
+        reference_luminance=reference_luminance,
+    )
+    selected_row_set = {int(row) for row in selected[:, 1]}
+    rejected_rows = np.asarray(
+        [row for row in candidate_rows if row not in selected_row_set],
+        dtype=float,
+    )
+    outlier_groups = _contiguous_row_groups(rejected_rows, row_stride)
     diagnostic.update(
         line_rows=int(len(selected)),
         line_span_px=line_span,
         line_span_fraction=line_span / max(board_height, 1.0),
         line_continuity=continuity,
-        maximum_row_gap_px=maximum_gap,
+        maximum_row_gap_px=gap_diagnostic["raw_max_gap_px"],
         line_residual_rms_px=residual_rms,
         median_line_width_px=median_width,
         line_slope_x_per_y=float(coefficients[0]),
+        line_fit_outlier_rows=int(len(rejected_rows)),
+        line_fit_outlier_segments=len(outlier_groups),
+        strict_unexplained_gap_limit_px=strict_gap_limit,
+        **gap_diagnostic,
     )
     failures = []
     if len(selected) < minimum_rows:
@@ -733,7 +1151,7 @@ def extract_laser_line_pixels(
         failures.append(
             f"continuity {continuity:.3f} < {minimum_continuity:.3f}"
         )
-    if maximum_gap > max(row_stride * 2.0, board_height * maximum_gap_fraction):
+    if gap_diagnostic["unexplained_max_gap_px"] > strict_gap_limit:
         failures.append("row continuity gap is too large")
     if residual_rms > maximum_residual:
         failures.append(

@@ -308,14 +308,17 @@ class PiPhotometricCaptureSession:
                 "Pi Camera photometric controls must be locked before confirmation"
             )
         latest = {}
+        mismatch = "no metadata frames were captured"
         for _ in range(self.CONTROL_CONFIRMATION_FRAMES):
             latest = self.capture_metadata()
-            if self._camera._photometric_controls_match(
+            mismatch = self._camera._photometric_metadata_mismatch(
                 latest, self._locked_controls
-            ) and latest.get("AwbEnable") is False:
+            )
+            if mismatch is None:
                 return self.metadata_for_report(latest)
         raise PhotometricControlError(
-            "Pi Camera did not apply stable matched photometric controls"
+            "Pi Camera did not apply stable matched photometric controls: "
+            f"{mismatch}"
         )
 
     def capture_jpeg(self) -> tuple[bytes, dict]:
@@ -324,15 +327,13 @@ class PiPhotometricCaptureSession:
                 "Pi Camera photometric session was captured before controls were locked"
             )
         jpeg, metadata = self._camera._capture_jpeg_with_metadata(self._token)
-        if not self._camera._photometric_controls_match(
+        mismatch = self._camera._photometric_metadata_mismatch(
             metadata, self._locked_controls
-        ):
+        )
+        if mismatch is not None:
             raise PhotometricControlError(
-                "Pi Camera frame metadata does not match locked ambient photometry"
-            )
-        if metadata.get("AwbEnable") is not False:
-            raise PhotometricControlError(
-                "Pi Camera frame metadata does not confirm white balance is locked"
+                "Pi Camera frame metadata does not match locked ambient "
+                f"photometry: {mismatch}"
             )
         return jpeg, metadata
 
@@ -691,12 +692,48 @@ class PiCamera:
         }
 
     @staticmethod
-    def _photometric_controls_match(metadata: dict, locked: dict) -> bool:
+    def _photometric_metadata_mismatch(
+        metadata: dict,
+        locked: dict,
+    ) -> str | None:
+        relevant_names = (
+            "AwbEnable",
+            "AwbLocked",
+            "ExposureTimeMode",
+            "AnalogueGainMode",
+            "ExposureTime",
+            "AnalogueGain",
+            "ColourGains",
+        )
+        available = ", ".join(
+            f"{name}={metadata[name]!r}"
+            for name in relevant_names
+            if name in metadata
+        ) or "none"
+        problems = []
+        missing = [
+            name
+            for name in ("ExposureTime", "AnalogueGain", "ColourGains")
+            if name not in metadata
+        ]
+        if missing:
+            problems.append("missing " + ", ".join(missing))
+        if "AwbEnable" in metadata:
+            awb_enabled = metadata["AwbEnable"]
+            if not isinstance(awb_enabled, bool):
+                problems.append(
+                    f"AwbEnable has invalid non-boolean value {awb_enabled!r}"
+                )
+            elif awb_enabled:
+                problems.append("AwbEnable=True")
         try:
             actual_colour_gains = tuple(metadata["ColourGains"])
             expected_colour_gains = tuple(locked["ColourGains"])
             if len(actual_colour_gains) != 2 or len(expected_colour_gains) != 2:
-                return False
+                problems.append(
+                    "ColourGains must contain exactly red and blue gains"
+                )
+                actual_colour_gains = ()
             exposure_matches = math.isclose(
                 float(metadata["ExposureTime"]),
                 float(locked["ExposureTime"]),
@@ -720,9 +757,31 @@ class PiCamera:
                     actual_colour_gains, expected_colour_gains
                 )
             )
-        except (KeyError, TypeError, ValueError):
-            return False
-        return exposure_matches and gain_matches and colour_matches
+        except (KeyError, TypeError, ValueError) as exc:
+            if not missing:
+                problems.append(f"invalid photometric metadata ({exc})")
+        else:
+            if not exposure_matches:
+                problems.append(
+                    f"ExposureTime={metadata['ExposureTime']!r} differs from "
+                    f"locked {locked['ExposureTime']!r}"
+                )
+            if not gain_matches:
+                problems.append(
+                    f"AnalogueGain={metadata['AnalogueGain']!r} differs from "
+                    f"locked {locked['AnalogueGain']!r}"
+                )
+            if actual_colour_gains and not colour_matches:
+                problems.append(
+                    f"ColourGains={metadata['ColourGains']!r} differs from "
+                    f"locked {locked['ColourGains']!r}"
+                )
+        if problems:
+            return (
+                "; ".join(problems)
+                + f"; available relevant metadata: {available}"
+            )
+        return None
 
     def capture_jpeg_b64(self) -> str | None:
         jpeg = self.capture_jpeg()

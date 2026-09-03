@@ -529,6 +529,125 @@ class PiCameraPhotometricControlTests(unittest.TestCase):
         self.assertFalse(ambient_metadata["AeEnable"])
         self.assertFalse(ambient_metadata["AwbEnable"])
 
+    def test_absent_awb_enable_metadata_accepts_stable_numeric_controls(self):
+        original_metadata = self.fake_cam.capture_metadata
+        original_capture = self.fake_cam.capture_arrays
+
+        def metadata_without_awb():
+            metadata = original_metadata()
+            metadata.pop("AwbEnable", None)
+            return metadata
+
+        def capture_without_awb(names):
+            arrays, metadata = original_capture(names)
+            metadata.pop("AwbEnable", None)
+            return arrays, metadata
+
+        self.fake_cam.capture_metadata = metadata_without_awb
+        self.fake_cam.capture_arrays = capture_without_awb
+
+        with self.camera.matched_photometric_controls() as session:
+            session.lock_from_metadata(session.capture_metadata())
+            confirmed = session.confirm_locked_controls()
+            _jpeg, frame_metadata = session.capture_jpeg()
+
+        self.assertNotIn("AwbEnable", confirmed)
+        self.assertNotIn("AwbEnable", frame_metadata)
+        self.assertEqual(frame_metadata["ExposureTime"], 12000)
+        self.assertEqual(frame_metadata["AnalogueGain"], 2.5)
+        self.assertEqual(frame_metadata["ColourGains"], (1.4, 1.8))
+
+    def test_missing_colour_gains_metadata_is_rejected_with_diagnostics(self):
+        original_capture = self.fake_cam.capture_arrays
+
+        with self.camera.matched_photometric_controls() as session:
+            session.lock_from_metadata(session.capture_metadata())
+            session.confirm_locked_controls()
+
+            def capture_without_colour_gains(names):
+                arrays, metadata = original_capture(names)
+                metadata.pop("ColourGains")
+                return arrays, metadata
+
+            self.fake_cam.capture_arrays = capture_without_colour_gains
+            with self.assertRaisesRegex(
+                camera_driver.PhotometricControlError,
+                "missing ColourGains.*available relevant metadata: "
+                "AwbEnable=False, ExposureTime=12000, AnalogueGain=2.5",
+            ):
+                session.capture_jpeg()
+
+    def test_drifting_colour_gains_metadata_is_rejected(self):
+        original_capture = self.fake_cam.capture_arrays
+
+        with self.camera.matched_photometric_controls() as session:
+            session.lock_from_metadata(session.capture_metadata())
+            session.confirm_locked_controls()
+
+            def capture_with_colour_drift(names):
+                arrays, metadata = original_capture(names)
+                metadata["ColourGains"] = (2.4, 3.1)
+                return arrays, metadata
+
+            self.fake_cam.capture_arrays = capture_with_colour_drift
+            with self.assertRaisesRegex(
+                camera_driver.PhotometricControlError,
+                r"ColourGains=.*differs from locked.*available relevant metadata",
+            ):
+                session.capture_jpeg()
+
+    def test_exposure_and_gain_drift_are_rejected(self):
+        for name, value in (("ExposureTime", 24000), ("AnalogueGain", 7.5)):
+            with self.subTest(name=name):
+                fake_cam = FakePicamera2(self.raw_frame)
+                camera = camera_driver.PiCamera()
+                camera._cam = fake_cam
+                original_capture = fake_cam.capture_arrays
+                with camera.matched_photometric_controls() as session:
+                    session.lock_from_metadata(session.capture_metadata())
+                    session.confirm_locked_controls()
+
+                    def capture_with_drift(names, *, field=name, drift=value):
+                        arrays, metadata = original_capture(names)
+                        metadata[field] = drift
+                        return arrays, metadata
+
+                    fake_cam.capture_arrays = capture_with_drift
+                    with self.assertRaisesRegex(
+                        camera_driver.PhotometricControlError,
+                        rf"{name}=.*differs from locked.*available relevant metadata",
+                    ):
+                        session.capture_jpeg()
+
+    def test_invalid_photometric_metadata_is_rejected(self):
+        locked = {
+            "ExposureTime": 12000,
+            "AnalogueGain": 2.5,
+            "ColourGains": (1.4, 1.8),
+        }
+        valid = {
+            "ExposureTime": 12000,
+            "AnalogueGain": 2.5,
+            "ColourGains": (1.4, 1.8),
+        }
+        cases = (
+            ("AwbEnable", True, "AwbEnable=True"),
+            ("AwbEnable", 0, "invalid non-boolean"),
+            ("ExposureTime", "bad", "invalid photometric metadata"),
+            ("AnalogueGain", float("inf"), "differs from locked"),
+            ("ColourGains", (1.4,), "exactly red and blue"),
+            ("ColourGains", (1.4, float("nan")), "differs from locked"),
+        )
+        for name, value, expected in cases:
+            with self.subTest(name=name, value=value):
+                metadata = dict(valid)
+                metadata[name] = value
+                mismatch = self.camera._photometric_metadata_mismatch(
+                    metadata, locked
+                )
+                self.assertIn(expected, mismatch)
+                self.assertIn("available relevant metadata:", mismatch)
+
     def test_frame_metadata_mismatch_fails_and_restores_controls(self):
         original_capture = self.fake_cam.capture_arrays
 

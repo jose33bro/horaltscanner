@@ -1,4 +1,5 @@
 import copy
+from contextlib import contextmanager
 import json
 import math
 import os
@@ -438,6 +439,73 @@ class _Camera:
     def capture_jpeg():
         return b"jpeg"
 
+    @contextmanager
+    def matched_photometric_controls(self):
+        yield _PhotometricSession()
+
+
+class _PhotometricSession:
+    controls = {
+        "ExposureTime": 12000,
+        "AnalogueGain": 2.5,
+        "ColourGains": [1.4, 1.8],
+    }
+
+    @staticmethod
+    def capture_metadata():
+        return {
+            "ExposureTime": 12000,
+            "AnalogueGain": 2.5,
+            "ColourGains": (1.4, 1.8),
+        }
+
+    def lock_from_metadata(self, _metadata):
+        return copy.deepcopy(self.controls)
+
+    def confirm_locked_controls(self):
+        return copy.deepcopy(self.controls)
+
+    def capture_jpeg(self):
+        return b"jpeg", self.capture_metadata()
+
+    @staticmethod
+    def metadata_for_report(metadata):
+        return {
+            "ExposureTime": int(metadata["ExposureTime"]),
+            "AnalogueGain": float(metadata["AnalogueGain"]),
+            "ColourGains": [
+                float(value) for value in metadata["ColourGains"]
+            ],
+        }
+
+
+class _TrackedPhotometricCamera(_Camera):
+    def __init__(self, capture_callback=None):
+        self.photometry_active = False
+        self.entries = 0
+        self.restorations = 0
+        self.capture_callback = capture_callback
+
+    @contextmanager
+    def matched_photometric_controls(self):
+        self.entries += 1
+        self.photometry_active = True
+        try:
+            session = _PhotometricSession()
+            original_capture = session.capture_jpeg
+
+            def capture():
+                assert self.photometry_active
+                if self.capture_callback is not None:
+                    self.capture_callback()
+                return original_capture()
+
+            session.capture_jpeg = capture
+            yield session
+        finally:
+            self.photometry_active = False
+            self.restorations += 1
+
 
 class _Lidar:
     def __init__(self):
@@ -480,6 +548,7 @@ def service_config():
         "motion_timeout_s": 0.1,
         "capture_timeout_s": 0.1,
         "lidar_timeout_s": 0.1,
+        "laser_photometric_settle_s": 0,
     }
 
 
@@ -1776,7 +1845,7 @@ class CalibrationServiceTests(unittest.TestCase):
         self.assertEqual(calls, 5)
         self.assertEqual(quality["views"], 3)
 
-    def test_usb_laser_cross_validation_never_replaces_or_blocks_pi_plane(self):
+    def test_unverified_usb_laser_path_never_replaces_or_blocks_pi_plane(self):
         poses = [
             {"x": 195.0, "y": 0.0, "z": 20.0},
             {"x": 185.0, "y": 10.0, "z": 30.0},
@@ -1810,9 +1879,33 @@ class CalibrationServiceTests(unittest.TestCase):
         for side in ("left", "right"):
             self.assertAlmostEqual(abs(result[side]["normal"][2]), 1.0)
             cross_validation = result[side]["quality"]["usb_cross_validation"]
-            self.assertTrue(cross_validation["performed"])
-            self.assertFalse(cross_validation["accepted"])
-            self.assertIn("Pi plane remains authoritative", cross_validation["reason"])
+            self.assertFalse(cross_validation["performed"])
+            self.assertIsNone(cross_validation["accepted"])
+        status = self.service.status()
+        left_controls = status["laser_views"]["left"]["pi"][0][
+            "photometric_controls"
+        ]
+        right_controls = status["laser_views"]["right"]["pi"][0][
+            "photometric_controls"
+        ]
+        self.assertEqual(left_controls, right_controls)
+        self.assertTrue(
+            all(
+                item["photometry_matched"]
+                for side in ("left", "right")
+                for item in status["laser_views"][side]["pi"]
+            )
+        )
+        for side in ("left", "right"):
+            for item in status["laser_views"][side]["pi"]:
+                self.assertEqual(
+                    item["ambient_photometric_metadata"],
+                    item["laser_photometric_metadata"],
+                )
+                self.assertEqual(
+                    item["photometric_controls"],
+                    item["laser_photometric_metadata"],
+                )
 
     def test_optional_usb_capture_failure_does_not_abort_pi_plane_fit(self):
         poses = [
@@ -1853,8 +1946,136 @@ class CalibrationServiceTests(unittest.TestCase):
         usb_diagnostics = self.service.status()["laser_views"]["left"]["usb"]
         self.assertEqual(len(usb_diagnostics), 3)
         self.assertTrue(
-            all("USB ambient capture failed" in item["reason"] for item in usb_diagnostics)
+            all(
+                "USB matched photometry/capture unavailable" in item["reason"]
+                for item in usb_diagnostics
+            )
         )
+
+    def test_unsupported_usb_photometry_is_explicit_and_does_not_block_pi(self):
+        poses = [
+            {"x": 195.0, "y": 0.0, "z": 20.0},
+            {"x": 185.0, "y": 10.0, "z": 30.0},
+            {"x": 175.0, "y": 20.0, "z": 40.0},
+        ]
+
+        class UnsupportedUsb:
+            is_open = True
+
+            @staticmethod
+            def capture_jpeg():
+                return b"usb"
+
+        self.service._cameras["usb"] = UnsupportedUsb()
+        self.service._move_to = lambda _pose: None
+        pose_index = {pose["x"]: index for index, pose in enumerate(poses)}
+        self.service._capture = lambda name: b"pi" if name == "pi" else b"usb"
+
+        def extract(_name, _side, _ambient, _laser, pose, _calibration, **_kwargs):
+            return {
+                "points": [
+                    [float(pose_index[pose["x"]] * 10), float(index), 0.0]
+                    for index in range(15)
+                ],
+                "diagnostic": {"accepted": True, "reason": None},
+            }
+
+        self.service._laser_board_points = extract
+        views = {
+            name: [
+                {"pose": dict(pose), "corners": np.zeros((66, 2))}
+                for pose in poses
+            ]
+            for name in ("pi", "usb")
+        }
+
+        result = self.service._calibrate_lasers(
+            poses, {"cameras": {}}, checkerboard_views=views
+        )
+
+        self.assertEqual(result["left"]["quality"]["primary_camera"], "pi")
+        usb_diagnostics = self.service.status()["laser_views"]["left"]["usb"]
+        self.assertTrue(
+            all(not item["photometry_matched"] for item in usb_diagnostics)
+        )
+        self.assertTrue(
+            all(
+                "no verified matched-photometry" in item["reason"]
+                for item in usb_diagnostics
+            )
+        )
+
+    def test_pi_photometry_restores_after_error_and_lasers_are_off(self):
+        camera = _TrackedPhotometricCamera()
+        self.service._cameras["pi"] = camera
+        self.service._move_to = lambda _pose: None
+
+        def capture(name):
+            if name == "pi":
+                self.assertTrue(camera.photometry_active)
+            return b"jpeg"
+
+        self.service._capture = capture
+        self.service._laser_board_points = mock.Mock(
+            side_effect=CalibrationError("bad line")
+        )
+
+        with self.assertRaisesRegex(CalibrationError, "bad line"):
+            self.service._calibrate_lasers(
+                [{"x": 195, "y": 0, "z": 20}],
+                {"cameras": {}},
+            )
+
+        self.assertEqual(camera.entries, 1)
+        self.assertEqual(camera.restorations, 1)
+        self.assertFalse(camera.photometry_active)
+        self.assertFalse(any(self.gpio.state.values()))
+
+    def test_pi_photometry_restores_after_cancel_and_lasers_are_off(self):
+        def cancel_when_laser_is_on():
+            if self.gpio.state["left"]:
+                self.service._cancel.set()
+                raise CalibrationCancelled("calibration cancelled")
+
+        camera = _TrackedPhotometricCamera(cancel_when_laser_is_on)
+        self.service._cameras["pi"] = camera
+        self.service._move_to = lambda _pose: None
+
+        with self.assertRaises(CalibrationCancelled):
+            self.service._calibrate_lasers(
+                [{"x": 195, "y": 0, "z": 20}],
+                {"cameras": {}},
+            )
+
+        self.assertEqual(camera.restorations, 1)
+        self.assertFalse(camera.photometry_active)
+        self.assertFalse(any(self.gpio.state.values()))
+
+    def test_unsupported_pi_photometry_blocks_before_laser_enable(self):
+        class UnsupportedPi:
+            is_open = True
+
+            @staticmethod
+            def capture_jpeg():
+                return b"pi"
+
+        self.service._cameras["pi"] = UnsupportedPi()
+        readiness = self.service.readiness(
+            {"lidar": {"origin_mm": [0, 0, 0], "direction": [1, 0, 0]}}
+        )
+
+        self.assertFalse(readiness["ready"])
+        self.assertTrue(
+            any("matched ambient/laser photometry" in item for item in readiness["blockers"])
+        )
+        with self.assertRaisesRegex(
+            CalibrationError, "cannot guarantee matched ambient/laser photometry"
+        ):
+            self.service._calibrate_lasers(
+                [{"x": 195, "y": 0, "z": 20}],
+                {"cameras": {}},
+            )
+        self.assertFalse(any(self.gpio.state.values()))
 
     def test_missing_cached_pose_is_rejected_without_ambient_redetection(self):
         poses = [

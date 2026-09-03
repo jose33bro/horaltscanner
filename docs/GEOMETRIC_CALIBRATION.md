@@ -89,6 +89,17 @@ the Pi plane without contributing samples to it. Each laser must still provide
 at least the configured number of Pi points across three valid poses and three
 independently oriented board views before the robust plane fit, and both the
 plane RMS and optional USB cross-validation RMS limits remain **2 mm**. Laser
+ambient and laser-on frames are captured under one Pi Camera photometric setting
+per pose. With both lasers off, automatic exposure, analogue gain, and white
+balance settle for `laser_photometric_settle_s` (default **1 second**); their
+effective public Picamera2 metadata values are then locked and confirmed before
+the ambient and both laser frames. The prior automatic/manual controls are
+restored in a `finally` guard on success, failure, or cancellation. Missing Pi
+controls fail preflight before laser-plane acquisition. A USB camera participates
+in the optional laser cross-check only when a verified matched-photometry capture
+path exists. The current OpenCV USB driver does not provide a portable exposure
+lock, so the report records that diagnostic and the Pi-authoritative fit
+continues. Laser
 control remains binary at the API boundary, but the tracked production hardware
 configuration opts GPIO27 and GPIO22 into 1 kHz `PWMOutputDevice` control at a
 conservative 20% calibration duty. The calibration service selects that fixed,

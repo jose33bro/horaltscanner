@@ -336,6 +336,193 @@ class CalibrationMathTests(unittest.TestCase):
                 self.assertEqual(pixels, [])
                 self.assertFalse(diagnostic["accepted"])
 
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_finds_narrow_ridge_inside_broad_pink_halo(self):
+        for halo_width, ridge_width in ((40, 3), (40, 8), (100, 3), (100, 8)):
+            with self.subTest(halo_width=halo_width, ridge_width=ridge_width):
+                ambient, laser, corners = self._synthetic_laser_images(
+                    draw_line=False
+                )
+                reflectance = self._paint_checkerboard(ambient)
+                laser = ambient.copy()
+                laser = self._add_vertical_laser_profiles(
+                    laser,
+                    (
+                        (160.0, halo_width / 2.355, (8.0, 8.0, 72.0)),
+                        (
+                            160.0,
+                            ridge_width / 2.355,
+                            (150.0, 150.0, 180.0),
+                        ),
+                    ),
+                    gain=reflectance,
+                )
+
+                pixels, diagnostic = extract_laser_line_pixels(
+                    cv2,
+                    ambient,
+                    laser,
+                    corners,
+                    config={
+                        "board_columns": 11,
+                        "board_rows": 6,
+                        "laser_row_stride": 1,
+                    },
+                )
+
+                self.assertTrue(diagnostic["accepted"], diagnostic)
+                self.assertGreater(len(pixels), 100)
+                self.assertTrue(all(157.0 <= point[0] <= 163.0 for point in pixels))
+                self.assertLessEqual(diagnostic["median_line_width_px"], 8.0)
+                self.assertGreater(diagnostic["raw_candidate_pixels"], 3000)
+                self.assertGreater(
+                    diagnostic["background_suppressed_ridge_candidates"], 100
+                )
+                self.assertGreater(diagnostic["median_peak_prominence"], 20.0)
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_broad_pink_halo_without_ridge(self):
+        for halo_width in (20, 28, 36, 40, 100):
+            with self.subTest(halo_width=halo_width):
+                ambient, laser, corners = self._synthetic_laser_images(
+                    draw_line=False
+                )
+                reflectance = self._paint_checkerboard(ambient)
+                laser = ambient.copy()
+                laser = self._add_vertical_laser_profiles(
+                    laser,
+                    ((160.0, halo_width / 2.355, (8.0, 8.0, 72.0)),),
+                    gain=reflectance,
+                )
+
+                pixels, diagnostic = extract_laser_line_pixels(
+                    cv2,
+                    ambient,
+                    laser,
+                    corners,
+                    config={
+                        "board_columns": 11,
+                        "board_rows": 6,
+                        "laser_row_stride": 1,
+                    },
+                )
+
+                self.assertEqual(pixels, [])
+                self.assertFalse(diagnostic["accepted"])
+                self.assertGreater(diagnostic["raw_candidate_pixels"], 500)
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_finds_slanted_ridge_without_cross_row_blur(self):
+        ambient, laser, corners = self._synthetic_laser_images(draw_line=False)
+        reflectance = self._paint_checkerboard(ambient)
+        laser = ambient.copy()
+        laser = self._add_vertical_laser_profiles(
+            laser,
+            (
+                (160.0, 60 / 2.355, (8.0, 8.0, 72.0)),
+                (160.0, 6 / 2.355, (150.0, 150.0, 180.0)),
+            ),
+            gain=reflectance,
+            slope=0.35,
+        )
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertTrue(diagnostic["accepted"], diagnostic)
+        self.assertGreater(len(pixels), 100)
+        self.assertAlmostEqual(diagnostic["line_slope_x_per_y"], 0.35, delta=0.02)
+        self.assertLess(diagnostic["line_residual_rms_px"], 2.0)
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_two_comparable_parallel_ridges(self):
+        ambient, laser, corners = self._synthetic_laser_images(draw_line=False)
+        laser = self._add_vertical_laser_profiles(
+            laser,
+            (
+                (145.0, 2.0, (25.0, 25.0, 190.0)),
+                (175.0, 2.0, (25.0, 25.0, 180.0)),
+            ),
+        )
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertGreaterEqual(diagnostic["ambiguous_rows"], 100)
+        self.assertIn("ambiguous", diagnostic["reason"])
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_checker_brightness_changes(self):
+        ambient, laser, corners = self._synthetic_laser_images(draw_line=False)
+        for row in range(5):
+            for column in range(10):
+                shade = 65 if (row + column) % 2 else 145
+                y0, y1 = 40 + row * 32, 40 + (row + 1) * 32
+                x0, x1 = 60 + column * 20, 60 + (column + 1) * 20
+                ambient[y0:y1, x0:x1] = shade
+                changed = min(shade + (22 if column % 2 else 38), 230)
+                laser[y0:y1, x0:x1] = changed
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertEqual(diagnostic["background_suppressed_ridge_candidates"], 0)
+
+    @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
+    def test_laser_extraction_rejects_gapped_ridge_and_reflections(self):
+        ambient, laser, corners = self._synthetic_laser_images(draw_line=False)
+        cv2.line(laser, (157, 45), (159, 95), (0, 0, 255), 4)
+        cv2.line(laser, (162, 145), (164, 195), (0, 0, 255), 4)
+        cv2.rectangle(laser, (112, 105), (125, 120), (0, 0, 230), -1)
+        cv2.rectangle(laser, (275, 15), (315, 225), (0, 0, 255), -1)
+
+        pixels, diagnostic = extract_laser_line_pixels(
+            cv2,
+            ambient,
+            laser,
+            corners,
+            config={
+                "board_columns": 11,
+                "board_rows": 6,
+                "laser_row_stride": 1,
+            },
+        )
+
+        self.assertEqual(pixels, [])
+        self.assertFalse(diagnostic["accepted"])
+        self.assertIn("gap", diagnostic["reason"])
+
     @staticmethod
     def _synthetic_laser_images(*, draw_line=True):
         ambient = np.full((240, 320, 3), 40, dtype=np.uint8)
@@ -352,6 +539,32 @@ class CalibrationMathTests(unittest.TestCase):
         if draw_line:
             cv2.line(laser, (156, 45), (164, 195), (0, 0, 255), 3)
         return ambient, laser, corners
+
+    @staticmethod
+    def _paint_checkerboard(image):
+        reflectance = np.ones(image.shape[:2], dtype=np.float32)
+        for row in range(5):
+            for column in range(10):
+                y0, y1 = 40 + row * 32, 40 + (row + 1) * 32
+                x0, x1 = 60 + column * 20, 60 + (column + 1) * 20
+                is_light = (row + column) % 2 == 0
+                image[y0:y1, x0:x1] = 130 if is_light else 30
+                reflectance[y0:y1, x0:x1] = 1.0 if is_light else 0.55
+        return reflectance
+
+    @staticmethod
+    def _add_vertical_laser_profiles(image, profiles, *, gain=None, slope=0.0):
+        result = image.astype(np.float32)
+        rows, columns = np.indices(image.shape[:2], dtype=np.float32)
+        if gain is None:
+            gain = np.ones(image.shape[:2], dtype=np.float32)
+        for center, sigma, bgr_gain in profiles:
+            center_by_row = center + slope * (rows - (image.shape[0] - 1) / 2.0)
+            profile = np.exp(-0.5 * ((columns - center_by_row) / sigma) ** 2)
+            result += gain[:, :, None] * profile[:, :, None] * np.asarray(
+                bgr_gain, dtype=np.float32
+            )[None, None, :]
+        return np.clip(result, 0, 255).astype(np.uint8)
 
 
 class _FakeCV:

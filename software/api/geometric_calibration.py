@@ -231,6 +231,17 @@ def validate_view_diversity(
     return metrics
 
 
+def _gaussian_blur_rows(cv: Any, image: np.ndarray, sigma: float) -> np.ndarray:
+    radius = max(1, int(math.ceil(3.0 * sigma)))
+    return cv.GaussianBlur(
+        image,
+        (radius * 2 + 1, 1),
+        sigmaX=sigma,
+        sigmaY=0,
+        borderType=cv.BORDER_REPLICATE,
+    )
+
+
 def extract_laser_line_pixels(
     cv: Any,
     ambient: np.ndarray,
@@ -287,6 +298,47 @@ def extract_laser_line_pixels(
     maximum_gap_fraction = float(
         config.get("maximum_laser_line_gap_fraction", 0.12)
     )
+    ridge_background_sigma = float(
+        config.get(
+            "laser_ridge_background_sigma_px",
+            max(3.0, maximum_width / 2.0),
+        )
+    )
+    minimum_prominence = float(
+        config.get(
+            "minimum_laser_ridge_prominence",
+            max(12.0, delta_threshold * 0.45),
+        )
+    )
+    width_level_fraction = float(
+        config.get("laser_ridge_width_level_fraction", 0.5)
+    )
+    ambiguity_ratio = float(
+        config.get("laser_ridge_ambiguity_ratio", 0.75)
+    )
+    minimum_chromatic_support = float(
+        config.get(
+            "minimum_laser_ridge_chromatic_support",
+            max(6.0, excess_threshold * 0.4),
+        )
+    )
+    fine_sigma = float(config.get("laser_ridge_fine_sigma_px", 2.0))
+    minimum_sharpness_ratio = float(
+        config.get("minimum_laser_ridge_sharpness_ratio", 0.2)
+    )
+    reflectance_floor = float(
+        config.get("laser_ridge_reflectance_floor", 64.0)
+    )
+    ridge_thresholds = (
+        ridge_background_sigma,
+        minimum_prominence,
+        width_level_fraction,
+        ambiguity_ratio,
+        minimum_chromatic_support,
+        fine_sigma,
+        minimum_sharpness_ratio,
+        reflectance_floor,
+    )
     if (
         not 0 < erode_fraction < 0.5
         or row_stride <= 0
@@ -298,6 +350,16 @@ def extract_laser_line_pixels(
         or maximum_residual <= 0
         or maximum_width <= 0
         or not 0 < maximum_gap_fraction <= 1
+        or ridge_background_sigma <= 0
+        or minimum_prominence <= 0
+        or not 0 < width_level_fraction < 1
+        or not 0 < ambiguity_ratio <= 1
+        or minimum_chromatic_support <= 0
+        or fine_sigma <= 0
+        or fine_sigma >= ridge_background_sigma
+        or not 0 < minimum_sharpness_ratio < 1
+        or reflectance_floor <= 0
+        or not all(math.isfinite(value) for value in ridge_thresholds)
     ):
         raise CalibrationError("laser extraction thresholds are invalid")
 
@@ -344,56 +406,226 @@ def extract_laser_line_pixels(
             iterations=1,
         )
 
-    ambient_red = ambient[:, :, 2].astype(np.int16)
-    laser_red = laser[:, :, 2].astype(np.int16)
-    delta = laser_red - ambient_red
-    excess = laser_red - np.maximum(
-        laser[:, :, 1], laser[:, :, 0]
-    ).astype(np.int16)
-    candidate_mask = (
-        (delta >= delta_threshold)
-        & (excess >= excess_threshold)
+    ambient_bgr = ambient[:, :, :3].astype(np.float32)
+    laser_bgr = laser[:, :, :3].astype(np.float32)
+    channel_delta = laser_bgr - ambient_bgr
+    red_delta = channel_delta[:, :, 2]
+    laser_excess = laser_bgr[:, :, 2] - np.maximum(
+        laser_bgr[:, :, 1], laser_bgr[:, :, 0]
+    )
+    ambient_excess = ambient_bgr[:, :, 2] - np.maximum(
+        ambient_bgr[:, :, 1], ambient_bgr[:, :, 0]
+    )
+    chromatic_delta = laser_excess - ambient_excess
+    raw_candidate_mask = (
+        (red_delta >= delta_threshold)
+        & (chromatic_delta >= excess_threshold)
         & (roi > 0)
         & (saturated == 0)
     )
-    response = delta.astype(float) + 0.5 * np.maximum(excess, 0)
+    ambient_luminance = ambient_bgr.mean(axis=2)
+    reference_luminance = float(np.median(ambient_luminance[roi > 0]))
+    reflectance_normalization = np.clip(
+        (reference_luminance + reflectance_floor)
+        / (ambient_luminance + reflectance_floor),
+        0.5,
+        2.0,
+    )
+    normalized_red_delta = red_delta * reflectance_normalization
+    normalized_chromatic_delta = chromatic_delta * reflectance_normalization
+    response = normalized_red_delta + 0.5 * np.maximum(
+        normalized_chromatic_delta,
+        0.0,
+    )
+    background = _gaussian_blur_rows(cv, response, ridge_background_sigma)
+    ridge_response = np.maximum(response - background, 0.0)
+    fine_background = _gaussian_blur_rows(cv, response, fine_sigma)
+    fine_response = np.maximum(response - fine_background, 0.0)
+    chromatic_support = _gaussian_blur_rows(
+        cv,
+        np.maximum(normalized_chromatic_delta, 0.0),
+        max(1.0, maximum_width / 4.0),
+    )
+    ridge_mask = (
+        (red_delta >= delta_threshold)
+        & (ridge_response >= minimum_prominence)
+        & (chromatic_support >= minimum_chromatic_support)
+        & (roi > 0)
+        & (saturated == 0)
+    )
+    raw_candidate_pixels = int(np.count_nonzero(raw_candidate_mask))
     diagnostic.update(
         roi_area_px=int(np.count_nonzero(roi)),
         roi_erode_fraction=erode_fraction,
         excluded_ambient_saturated_px=int(
             np.count_nonzero((saturated > 0) & (roi > 0))
         ),
-        candidate_pixels=int(np.count_nonzero(candidate_mask)),
+        raw_candidate_pixels=raw_candidate_pixels,
+        candidate_pixels=raw_candidate_pixels,
+        background_suppressed_ridge_pixels=int(np.count_nonzero(ridge_mask)),
+        ridge_background_sigma_px=ridge_background_sigma,
+        minimum_ridge_prominence=minimum_prominence,
+        minimum_ridge_chromatic_support=minimum_chromatic_support,
+        ridge_fine_sigma_px=fine_sigma,
+        minimum_ridge_sharpness_ratio=minimum_sharpness_ratio,
+        ridge_reflectance_floor=reflectance_floor,
+        ridge_reference_luminance=reference_luminance,
     )
 
-    candidates: list[tuple[float, float, float, float]] = []
+    candidates: list[tuple[float, float, float, float, float, float]] = []
     maximum_peaks_per_row = int(config.get("maximum_laser_peaks_per_row", 4))
     if maximum_peaks_per_row <= 0:
         raise CalibrationError("maximum_laser_peaks_per_row must be positive")
+    all_peak_prominences: list[float] = []
+    all_bilateral_prominences: list[float] = []
+    all_peak_widths: list[float] = []
+    ambiguous_rows = 0
+    rows_with_peaks = 0
+    background_suppressed_candidates = 0
+    sharpness_ratios: list[float] = []
+    shoulder_inner = max(2, int(math.ceil(maximum_width * 0.5)))
+    shoulder_outer = max(shoulder_inner + 1, int(math.ceil(maximum_width)))
     for row in range(int(roi_rows.min()), int(roi_rows.max()) + 1, row_stride):
-        active = np.flatnonzero(candidate_mask[row])
+        active = np.flatnonzero(ridge_mask[row])
         if not active.size:
             continue
         split_at = np.flatnonzero(np.diff(active) > 1) + 1
         runs = np.split(active, split_at)
         peaks = []
         for run in runs:
-            scores = response[row, run]
-            peak_index = int(np.argmax(scores))
-            weights = np.maximum(scores - min(delta_threshold, excess_threshold), 1.0)
+            background_suppressed_candidates += 1
+            scores = ridge_response[row, run]
+            peak_column = int(run[int(np.argmax(scores))])
+            peak_prominence = float(ridge_response[row, peak_column])
+            fine_prominence = float(fine_response[row, peak_column])
+            sharpness_ratio = fine_prominence / peak_prominence
+            if (
+                fine_prominence < minimum_prominence * 0.5
+                or sharpness_ratio < minimum_sharpness_ratio
+            ):
+                continue
+            left_start = max(0, peak_column - shoulder_outer)
+            left_stop = max(0, peak_column - shoulder_inner)
+            right_start = min(width, peak_column + shoulder_inner + 1)
+            right_stop = min(width, peak_column + shoulder_outer + 1)
+            if left_stop <= left_start or right_stop <= right_start:
+                continue
+            peak_response = float(response[row, peak_column])
+            bilateral_prominence = min(
+                peak_response
+                - float(np.median(response[row, left_start:left_stop])),
+                peak_response
+                - float(np.median(response[row, right_start:right_stop])),
+            )
+            if bilateral_prominence < minimum_prominence:
+                continue
+            level = max(
+                minimum_prominence,
+                peak_prominence * width_level_fraction,
+            )
+            left = peak_column
+            right = peak_column
+            while left > 0 and ridge_response[row, left - 1] >= level:
+                left -= 1
+            while (
+                right + 1 < width
+                and ridge_response[row, right + 1] >= level
+            ):
+                right += 1
+
+            left_crossing = float(left)
+            if left > 0:
+                inside = float(ridge_response[row, left])
+                outside = float(ridge_response[row, left - 1])
+                if inside > outside:
+                    left_crossing -= (inside - level) / (inside - outside)
+            right_crossing = float(right)
+            if right + 1 < width:
+                inside = float(ridge_response[row, right])
+                outside = float(ridge_response[row, right + 1])
+                if inside > outside:
+                    right_crossing += (inside - level) / (inside - outside)
+            local_width = max(right_crossing - left_crossing, 1.0)
+
+            ridge_columns = np.arange(left, right + 1, dtype=float)
+            ridge_weights = np.maximum(
+                ridge_response[row, left : right + 1] - level,
+                1e-3,
+            )
+            subpixel_column = float(
+                np.average(ridge_columns, weights=ridge_weights)
+            )
             peaks.append(
                 (
-                    float(np.average(run, weights=weights)),
+                    subpixel_column,
                     float(row),
-                    float(scores[peak_index]),
-                    float(len(run)),
+                    peak_prominence,
+                    local_width,
+                    bilateral_prominence,
+                    sharpness_ratio,
                 )
             )
-        candidates.extend(
-            sorted(peaks, key=lambda item: item[2], reverse=True)[
-                :maximum_peaks_per_row
-            ]
+        peaks = sorted(peaks, key=lambda item: item[2], reverse=True)[
+            :maximum_peaks_per_row
+        ]
+        if not peaks:
+            continue
+        rows_with_peaks += 1
+        all_peak_prominences.extend(item[2] for item in peaks)
+        all_peak_widths.extend(item[3] for item in peaks)
+        all_bilateral_prominences.extend(item[4] for item in peaks)
+        sharpness_ratios.extend(item[5] for item in peaks)
+        if (
+            len(peaks) > 1
+            and peaks[1][2] >= peaks[0][2] * ambiguity_ratio
+            and abs(peaks[1][0] - peaks[0][0]) > maximum_width
+        ):
+            ambiguous_rows += 1
+            continue
+        candidates.extend(peaks)
+
+    diagnostic.update(
+        background_suppressed_ridge_candidates=background_suppressed_candidates,
+        sharp_ridge_candidates=len(all_peak_prominences),
+        rows_with_ridge_peaks=rows_with_peaks,
+        ambiguous_rows=ambiguous_rows,
+        ambiguity_ratio=ambiguity_ratio,
+        median_peak_prominence=(
+            float(np.median(all_peak_prominences))
+            if all_peak_prominences
+            else 0.0
+        ),
+        p90_peak_prominence=(
+            float(np.percentile(all_peak_prominences, 90))
+            if all_peak_prominences
+            else 0.0
+        ),
+        median_bilateral_prominence=(
+            float(np.median(all_bilateral_prominences))
+            if all_bilateral_prominences
+            else 0.0
+        ),
+        median_ridge_sharpness_ratio=(
+            float(np.median(sharpness_ratios)) if sharpness_ratios else 0.0
+        ),
+        median_local_width_px=(
+            float(np.median(all_peak_widths)) if all_peak_widths else 0.0
+        ),
+        p90_local_width_px=(
+            float(np.percentile(all_peak_widths, 90))
+            if all_peak_widths
+            else 0.0
+        ),
+    )
+    if (
+        ambiguous_rows >= minimum_rows
+        and ambiguous_rows >= math.ceil(rows_with_peaks * 0.5)
+    ):
+        diagnostic["reason"] = (
+            f"laser ridge is ambiguous in {ambiguous_rows} of "
+            f"{rows_with_peaks} peak rows"
         )
+        return [], diagnostic
 
     candidate_rows = sorted({int(item[1]) for item in candidates})
     diagnostic["candidate_rows"] = len(candidate_rows)

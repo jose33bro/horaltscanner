@@ -22,17 +22,21 @@ The configured X=195, Y=0, Z=20 mm pose keeps a temporary 5 mm margin from the
 first observed mechanical contact at X=200 while preserving the camera framing.
 The calibration service hard-caps every trajectory pose at X=195 mm even if an
 unsafe higher limit is supplied, and caps calibration Z at the validated 40 mm.
-The default seven poses are:
+The default 11 poses are:
 
 | View | X (mm) | Y travel (mm / degrees) | Z (mm) |
 |---:|---:|---:|---:|
 | 1 | 195 | 0 / 0° | 20 |
-| 2 | 185 | 10.4719755 / 6° | 30 |
-| 3 | 175 | 20.9439510 / 12° | 40 |
-| 4 | 165 | 31.4159265 / 18° | 20 |
-| 5 | 195 | 41.8879020 / 24° | 40 |
-| 6 | 165 | 52.3598776 / 30° | 30 |
-| 7 | 180 | 62.8318531 / 36° | 40 |
+| 2 | 195 | 0 / 0° | 40 |
+| 3 | 185 | 10.4719755 / 6° | 30 |
+| 4 | 175 | 20.9439510 / 12° | 40 |
+| 5 | 175 | 20.9439510 / 12° | 20 |
+| 6 | 165 | 31.4159265 / 18° | 30 |
+| 7 | 195 | 41.8879020 / 24° | 20 |
+| 8 | 195 | 41.8879020 / 24° | 40 |
+| 9 | 165 | 52.3598776 / 30° | 30 |
+| 10 | 180 | 62.8318531 / 36° | 40 |
+| 11 | 180 | 62.8318531 / 36° | 20 |
 
 Because the checkerboard is centered, a stable Pi-camera checkerboard center is
 expected. Diversity is measured from normalized corresponding-corner motion,
@@ -55,27 +59,45 @@ The fixed Pi observation still defines the canonical board convention; raw
 camera-coordinate rotation signs are not compared across cameras.
 
 The USB carriage coefficient is estimated after the fixed Pi-derived signed X
-and Y mechanism transform has been applied. The estimator residualizes
-commanded Z against commanded X/Y before solving the Z coefficient, so
-correlated commands cannot silently remove its independent leverage. It keeps
-all views whose joint translation RMS is within the unchanged 5 mm extrinsic
-limit. Gross translation rejection is deterministic and may remove a view only
-when another inlier remains at that same Z level. A PnP mask that removes a
-whole Z level fails instead of triggering a biased refit. Calibration also
-requires three Z levels spanning 20 mm, independent-Z leverage ratio at least
-0.25, condition number at most 50, per-level repeatability at most 5 mm, and
-leave-one-view/leave-one-level carriage-vector deviation at most 0.15 mm per
-commanded mm. Reports include those values, per-level sample/inlier counts,
-rejected views, and any direct same-X/same-Y Z contrasts.
+and Y mechanism transform has been applied. At each repeated commanded X/Y
+position, the widest 20 mm Z contrast cancels the intercept and X/Y nuisance
+motion exactly. With at least three independent contrasts, their multivariate
+geometric median is the carriage-vector estimator. This gives bounded influence
+to one bad contrast without hiding disagreement: the maximum pairwise
+contrast-vector difference is included in the unchanged 0.15 mm/mm
+vector-uncertainty gate.
+Legacy/custom trajectories without three contrasts retain the prior
+Frisch-Waugh-Lovell estimator, which residualizes commanded Z against commanded
+X/Y.
 
-The locally validated 11-pose trajectory has independent-Z leverage ratio
-approximately 0.874, and the tracked seven-pose fallback is approximately
-0.767, so neither needs a motion change for this estimator. A configured
-trajectory whose Z is explained by X/Y is rejected before motion begins. A bad
-USB fit, ambiguous board convention, out-of-tolerance scale, insufficient axis
-travel or Z support, or excessive robust residuals fails calibration; motor
-`rotation_distance` is never changed. The fitted signed Y scale is persisted
-and used to undo turntable motion during scans. For every scan frame, runtime derives
+The paired trajectory has independent-Z leverage ratio 1.0, four direct
+contrasts, eight effective Z samples, and no view contributes more than 0.125 of
+the independent-Z information. The former 11-pose trajectory had ratio 0.874
+but no direct contrast and concentrated 0.346 of the information in one view.
+Across the eight authorized real reports, retaining or excluding the
+reference-pose PnP observation then moved the fitted angle across the 12° gate,
+while scale stayed near 0.95-0.98 and the centered per-view board-center
+sequences differed by only 0.05-0.12 mm RMS. The instability was therefore
+support/leverage sensitivity in the within-run estimator, not evidence that a
+gate should be relaxed or that independent runs should be averaged.
+
+The fit keeps all views whose joint translation RMS is within the unchanged 5
+mm extrinsic limit. Gross translation rejection is deterministic and may remove
+a view only when another inlier remains at that same Z level. A PnP mask that
+removes a whole Z level fails instead of triggering a biased refit. Calibration
+still requires three Z levels spanning 20 mm, independent-Z leverage ratio at
+least 0.25, condition number at most 50, per-level repeatability at most 5 mm,
+and within-estimator leave-one-view/leave-one-level/leave-one-contrast
+carriage-vector deviation at most 0.15 mm per commanded mm. Reports include
+those values, maximum leverage fraction, effective sample count, per-level
+sample/inlier counts, rejected views, and direct same-X/same-Y Z contrasts.
+
+A configured trajectory whose Z is explained by X/Y is rejected before motion
+begins. A bad USB fit, ambiguous board convention, out-of-tolerance scale,
+insufficient axis travel or Z support, or excessive robust residuals fails
+calibration; motor `rotation_distance` is never changed. The fitted signed Y
+scale is persisted and used to undo turntable motion during scans. For every
+scan frame, runtime derives
 the physical turntable center as
 `reference_center + signed_x_scale * (current_x - reference_x) * scanner_+X`,
 undoes Y rotation about that current center, then maps the result to the
@@ -275,14 +297,13 @@ curl -fsS http://127.0.0.1:5000/api/calibration/geometric/report?download=1 \
   -o horalscanner-calibration-report.json
 ```
 
-### Deploy pose consensus without replacing any local configuration
+### Deploy paired Z support without replacing other local configuration
 
 After this change is merged to `main`, preserve the Pi's complete local
-application, hardware, and saved-pose configuration byte for byte. The
-pose-consensus implementation supplies its safety defaults when the local
-application file does not yet contain the new keys. Do not copy the tracked
-configuration over the Pi's tuned 11-pose trajectory or 5% PWM profile. These
-commands do not move an axis or energize a laser:
+application, hardware, saved-pose, PWM, and measured calibration configuration
+except for `scanner.geometric_calibration.pose_offsets_mm`. Replace only that
+legacy trajectory with the tracked paired trajectory. These commands do not
+move an axis or energize a laser:
 
 ```bash
 set -eu
@@ -308,12 +329,23 @@ cp -a "$backup/config/scan_poses.json" config/scan_poses.json
 
 /home/pi/horaltscanner_env/bin/python - <<'PY'
 import json
+import subprocess
 from pathlib import Path
 
 application_path = Path("config/horalscanner.json")
 hardware_path = Path("config/horalscanner_config.json")
 application = json.loads(application_path.read_text())
 geometric = application["scanner"]["geometric_calibration"]
+tracked = json.loads(
+    subprocess.check_output(
+        ["git", "show", "HEAD:config/horalscanner.json"],
+        text=True,
+    )
+)
+geometric["pose_offsets_mm"] = tracked["scanner"]["geometric_calibration"][
+    "pose_offsets_mm"
+]
+application_path.write_text(json.dumps(application, indent=2) + "\n")
 start = geometric["starting_pose_mm"]
 poses = [
     {
@@ -326,6 +358,15 @@ assert len(poses) == 11, f"expected preserved 11-pose trajectory, got {len(poses
 assert poses[0] == {"x": 195.0, "y": 0.0, "z": 20.0}
 assert all(0.0 <= pose["x"] <= 195.0 for pose in poses)
 assert all(20.0 <= pose["z"] <= 40.0 for pose in poses)
+direct_pairs = [
+    (first, second)
+    for first, first_pose in enumerate(poses)
+    for second, second_pose in enumerate(poses[first + 1 :], first + 1)
+    if first_pose["x"] == second_pose["x"]
+    and first_pose["y"] == second_pose["y"]
+    and abs(first_pose["z"] - second_pose["z"]) == 20.0
+]
+assert direct_pairs == [(0, 1), (3, 4), (6, 7), (9, 10)]
 assert geometric["usb_z_scale_tolerance_fraction"] == 0.15
 assert geometric["maximum_usb_z_vertical_alignment_deg"] == 12
 assert geometric["maximum_carriage_fit_condition_number"] == 50
@@ -343,10 +384,20 @@ assert hardware["lasers"]["pwm_enabled"] is True
 assert hardware["lasers"]["calibration_power"] == 0.05
 PY
 
-sha256sum -c "$backup/config.sha256"
-cmp "$backup/config/horalscanner.json" config/horalscanner.json
 cmp "$backup/config/horalscanner_config.json" config/horalscanner_config.json
 cmp "$backup/config/scan_poses.json" config/scan_poses.json
+python3 - "$backup/config/horalscanner.json" config/horalscanner.json <<'PY'
+import json
+import sys
+from pathlib import Path
+
+before = json.loads(Path(sys.argv[1]).read_text())
+after = json.loads(Path(sys.argv[2]).read_text())
+before["scanner"]["geometric_calibration"]["pose_offsets_mm"] = after[
+    "scanner"
+]["geometric_calibration"]["pose_offsets_mm"]
+assert before == after, "deployment changed application settings beyond pose offsets"
+PY
 /home/pi/horaltscanner_env/bin/python -m py_compile \
   software/api/geometric_calibration.py software/api/scanner_engine.py
 /home/pi/horaltscanner_env/bin/python -m pytest -q software/tests

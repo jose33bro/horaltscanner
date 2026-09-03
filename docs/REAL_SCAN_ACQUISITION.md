@@ -90,7 +90,7 @@ git fetch origin
 git checkout main
 git pull --ff-only origin main
 
-# Restore all machine-local settings, including the validated 11-pose
+# Restore all machine-local settings, including the balanced paired 11-pose
 # trajectory and calibration references, then opt only the lasers into PWM.
 cp /var/tmp/horalscanner-live-application.json config/horalscanner.json
 cp /var/tmp/horalscanner-live-hardware.json config/horalscanner_config.json
@@ -150,7 +150,7 @@ cutoff accessible, and supervise these commands locally:
 
 ```bash
 # Re-run geometric calibration first with the same independently measured
-# request and the preserved 11-pose trajectory.
+# request and the balanced paired 11-pose trajectory.
 python3 -m json.tool "$HOME/calibration-request.json" >/dev/null
 curl -fsS -X POST -H 'Content-Type: application/json' \
   --data-binary @"$HOME/calibration-request.json" \

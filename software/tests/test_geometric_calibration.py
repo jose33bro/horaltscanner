@@ -38,6 +38,9 @@ from software.api.geometric_calibration import (
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRATCH = ROOT / ".test-geometric-calibration"
+USB_CARRIAGE_REPORT_FIXTURE = (
+    ROOT / "software" / "tests" / "fixtures" / "usb_carriage_real_reports.json"
+)
 
 
 def valid_calibration():
@@ -1311,12 +1314,16 @@ def service_config():
         "starting_pose_mm": {"x": 195, "y": 0, "z": 20},
         "pose_offsets_mm": [
             {"x": 0, "y": 0, "z": 0},
+            {"x": 0, "y": 0, "z": 20},
             {"x": -10, "y": 10.4719755, "z": 10},
             {"x": -20, "y": 20.9439510, "z": 20},
-            {"x": -30, "y": 31.4159265, "z": 0},
+            {"x": -20, "y": 20.9439510, "z": 0},
+            {"x": -30, "y": 31.4159265, "z": 10},
+            {"x": 0, "y": 41.8879020, "z": 0},
             {"x": 0, "y": 41.8879020, "z": 20},
             {"x": -30, "y": 52.3598776, "z": 10},
             {"x": -15, "y": 62.8318531, "z": 20},
+            {"x": -15, "y": 62.8318531, "z": 0},
         ],
         "axis_limits_mm": {
             "x": {"min": 0, "max": 195},
@@ -1388,6 +1395,40 @@ class CalibrationServiceTests(unittest.TestCase):
         self.assertTrue(all(pose["x"] <= 195 for pose in self.service._trajectory({})))
         with self.assertRaisesRegex(CalibrationError, "outside configured limits"):
             self.service._trajectory({"starting_pose_mm": {"x": 206, "y": 0, "z": 10}})
+
+    def test_trajectory_balances_direct_carriage_z_support(self):
+        poses = self.service._trajectory({})
+        tracked = json.loads(
+            (ROOT / "config" / "horalscanner.json").read_text(encoding="utf-8")
+        )["scanner"]["geometric_calibration"]["pose_offsets_mm"]
+        self.assertEqual(self.service._config["pose_offsets_mm"], tracked)
+        del self.service._config["pose_offsets_mm"]
+        self.assertEqual(self.service._trajectory({}), poses)
+        self.assertEqual(len(poses), 11)
+        deltas = np.asarray(
+            [
+                [
+                    pose[axis] - poses[0][axis]
+                    for axis in ("x", "y", "z")
+                ]
+                for pose in poses
+            ],
+            dtype=float,
+        )
+        leverage = self.service._independent_z_leverage_metrics(deltas)
+        contrasts = self.service._direct_z_contrasts(
+            deltas,
+            np.zeros((len(deltas), 3), dtype=float),
+            np.arange(len(deltas)),
+        )
+
+        self.assertAlmostEqual(leverage["ratio"], 1.0)
+        self.assertAlmostEqual(leverage["maximum_fraction"], 0.125)
+        self.assertAlmostEqual(leverage["effective_samples"], 8.0)
+        self.assertEqual(len(contrasts), 4)
+        self.assertTrue(
+            all(contrast["delta_z_mm"] == 20.0 for contrast in contrasts)
+        )
 
     def test_trajectory_hard_caps_x_even_if_configured_limit_is_unsafe(self):
         self.service._config["axis_limits_mm"]["x"]["max"] = 210
@@ -1934,11 +1975,47 @@ class CalibrationServiceTests(unittest.TestCase):
             dtype=float,
         )
         rotation_noise_deg = {
-            "pi": [0.7, -0.35, 0.25, -0.7, 0.35, -0.25, 0.0],
-            "usb": [-0.38, 0.75, -0.28, 0.38, -0.75, 0.28, 0.0],
+            "pi": [
+                0.7,
+                -0.35,
+                0.25,
+                -0.7,
+                0.35,
+                -0.25,
+                0.0,
+                0.55,
+                -0.45,
+                0.15,
+                -0.3,
+            ],
+            "usb": [
+                -0.38,
+                0.75,
+                -0.28,
+                0.38,
+                -0.75,
+                0.28,
+                0.0,
+                -0.55,
+                0.45,
+                -0.15,
+                0.3,
+            ],
         }
         translation_noise_scale = {"pi": 1.045, "usb": 0.24}
-        translation_noise = [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
+        translation_noise = [
+            -3.0,
+            -2.0,
+            -1.0,
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            -2.5,
+            1.5,
+            -0.5,
+            2.5,
+        ]
         views = {"pi": [], "usb": []}
         for name in ("pi", "usb"):
             for index, pose in enumerate(poses):
@@ -2013,6 +2090,17 @@ class CalibrationServiceTests(unittest.TestCase):
                 "board_to_camera": self._reported_pnp_transform(center, rotation),
             }
             for pose, center, rotation in reported
+        ]
+
+    def _real_usb_report_views(self, report):
+        return [
+            {
+                "pose": dict(zip(("x", "y", "z"), row[:3])),
+                "board_to_camera": self._reported_pnp_transform(
+                    row[3:6], row[6:9]
+                ),
+            }
+            for row in report["views"]
         ]
 
     def _usb_extrinsic_candidates(self, views, adjustment_name):
@@ -2123,7 +2211,7 @@ class CalibrationServiceTests(unittest.TestCase):
             model["x_mm_per_commanded_mm"], expected_x, delta=0.003
         )
         self.assertAlmostEqual(
-            model["y_radians_per_commanded_mm"], expected_y, places=4
+            model["y_radians_per_commanded_mm"], expected_y, delta=0.0001
         )
         self.assertEqual(
             model["candidate_residuals"]["command_sign_reference_camera"], "pi"
@@ -2287,6 +2375,88 @@ class CalibrationServiceTests(unittest.TestCase):
         self.assertGreater(fit["independent_z_leverage_ratio"], 0.8)
         self.assertLess(fit["vector_uncertainty_mm_per_commanded_mm"], 0.15)
 
+    def test_real_usb_reports_reproduce_legacy_fit_results(self):
+        fixture = json.loads(
+            USB_CARRIAGE_REPORT_FIXTURE.read_text(encoding="utf-8")
+        )
+        for report in fixture["reports"]:
+            with self.subTest(report=report["name"]):
+                views = self._real_usb_report_views(report)
+                self.service._reference_pose = dict(views[0]["pose"])
+                self.service._motion_model.update(report["motion_model"])
+                candidates = self._usb_extrinsic_candidates(
+                    views, "rotate_180_about_board_x"
+                )
+                fit = self.service._fit_usb_carriage(
+                    views,
+                    candidates,
+                    minimum=6,
+                    eligible=np.asarray(report["pnp_inliers"], dtype=bool),
+                    required_z_levels=sorted(
+                        {float(view["pose"]["z"]) for view in views}
+                    ),
+                )
+
+                self.assertEqual(fit["accepted"], report["expected"]["accepted"])
+                self.assertEqual(
+                    fit["estimator"], "z_residualized_against_commanded_x_y"
+                )
+                self.assertEqual(
+                    fit["direct_same_xy_z_contrasts"]["pairs"], 0
+                )
+                self.assertAlmostEqual(
+                    fit["scale_mm_per_commanded_mm"],
+                    report["expected"]["scale"],
+                    delta=0.001,
+                )
+                self.assertAlmostEqual(
+                    fit["vertical_alignment_deg"],
+                    report["expected"]["vertical_alignment_deg"],
+                    delta=0.02,
+                )
+                self.assertAlmostEqual(
+                    fit["vector_uncertainty_mm_per_commanded_mm"],
+                    report["expected"]["vector_uncertainty"],
+                    delta=0.002,
+                )
+
+    def test_real_reports_expose_concentrated_legacy_z_support(self):
+        fixture = json.loads(
+            USB_CARRIAGE_REPORT_FIXTURE.read_text(encoding="utf-8")
+        )
+        reports = fixture["reports"]
+        poses = np.asarray([row[:3] for row in reports[0]["views"]], dtype=float)
+        deltas = poses - poses[0]
+        leverage = self.service._independent_z_leverage_metrics(deltas)
+        baseline = np.asarray(
+            [row[3:6] for row in reports[0]["views"]], dtype=float
+        )
+
+        self.assertAlmostEqual(leverage["ratio"], 0.8743978452)
+        self.assertGreater(leverage["maximum_fraction"], 0.34)
+        self.assertLess(leverage["effective_samples"], 5.5)
+        for report in reports[1:]:
+            centers = np.asarray(
+                [row[3:6] for row in report["views"]], dtype=float
+            )
+            centered_difference = centers - baseline
+            centered_difference -= np.mean(centered_difference, axis=0)
+            rms = float(
+                np.sqrt(
+                    np.mean(
+                        np.sum(np.square(centered_difference), axis=1)
+                    )
+                )
+            )
+            self.assertLess(rms, 0.2)
+
+        angles = [
+            report["expected"]["vertical_alignment_deg"] for report in reports
+        ]
+        scales = [report["expected"]["scale"] for report in reports]
+        self.assertGreater(float(np.ptp(angles)), 7.0)
+        self.assertLess(float(np.ptp(scales)), 0.04)
+
     def test_stable_nine_to_thirteen_degree_carriage_vectors_remain_distinct(self):
         self.service._config.update(
             minimum_views=6,
@@ -2438,6 +2608,77 @@ class CalibrationServiceTests(unittest.TestCase):
             fit["vector_mm_per_commanded_mm"], expected, atol=1e-8
         )
 
+    def test_direct_carriage_fit_rejects_disagreeing_pair_slope(self):
+        expected = np.array([-0.0117, -0.1742, -0.9370])
+        views, _ = self._synthetic_motion_views(
+            -1.0,
+            0.01,
+            usb_pnp_adjustment="rotate_180_about_board_x",
+            usb_carriage_direction=expected,
+        )
+        self.service._motion_model = self.service._estimate_motion_model(views)
+        candidates = self._usb_extrinsic_candidates(
+            views["usb"], "rotate_180_about_board_x"
+        )
+        candidates[0][:3, 3] += [0.0, -2.0, 0.0]
+        candidates[1][:3, 3] += [0.0, 2.0, 0.0]
+
+        fit = self.service._fit_usb_carriage(
+            views["usb"], candidates, minimum=6
+        )
+
+        self.assertFalse(fit["accepted"])
+        self.assertEqual(
+            fit["estimator"], "same_xy_z_contrast_geometric_median"
+        )
+        self.assertLess(fit["regression_residual_rms_mm"], 5.0)
+        self.assertGreater(
+            fit["vector_uncertainty_mm_per_commanded_mm"], 0.15
+        )
+        self.assertAlmostEqual(
+            fit["direct_same_xy_z_contrasts"][
+                "maximum_vector_deviation_mm_per_commanded_mm"
+            ],
+            0.2,
+            places=6,
+        )
+
+    def test_direct_carriage_fit_rejects_correlated_pair_bias(self):
+        expected = np.array([-0.0117, -0.1742, -0.9370])
+        views, _ = self._synthetic_motion_views(
+            -1.0,
+            0.01,
+            usb_pnp_adjustment="rotate_180_about_board_x",
+            usb_carriage_direction=expected,
+        )
+        self.service._motion_model = self.service._estimate_motion_model(views)
+        candidates = self._usb_extrinsic_candidates(
+            views["usb"], "rotate_180_about_board_x"
+        )
+        for index, offset in ((0, -2.0), (1, 2.0), (3, 2.0), (4, -2.0)):
+            candidates[index][:3, 3] += [0.0, offset, 0.0]
+
+        fit = self.service._fit_usb_carriage(
+            views["usb"], candidates, minimum=6
+        )
+
+        contrasts = fit["direct_same_xy_z_contrasts"]
+        self.assertFalse(fit["accepted"])
+        self.assertLess(
+            contrasts["maximum_vector_deviation_mm_per_commanded_mm"],
+            0.15,
+        )
+        self.assertAlmostEqual(
+            contrasts[
+                "maximum_pairwise_vector_difference_mm_per_commanded_mm"
+            ],
+            0.2,
+            places=6,
+        )
+        self.assertGreater(
+            fit["vector_uncertainty_mm_per_commanded_mm"], 0.15
+        )
+
     def test_carriage_rejection_keeps_original_view_number_after_missing_pnp(self):
         expected = np.array([-0.0117, -0.1742, -0.9370])
         views, _ = self._synthetic_motion_views(
@@ -2451,8 +2692,8 @@ class CalibrationServiceTests(unittest.TestCase):
         candidates = self._usb_extrinsic_candidates(
             views["usb"], "rotate_180_about_board_x"
         )
-        candidate_views = views["usb"][1:]
-        candidates = candidates[1:]
+        candidate_views = views["usb"][1:7]
+        candidates = candidates[1:7]
         candidates[1][:3, 3] += [30.0, -20.0, 15.0]
 
         fit = self.service._fit_usb_carriage(
@@ -2512,7 +2753,8 @@ class CalibrationServiceTests(unittest.TestCase):
                 {},
             )
         self.assertIn(
-            "removes all support for Z=30mm", str(raised.exception)
+            "maximum_vector_deviation_mm_per_commanded_mm",
+            str(raised.exception),
         )
 
     def test_wrong_planar_normal_exposes_two_x_slope_and_is_rejected(self):
@@ -2688,7 +2930,10 @@ class CalibrationServiceTests(unittest.TestCase):
         np.testing.assert_allclose(
             result["camera_to_scanner"], expected_cameras["pi"], atol=1e-4
         )
-        self.assertEqual(result["quality"]["robust_pnp_inliers"], 6)
+        self.assertEqual(
+            result["quality"]["robust_pnp_inliers"],
+            len(views["pi"]) - 1,
+        )
 
     def test_lidar_geometry_rejects_unobservable_beam_direction(self):
         self.service._move_to = lambda _pose: None

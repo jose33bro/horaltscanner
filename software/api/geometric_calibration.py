@@ -374,6 +374,8 @@ def _sample_line_band_max(
     start_row: float,
     stop_row: float,
     radius: int,
+    *,
+    inner_radius: int | None = None,
 ) -> np.ndarray:
     height, width = image.shape[:2]
     first = max(0, int(math.ceil(min(start_row, stop_row))))
@@ -387,7 +389,12 @@ def _sample_line_band_max(
         left = max(0, int(center) - radius)
         right = min(width, int(center) + radius + 1)
         if right > left:
-            maxima.append(float(np.max(image[row, left:right])))
+            columns = np.arange(left, right)
+            values = np.asarray(image[row, left:right], dtype=float)
+            if inner_radius is not None:
+                values = values[np.abs(columns - int(center)) > inner_radius]
+            if len(values):
+                maxima.append(float(np.max(values)))
     return np.asarray(maxima, dtype=float)
 
 
@@ -396,19 +403,21 @@ def _classify_checker_gaps(
     corner_grid: np.ndarray,
     selected: np.ndarray,
     coefficients: np.ndarray,
-    residuals: np.ndarray,
     row_stride: int,
     strict_gap_limit: float,
     maximum_residual: float,
     maximum_width: float,
     minimum_prominence: float,
+    minimum_chromatic_support: float,
+    minimum_sharpness_ratio: float,
     ridge_response: np.ndarray,
+    fine_response: np.ndarray,
+    chromatic_response: np.ndarray,
     ambient_luminance: np.ndarray,
     reference_luminance: float,
 ) -> dict[str, Any]:
     ordered_indexes = np.argsort(selected[:, 1])
     ordered = selected[ordered_indexes]
-    ordered_residuals = np.asarray(residuals, dtype=float)[ordered_indexes]
     line_rows = ordered[:, 1]
     gaps = np.diff(line_rows)
     raw_max_gap = float(np.max(gaps)) if len(gaps) else math.inf
@@ -422,19 +431,29 @@ def _classify_checker_gaps(
     split_indexes = np.flatnonzero(gaps > strict_gap_limit)
     starts = np.concatenate(([0], split_indexes + 1))
     stops = np.concatenate((split_indexes + 1, [len(line_rows)]))
-    segments = [
-        {
-            "start": int(start),
-            "stop": int(stop),
-            "span": float(
-                max(line_rows[stop - 1] - line_rows[start], 0.0) * path_scale
-            ),
-            "rms": float(
-                np.sqrt(np.mean(np.square(ordered_residuals[start:stop])))
-            ),
-        }
-        for start, stop in zip(starts, stops)
-    ]
+    segments = []
+    for start, stop in zip(starts, stops):
+        points = ordered[start:stop]
+        if len(points) >= 2 and float(np.ptp(points[:, 1])) > 1e-9:
+            local_coefficients = np.polyfit(points[:, 1], points[:, 0], 1)
+            local_residuals = points[:, 0] - np.polyval(
+                local_coefficients, points[:, 1]
+            )
+            local_rms = float(np.sqrt(np.mean(np.square(local_residuals))))
+        else:
+            local_coefficients = coefficients
+            local_rms = math.inf
+        segments.append(
+            {
+                "start": int(start),
+                "stop": int(stop),
+                "span": float(
+                    max(line_rows[stop - 1] - line_rows[start], 0.0) * path_scale
+                ),
+                "rms": local_rms,
+                "coefficients": local_coefficients,
+            }
+        )
     gap_segments = {
         int(gap_index): (segment_index, segment_index + 1)
         for segment_index, gap_index in enumerate(split_indexes)
@@ -460,7 +479,7 @@ def _classify_checker_gaps(
     def reject(reason: str) -> None:
         rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
 
-    if len(crossings) >= 2 and long_segments >= 2:
+    if len(crossings) >= 2:
         minimum_contrast = max(6.0, reference_luminance * 0.08)
         for gap_index in split_indexes:
             lower = float(line_rows[gap_index])
@@ -474,8 +493,19 @@ def _classify_checker_gaps(
             if (
                 left_segment["rms"] > maximum_residual
                 or right_segment["rms"] > maximum_residual
-                or abs(float(ordered_residuals[gap_index])) > maximum_residual
-                or abs(float(ordered_residuals[gap_index + 1])) > maximum_residual
+                or abs(
+                    float(
+                        np.polyval(
+                            left_segment["coefficients"],
+                            (lower + upper) / 2.0,
+                        )
+                        - np.polyval(
+                            right_segment["coefficients"],
+                            (lower + upper) / 2.0,
+                        )
+                    )
+                )
+                > maximum_residual
             ):
                 reject("noncoherent_endpoints")
                 continue
@@ -506,13 +536,13 @@ def _classify_checker_gaps(
             first_boundary, second_boundary, pitch_y, pitch = aligned_pair
             minimum_adjacent_span = max(
                 row_stride * 3.0 * path_scale,
-                pitch * 0.5,
+                pitch * 0.35,
             )
             if (
                 left_segment["span"] < minimum_adjacent_span
                 or right_segment["span"] < minimum_adjacent_span
             ):
-                reject("short_adjacent_segment")
+                reject("insufficient_long_segments")
                 continue
 
             missing_response = _sample_line_band_max(
@@ -533,8 +563,77 @@ def _classify_checker_gaps(
                 local_response_p90 > minimum_prominence * 0.9
                 or active_fraction > 0.2
             ):
-                reject("ridge_response_not_low")
-                continue
+                core_radius = max(1, int(math.ceil(maximum_width * 0.5)))
+                core_response = _sample_line_band_max(
+                    ridge_response,
+                    coefficients,
+                    missing_start,
+                    missing_stop,
+                    core_radius,
+                )
+                core_fine_response = _sample_line_band_max(
+                    fine_response,
+                    coefficients,
+                    missing_start,
+                    missing_stop,
+                    core_radius,
+                )
+                core_chromatic_response = _sample_line_band_max(
+                    chromatic_response,
+                    coefficients,
+                    missing_start,
+                    missing_stop,
+                    core_radius,
+                )
+                off_axis_response = _sample_line_band_max(
+                    ridge_response,
+                    coefficients,
+                    missing_start,
+                    missing_stop,
+                    max(core_radius + 1, int(math.ceil(maximum_width * 2.0))),
+                    inner_radius=core_radius,
+                )
+                if not all(
+                    len(values)
+                    for values in (
+                        core_response,
+                        core_fine_response,
+                        core_chromatic_response,
+                    )
+                ):
+                    reject("ridge_response_not_low")
+                    continue
+                core_p90 = float(np.percentile(core_response, 90))
+                fine_p90 = float(np.percentile(core_fine_response, 90))
+                chromatic_p90 = float(
+                    np.percentile(core_chromatic_response, 90)
+                )
+                off_axis_p90 = (
+                    float(np.percentile(off_axis_response, 90))
+                    if len(off_axis_response)
+                    else 0.0
+                )
+                off_axis_active = (
+                    float(np.mean(off_axis_response >= minimum_prominence))
+                    if len(off_axis_response)
+                    else 0.0
+                )
+                coherent_subthreshold_ridge = (
+                    core_p90 > minimum_prominence * 0.9
+                    and chromatic_p90 >= minimum_chromatic_support * 0.5
+                    and fine_p90
+                    >= core_p90 * minimum_sharpness_ratio
+                    and not (
+                        off_axis_p90 >= max(
+                            minimum_prominence * 0.9,
+                            core_p90 * 0.9,
+                        )
+                        and off_axis_active > 0.2
+                    )
+                )
+                if not coherent_subthreshold_ridge:
+                    reject("ridge_response_not_low")
+                    continue
 
             window = max(2.0, pitch_y * 0.18)
             first_context = _sample_along_line(
@@ -603,11 +702,7 @@ def _classify_checker_gaps(
             response_p90.append(local_response_p90)
             boundary_contrasts.append(min(first_contrast, second_contrast))
     elif len(split_indexes):
-        reason = (
-            "checker_geometry_unavailable"
-            if len(crossings) < 2
-            else "insufficient_long_segments"
-        )
+        reason = "checker_geometry_unavailable"
         for _ in split_indexes:
             reject(reason)
 
@@ -1122,13 +1217,16 @@ def extract_laser_line_pixels(
         corner_grid=corner_grid,
         selected=selected,
         coefficients=coefficients,
-        residuals=residuals,
         row_stride=row_stride,
         strict_gap_limit=strict_gap_limit,
         maximum_residual=maximum_residual,
         maximum_width=maximum_width,
         minimum_prominence=minimum_prominence,
+        minimum_chromatic_support=minimum_chromatic_support,
+        minimum_sharpness_ratio=minimum_sharpness_ratio,
         ridge_response=ridge_response,
+        fine_response=fine_response,
+        chromatic_response=np.maximum(normalized_chromatic_delta, 0.0),
         ambient_luminance=ambient_luminance,
         reference_luminance=reference_luminance,
     )

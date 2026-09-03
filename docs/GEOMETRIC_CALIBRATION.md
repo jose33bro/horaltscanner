@@ -140,12 +140,16 @@ ambiguous rather than allowing the line fit to choose one. A camera/laser
 observation is accepted only when the resulting peaks form one thin, continuous
 line with sufficient span and low image-line residual. A robust row fit may
 discard isolated outlier rows or one short outlier segment. The strict unexplained
-gap limit remains unchanged; only a low-response interval bounded by consecutive
-perspective-projected checker rows may be bridged, and only up to 1.25 local
-checker-square pitches with coherent endpoints and multiple sufficiently long
-observed segments. Broad glow without an embedded narrow ridge, non-checker
-gaps, two-square gaps, segment jumps, checker brightness changes, competing
-ridges, reflections, and edge-only hits are recorded and skipped. Compact
+gap limit remains unchanged. An interval bounded by consecutive
+perspective-projected checker rows may be bridged only when adjacent local line
+fits agree within the unchanged 2 px residual limit and alternating checker
+reflectance confirms one cell. The missing cell must contain either low response
+or a centered, narrow, chromatic subthreshold ridge; off-axis responses,
+grayscale changes, broad halos, and competing ridges remain rejected. Adjacent
+segments must span at least 35% of the local projected pitch, which keeps sparse
+stubs out while supporting perspective-shortened edge segments. Non-checker
+gaps, two-square gaps, segment jumps, reflections, and edge-only hits are
+recorded and skipped. Compact
 per-view diagnostics report raw and unexplained maximum gaps, bridged checker
 gaps, projected pitch/limit aggregates, segment/outlier counts, raw candidate
 pixels, background-suppressed candidates, peak prominence, ambiguous rows, and

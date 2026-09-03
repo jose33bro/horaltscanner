@@ -3,7 +3,27 @@
 from __future__ import annotations
 
 import importlib
+import copy
+import tempfile
 import unittest
+from pathlib import Path
+
+
+def _isolate_scan_pose_state(test_case, module):
+    temporary = tempfile.TemporaryDirectory()
+    test_case.addCleanup(temporary.cleanup)
+    original_path = module.SCAN_POSE_PATH
+    original_poses = module._scan_poses
+    module.SCAN_POSE_PATH = str(
+        Path(temporary.name) / "scan_poses.json"
+    )
+    module._scan_poses = copy.deepcopy(original_poses)
+
+    def restore():
+        module.SCAN_POSE_PATH = original_path
+        module._scan_poses = original_poses
+
+    test_case.addCleanup(restore)
 
 
 class CameraCalibrationModuleTests(unittest.TestCase):
@@ -11,6 +31,7 @@ class CameraCalibrationModuleTests(unittest.TestCase):
 
     def setUp(self):
         self.mod = importlib.import_module("software.api.camera_calibration")
+        _isolate_scan_pose_state(self, self.mod)
 
     # ------------------------------------------------------------------
     # Pose definitions
@@ -158,6 +179,7 @@ class CameraCalibrationAPITests(unittest.TestCase):
 
         self.api_module = importlib.import_module("api.horalscanner_api")
         self.calib_module = importlib.import_module("software.api.camera_calibration")
+        _isolate_scan_pose_state(self, self.calib_module)
         self.app = create_app()
 
         class FakeSTM32:

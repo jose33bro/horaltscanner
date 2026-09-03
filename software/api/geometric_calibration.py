@@ -525,6 +525,7 @@ def fit_plane_robust(
     points: Any,
     *,
     minimum_points: int = 20,
+    minimum_spread_ratio: float = 1e-3,
     return_inlier_mask: bool = False,
 ) -> tuple[np.ndarray, float, dict]:
     """Fit ``normal dot point + offset = 0`` with two MAD rejection passes."""
@@ -558,12 +559,21 @@ def fit_plane_robust(
         inliers = selected
     center = inliers.mean(axis=0)
     _, singular_values, vh = np.linalg.svd(inliers - center, full_matrices=False)
+    spread_ratio = (
+        float(singular_values[1] / singular_values[0])
+        if len(singular_values) >= 2 and singular_values[0] > 1e-12
+        else 0.0
+    )
     if (
         len(singular_values) < 2
-        or singular_values[1] <= max(singular_values[0] * 1e-6, 1e-6)
+        or not math.isfinite(minimum_spread_ratio)
+        or not 0 < minimum_spread_ratio < 1
+        or spread_ratio < minimum_spread_ratio
     ):
         raise CalibrationError(
-            "laser plane points are rank-deficient after robust rejection"
+            "laser plane points have insufficient 2D conditioning after robust "
+            f"rejection (spread ratio {spread_ratio:.3g} < "
+            f"{minimum_spread_ratio:.3g})"
         )
     normal = vh[-1]
     normal /= np.linalg.norm(normal)
@@ -575,6 +585,8 @@ def fit_plane_robust(
         "rms_mm": rms,
         "inliers": int(len(inliers)),
         "samples": int(len(values)),
+        "plane_spread_ratio": spread_ratio,
+        "minimum_plane_spread_ratio": minimum_spread_ratio,
     }
     if return_inlier_mask:
         mask = np.zeros(len(values), dtype=bool)
@@ -607,6 +619,13 @@ def transform_from_beam(origin_mm: Any, direction: Any) -> np.ndarray:
 
 def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
     """Validate the persisted geometry and its evidence metadata."""
+
+    def finite_at_least(value: Any, minimum: float) -> bool:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return False
+        return math.isfinite(number) and number >= minimum
 
     def matrix(value: Any, shape: tuple[int, int], label: str) -> np.ndarray:
         result = np.asarray(value, dtype=float)
@@ -735,8 +754,40 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
             minimum_orientations = float(
                 quality.get("minimum_board_orientations", math.nan)
             )
+            spread_ratio = float(
+                quality.get("plane_spread_ratio", math.nan)
+            )
+            minimum_spread_ratio = float(
+                quality.get("minimum_plane_spread_ratio", math.nan)
+            )
+            minimum_points_per_view = float(
+                quality.get("minimum_points_per_view", math.nan)
+            )
         except (TypeError, ValueError):
             views = minimum_views = orientations = minimum_orientations = math.nan
+            spread_ratio = minimum_spread_ratio = minimum_points_per_view = math.nan
+        inlier_points = quality.get("inlier_points_per_pose")
+        inlier_points_valid = (
+            isinstance(inlier_points, list)
+            and math.isfinite(views)
+            and math.isfinite(minimum_points_per_view)
+            and len(inlier_points) == int(views)
+            and len(
+                {
+                    entry.get("pose_index")
+                    for entry in inlier_points
+                    if isinstance(entry, Mapping)
+                }
+            )
+            == len(inlier_points)
+            and all(
+                isinstance(entry, Mapping)
+                and finite_at_least(
+                    entry.get("points"), minimum_points_per_view
+                )
+                for entry in inlier_points
+            )
+        )
         if (
             plane.get("source") != "pi_checkerboard_structured_light"
             or not quality.get("accepted")
@@ -754,12 +805,19 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
                     minimum_views,
                     orientations,
                     minimum_orientations,
+                    spread_ratio,
+                    minimum_spread_ratio,
+                    minimum_points_per_view,
                 )
             )
             or minimum_views < 3
             or views < minimum_views
             or minimum_orientations < 3
             or orientations < minimum_orientations
+            or minimum_spread_ratio <= 0
+            or spread_ratio < minimum_spread_ratio
+            or minimum_points_per_view <= 0
+            or not inlier_points_valid
         ):
             raise CalibrationError(f"{side} laser plane quality is not accepted")
 
@@ -910,7 +968,9 @@ class AtomicCalibrationStore:
         with open(selected, encoding="utf-8") as handle:
             return json.load(handle)
 
-    def save(self, calibration: Mapping[str, Any], report: Mapping[str, Any]) -> None:
+    def save(
+        self, calibration: Mapping[str, Any], report: Mapping[str, Any]
+    ) -> dict[str, Any]:
         validate_calibration_payload(calibration)
         current = self._read(missing_ok=True)
         updated = copy.deepcopy(current)
@@ -919,51 +979,38 @@ class AtomicCalibrationStore:
         backup_tmp = self.backup_path.with_suffix(self.backup_path.suffix + ".new")
         config_tmp = self.path.with_suffix(self.path.suffix + ".new")
         report_tmp = self.report_path.with_suffix(self.report_path.suffix + ".new")
-        previous_sidecars = {
+        snapshots = {
             destination: destination.read_bytes() if destination.exists() else None
-            for destination in (self.backup_path, self.report_path)
+            for destination in (self.path, self.backup_path, self.report_path)
         }
-        installed_sidecars: list[Path] = []
+        installed: list[Path] = []
         try:
             self._write_json(backup_tmp, current)
             self._write_json(config_tmp, updated)
             self._write_json(report_tmp, dict(report))
             os.replace(report_tmp, self.report_path)
-            installed_sidecars.append(self.report_path)
+            installed.append(self.report_path)
             os.replace(backup_tmp, self.backup_path)
-            installed_sidecars.append(self.backup_path)
-            # The active calibration is switched only after every sidecar is durable.
+            installed.append(self.backup_path)
+            self._fsync_directory(self.path.parent)
             os.replace(config_tmp, self.path)
-        except Exception:
-            restore_errors = []
-            for destination in reversed(installed_sidecars):
-                previous = previous_sidecars[destination]
-                try:
-                    if previous is None:
-                        destination.unlink()
-                    else:
-                        restore_tmp = destination.with_suffix(
-                            destination.suffix + ".restore"
-                        )
-                        self._write_bytes(restore_tmp, previous)
-                        os.replace(restore_tmp, destination)
-                except FileNotFoundError:
-                    pass
-                except Exception as restore_error:
-                    restore_errors.append(
-                        f"{destination.name}: {restore_error}"
-                    )
-            if restore_errors:
+            installed.append(self.path)
+            self._fsync_directory(self.path.parent)
+        except Exception as exc:
+            try:
+                self._restore_snapshots(snapshots, installed)
+            except Exception as restore_error:
                 raise CalibrationError(
-                    "calibration persistence failed and sidecar rollback also "
-                    f"failed ({'; '.join(restore_errors)})"
-                )
+                    "calibration persistence failed and durable rollback also "
+                    f"failed: {restore_error}"
+                ) from exc
             raise
         finally:
             for temporary in (
                 backup_tmp,
                 config_tmp,
                 report_tmp,
+                self.path.with_suffix(self.path.suffix + ".restore"),
                 self.backup_path.with_suffix(self.backup_path.suffix + ".restore"),
                 self.report_path.with_suffix(self.report_path.suffix + ".restore"),
             ):
@@ -971,15 +1018,44 @@ class AtomicCalibrationStore:
                     temporary.unlink()
                 except FileNotFoundError:
                     pass
+        return {
+            "snapshots": snapshots,
+            "previous_calibration": copy.deepcopy(
+                current.get("scan_calibration", {})
+            ),
+        }
+
+    def restore(self, transaction: Mapping[str, Any]) -> dict:
+        snapshots = transaction.get("snapshots")
+        if not isinstance(snapshots, Mapping):
+            raise CalibrationError("calibration transaction snapshot is invalid")
+        expected = (self.path, self.backup_path, self.report_path)
+        if set(snapshots) != set(expected):
+            raise CalibrationError("calibration transaction snapshot is incomplete")
+        self._restore_snapshots(snapshots, list(expected))
+        return copy.deepcopy(dict(transaction.get("previous_calibration", {})))
 
     def rollback(self) -> dict:
         if not self.backup_path.exists():
             raise CalibrationError("no calibration backup is available")
         backup = self._read(self.backup_path)
         temporary = self.path.with_suffix(self.path.suffix + ".rollback")
+        snapshot = {
+            self.path: self.path.read_bytes() if self.path.exists() else None
+        }
         try:
             self._write_json(temporary, backup)
             os.replace(temporary, self.path)
+            self._fsync_directory(self.path.parent)
+        except Exception as exc:
+            try:
+                self._restore_snapshots(snapshot, [self.path])
+            except Exception as restore_error:
+                raise CalibrationError(
+                    "calibration rollback failed and previous active config "
+                    f"could not be restored: {restore_error}"
+                ) from exc
+            raise
         finally:
             try:
                 temporary.unlink()
@@ -1010,6 +1086,116 @@ class AtomicCalibrationStore:
             handle.flush()
             os.fsync(handle.fileno())
 
+    def _restore_snapshots(
+        self,
+        snapshots: Mapping[Path, bytes | None],
+        destinations: list[Path],
+    ) -> None:
+        restore_errors = []
+        sidecars = [
+            destination
+            for destination in (self.report_path, self.backup_path)
+            if destination in destinations
+        ]
+
+        def restore_one(destination: Path) -> None:
+            previous = snapshots[destination]
+            try:
+                if previous is None:
+                    try:
+                        destination.unlink()
+                    except FileNotFoundError:
+                        pass
+                else:
+                    restore_tmp = destination.with_suffix(
+                        destination.suffix + ".restore"
+                    )
+                    self._write_bytes(restore_tmp, previous)
+                    os.replace(restore_tmp, destination)
+            except Exception as exc:
+                restore_errors.append(f"{destination.name}: {exc}")
+
+        for destination in sidecars:
+            restore_one(destination)
+        if sidecars:
+            try:
+                self._fsync_directory(self.path.parent)
+            except Exception as exc:
+                restore_errors.append(f"sidecar directory: {exc}")
+        if self.path in destinations:
+            restore_one(self.path)
+            try:
+                self._fsync_directory(self.path.parent)
+            except Exception as exc:
+                restore_errors.append(f"active-config directory: {exc}")
+        if restore_errors:
+            raise CalibrationError(
+                "failed to restore calibration transaction ("
+                + "; ".join(restore_errors)
+                + ")"
+            )
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            create_file = kernel32.CreateFileW
+            create_file.argtypes = [
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.LPVOID,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.HANDLE,
+            ]
+            create_file.restype = wintypes.HANDLE
+            flush_file_buffers = kernel32.FlushFileBuffers
+            flush_file_buffers.argtypes = [wintypes.HANDLE]
+            flush_file_buffers.restype = wintypes.BOOL
+            close_handle = kernel32.CloseHandle
+            close_handle.argtypes = [wintypes.HANDLE]
+            close_handle.restype = wintypes.BOOL
+            handle = create_file(
+                str(path),
+                0x40000000,
+                0x00000001 | 0x00000002 | 0x00000004,
+                None,
+                3,
+                0x02000000,
+                None,
+            )
+            if handle == ctypes.c_void_p(-1).value:
+                error = ctypes.get_last_error()
+                raise CalibrationError(
+                    f"failed to open calibration directory {path} for flush "
+                    f"(Windows error {error})"
+                )
+            try:
+                if not flush_file_buffers(handle):
+                    error = ctypes.get_last_error()
+                    raise CalibrationError(
+                        f"failed to flush calibration directory {path} "
+                        f"(Windows error {error})"
+                    )
+            finally:
+                close_handle(handle)
+            return
+        flags = os.O_RDONLY | int(getattr(os, "O_DIRECTORY", 0))
+        try:
+            descriptor = os.open(str(path), flags)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        except OSError as exc:
+            raise CalibrationError(
+                f"failed to fsync calibration directory {path}: {exc}"
+            ) from exc
+
 
 class GeometricCalibrationService:
     """Run the complete calibration trajectory on one background thread."""
@@ -1039,6 +1225,7 @@ class GeometricCalibrationService:
         store: AtomicCalibrationStore,
         config: Mapping[str, Any],
         on_saved: Callable[[Mapping[str, Any]], None] | None = None,
+        get_current_calibration: Callable[[], Mapping[str, Any]] | None = None,
         cv_module: Any = None,
         sleep: Callable[[float], None] = time.sleep,
     ):
@@ -1050,12 +1237,15 @@ class GeometricCalibrationService:
         self._store = store
         self._config = dict(config)
         self._on_saved = on_saved
+        self._get_current_calibration = get_current_calibration
         self._cv = cv_module if cv_module is not None else _cv2
         self._sleep = sleep
         self._lock = threading.RLock()
         self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
         self._active = False
+        self._commit_in_progress = False
+        self._cancel_after_commit = False
         self._lidar_output_restore_required = False
         self._status = self._new_status()
         self._report: dict[str, Any] = {}
@@ -1257,6 +1447,8 @@ class GeometricCalibrationService:
                 raise CalibrationError("scanner hardware is busy")
             self._active = True
             self._cancel = threading.Event()
+            self._commit_in_progress = False
+            self._cancel_after_commit = False
             self._status = self._new_status()
             self._status.update(active=True, phase="preflight", step="Checking safety guards")
             thread = threading.Thread(
@@ -1276,8 +1468,14 @@ class GeometricCalibrationService:
 
     def cancel(self) -> dict:
         with self._lock:
-            self._cancel.set()
-            if self._active:
+            if self._active and self._commit_in_progress:
+                self._cancel_after_commit = True
+                self._status["step"] = (
+                    "Finishing atomic calibration activation before stopping"
+                )
+            else:
+                self._cancel.set()
+            if self._active and not self._commit_in_progress:
                 self._status["phase"] = "cancelling"
                 self._status["step"] = "Stopping motors and forcing lasers off"
         self._safe_outputs()
@@ -1334,14 +1532,11 @@ class GeometricCalibrationService:
                     )
                 },
             }
-            self._set_phase("persisting", "Writing atomic configuration and backup", 97)
-            self._store.save(calibration, report)
-            if self._on_saved:
-                self._on_saved(calibration)
-            self._report = report
             if start_positions is not None:
                 self._move_to(start_positions)
-            self._set_phase("complete", "Calibration saved", 100)
+            self._begin_commit()
+            self._save_and_activate(calibration, report)
+            self._finish_commit(report)
         except CalibrationCancelled:
             self._set_error("cancelled", "Calibration cancelled")
             self._report = self._failure_report("Calibration cancelled")
@@ -1351,9 +1546,80 @@ class GeometricCalibrationService:
         finally:
             self._safe_outputs()
             with self._lock:
+                self._commit_in_progress = False
                 self._active = False
                 self._status["active"] = False
             self._reservation.release()
+
+    def _begin_commit(self) -> None:
+        with self._lock:
+            self._check_cancelled()
+            self._commit_in_progress = True
+            self._status.update(
+                phase="persisting",
+                step="Writing and activating atomic calibration",
+                progress=97.0,
+            )
+
+    def _finish_commit(self, report: Mapping[str, Any]) -> bool:
+        with self._lock:
+            late_cancellation = self._cancel_after_commit
+            self._cancel_after_commit = False
+            if late_cancellation:
+                self._cancel.set()
+            self._report = copy.deepcopy(dict(report))
+            self._status.update(
+                active=False,
+                phase="complete",
+                step=(
+                    "Calibration saved; cancellation arrived during activation"
+                    if late_cancellation
+                    else "Calibration saved"
+                ),
+                progress=100.0,
+            )
+            self._active = False
+            self._commit_in_progress = False
+            return late_cancellation
+
+    def _save_and_activate(
+        self,
+        calibration: Mapping[str, Any],
+        report: Mapping[str, Any],
+    ) -> None:
+        previous_runtime = None
+        if self._get_current_calibration is not None:
+            previous_runtime = copy.deepcopy(
+                dict(self._get_current_calibration())
+            )
+        transaction = self._store.save(calibration, report)
+        if self._on_saved is None:
+            return
+        try:
+            self._on_saved(calibration)
+        except Exception as activation_error:
+            previous_disk = copy.deepcopy(
+                transaction.get("previous_calibration", {})
+            )
+            if previous_runtime is None:
+                previous_runtime = copy.deepcopy(previous_disk)
+            rollback_errors = []
+            try:
+                self._store.restore(transaction)
+            except Exception as exc:
+                rollback_errors.append(f"persistent state: {exc}")
+            try:
+                self._on_saved(previous_runtime)
+            except Exception as exc:
+                rollback_errors.append(f"runtime state: {exc}")
+            detail = (
+                "; rollback failures: " + "; ".join(rollback_errors)
+                if rollback_errors
+                else "; previous persistent and runtime calibration restored"
+            )
+            raise CalibrationError(
+                f"calibration runtime activation failed: {activation_error}{detail}"
+            ) from activation_error
 
     def _failure_report(self, error: str) -> dict:
         with self._lock:
@@ -2989,6 +3255,9 @@ class GeometricCalibrationService:
                 "greater than 2mm"
             )
         minimum_points = int(self._config.get("minimum_laser_points", 30))
+        minimum_points_per_view = int(
+            self._config.get("minimum_laser_points_per_view", 10)
+        )
         minimum_views = int(self._config.get("minimum_laser_views", 3))
         minimum_orientations = int(
             self._config.get("minimum_laser_board_orientations", 3)
@@ -3031,55 +3300,20 @@ class GeometricCalibrationService:
                     f"{minimum_points} points, {minimum_views} poses, "
                     f"{minimum_orientations} orientations"
                 )
-            normal, offset, quality = fit_plane_robust(
+            normal, offset, quality = self._fit_laser_plane_views(
                 samples[side]["pi"],
+                sample_pose_indexes[side]["pi"],
+                poses,
                 minimum_points=minimum_points,
-                return_inlier_mask=True,
+                minimum_points_per_view=minimum_points_per_view,
+                minimum_views=minimum_views,
+                minimum_orientations=minimum_orientations,
             )
-            inlier_mask = np.asarray(quality.pop("inlier_mask"), dtype=bool)
-            inlier_pose_indexes = sorted(
-                set(
-                    np.asarray(sample_pose_indexes[side]["pi"], dtype=int)[
-                        inlier_mask
-                    ].tolist()
-                )
-            )
-            inlier_poses = [poses[index] for index in inlier_pose_indexes]
-            inlier_orientation_count = self._independent_board_orientation_count(
-                inlier_poses
-            )
-            if (
-                len(inlier_poses) < minimum_views
-                or inlier_orientation_count < minimum_orientations
-            ):
-                quality.update(
-                    accepted=False,
-                    primary_camera="pi",
-                    views=len(inlier_poses),
-                    independent_board_orientations=inlier_orientation_count,
-                    minimum_views=minimum_views,
-                    minimum_board_orientations=minimum_orientations,
-                )
-                with self._lock:
-                    self._status["metrics"][f"laser_{side}"] = copy.deepcopy(
-                        quality
-                    )
-                raise CalibrationError(
-                    f"{side} laser robust fit retains only "
-                    f"{len(inlier_poses)} Pi poses and "
-                    f"{inlier_orientation_count} independent orientations; "
-                    f"requires {minimum_views} poses and "
-                    f"{minimum_orientations} orientations"
-                )
             quality.update(
                 primary_camera="pi",
-                views=len(inlier_poses),
                 camera_views=len(accepted_pose_indexes[side]["pi"]),
                 rejected_camera_views=len(poses)
                 - len(accepted_pose_indexes[side]["pi"]),
-                independent_board_orientations=inlier_orientation_count,
-                minimum_views=minimum_views,
-                minimum_board_orientations=minimum_orientations,
             )
             quality["maximum_rms_mm"] = maximum_rms
             if quality["rms_mm"] > maximum_rms:
@@ -3136,6 +3370,85 @@ class GeometricCalibrationService:
             with self._lock:
                 self._status["metrics"][f"laser_{side}"] = copy.deepcopy(quality)
         return result
+
+    def _fit_laser_plane_views(
+        self,
+        points: list[list[float]],
+        pose_indexes: list[int],
+        poses: list[Mapping[str, float]],
+        *,
+        minimum_points: int,
+        minimum_points_per_view: int,
+        minimum_views: int,
+        minimum_orientations: int,
+    ) -> tuple[np.ndarray, float, dict[str, Any]]:
+        values = np.asarray(points, dtype=float)
+        labels = np.asarray(pose_indexes, dtype=int)
+        if len(values) != len(labels):
+            raise CalibrationError("laser point and pose labels differ")
+        if minimum_points_per_view <= 0:
+            raise CalibrationError(
+                "minimum laser points per view must be positive"
+            )
+        spread_ratio = float(
+            self._config.get("minimum_laser_plane_spread_ratio", 1e-3)
+        )
+        eligible = np.ones(len(values), dtype=bool)
+        for _ in range(len(values) + 1):
+            eligible_indexes = np.flatnonzero(eligible)
+            normal, offset, quality = fit_plane_robust(
+                values[eligible_indexes],
+                minimum_points=minimum_points,
+                minimum_spread_ratio=spread_ratio,
+                return_inlier_mask=True,
+            )
+            local_mask = np.asarray(quality.pop("inlier_mask"), dtype=bool)
+            robust_mask = np.zeros(len(values), dtype=bool)
+            robust_mask[eligible_indexes[local_mask]] = True
+            surviving_counts = {
+                int(index): int(np.count_nonzero(robust_mask & (labels == index)))
+                for index in np.unique(labels[robust_mask])
+            }
+            retained_indexes = sorted(
+                index
+                for index, count in surviving_counts.items()
+                if count >= minimum_points_per_view
+            )
+            retained_mask = robust_mask & np.isin(labels, retained_indexes)
+            if np.array_equal(retained_mask, eligible):
+                retained_poses = [poses[index] for index in retained_indexes]
+                orientation_count = self._independent_board_orientation_count(
+                    retained_poses
+                )
+                quality.update(
+                    views=len(retained_indexes),
+                    independent_board_orientations=orientation_count,
+                    minimum_views=minimum_views,
+                    minimum_board_orientations=minimum_orientations,
+                    minimum_points_per_view=minimum_points_per_view,
+                    inlier_points_per_pose=[
+                        {
+                            "pose_index": index,
+                            "points": surviving_counts[index],
+                        }
+                        for index in retained_indexes
+                    ],
+                )
+                if (
+                    len(retained_indexes) < minimum_views
+                    or orientation_count < minimum_orientations
+                ):
+                    raise CalibrationError(
+                        "laser robust fit retains only "
+                        f"{len(retained_indexes)} Pi poses and "
+                        f"{orientation_count} independent orientations after "
+                        f"requiring {minimum_points_per_view} inlier points per "
+                        f"pose; requires {minimum_views} poses and "
+                        f"{minimum_orientations} orientations"
+                    )
+                return normal, offset, quality
+            eligible = retained_mask
+        raise CalibrationError("laser robust per-view rejection did not converge")
 
     @staticmethod
     def _checkerboard_view_for_pose(
@@ -3547,19 +3860,25 @@ class GeometricCalibrationService:
         return frame
 
     def _laser(self, side: str, enabled: bool) -> None:
-        method = self._gpio.laser_on if enabled else self._gpio.laser_off
-        if not method(side):
-            raise CalibrationError(f"failed to turn laser {side} {'on' if enabled else 'off'}")
+        with self._lock:
+            if enabled:
+                self._check_cancelled()
+            method = self._gpio.laser_on if enabled else self._gpio.laser_off
+            if not method(side):
+                raise CalibrationError(
+                    f"failed to turn laser {side} {'on' if enabled else 'off'}"
+                )
 
     def _lasers_off(self) -> None:
         failures = []
-        if self._gpio is not None:
-            for side in ("left", "right"):
-                try:
-                    if not self._gpio.laser_off(side):
+        with self._lock:
+            if self._gpio is not None:
+                for side in ("left", "right"):
+                    try:
+                        if not self._gpio.laser_off(side):
+                            failures.append(side)
+                    except Exception:
                         failures.append(side)
-                except Exception:
-                    failures.append(side)
         if failures:
             raise CalibrationError(f"failed to force lasers off: {', '.join(failures)}")
 

@@ -93,11 +93,18 @@ drive remains the existing binary full-power on/off path; no PWM interface is
 assumed.
 
 Calibration payload validation requires this Pi-authoritative provenance and
-its surviving robust-fit view/orientation counts. A legacy laser plane without
-that evidence is intentionally rejected and must be recalibrated; it is not
-silently trusted after upgrade. Persistence prepares and syncs the report and
-rollback backup first, then atomically switches the active calibration file
-last. A sidecar failure therefore cannot activate a partial calibration.
+its surviving robust-fit per-pose point counts, view/orientation counts, and
+two-dimensional spread condition. A pose that retains fewer than the configured
+points after robust rejection is removed before the plane is refitted. A legacy
+laser plane without that evidence is intentionally rejected and must be
+recalibrated; it is not silently trusted after upgrade. Persistence prepares
+the report and rollback backup, renames them, and syncs the parent directory
+before atomically switching the active calibration file and syncing the
+directory again. Runtime installation is part of the same non-cancellable
+transaction; an installation failure restores both the complete previous disk
+generation and runtime calibration. Cancellation is checked immediately before
+this transaction and a later request waits for activation rather than reporting
+a false cancelled outcome.
 The workflow suspends TF-Luna ranging output once before checkerboard camera
 capture, waits for the optical spot to clear, and restores ranging output in a
 `finally` guard before any LiDAR measurements. Cancellation and failure paths

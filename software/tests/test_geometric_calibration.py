@@ -67,6 +67,14 @@ def valid_calibration():
             "minimum_views": 3,
             "independent_board_orientations": 3,
             "minimum_board_orientations": 3,
+            "plane_spread_ratio": 0.5,
+            "minimum_plane_spread_ratio": 0.001,
+            "minimum_points_per_view": 10,
+            "inlier_points_per_pose": [
+                {"pose_index": 0, "points": 10},
+                {"pose_index": 1, "points": 10},
+                {"pose_index": 2, "points": 10},
+            ],
         },
     }
     return {
@@ -159,7 +167,16 @@ class CalibrationMathTests(unittest.TestCase):
 
     def test_robust_plane_fit_rejects_collinear_points(self):
         points = np.array([[float(index), 0.0, 0.0] for index in range(30)])
-        with self.assertRaisesRegex(CalibrationError, "rank-deficient"):
+        with self.assertRaisesRegex(CalibrationError, "2D conditioning"):
+            fit_plane_robust(points, minimum_points=20)
+
+    def test_robust_plane_fit_rejects_nearly_collinear_spread(self):
+        x = np.linspace(0.0, 100.0, 30)
+        points = np.column_stack(
+            (x, np.where(np.arange(30) % 2, 0.0001, -0.0001), np.zeros(30))
+        )
+
+        with self.assertRaisesRegex(CalibrationError, "spread ratio"):
             fit_plane_robust(points, minimum_points=20)
 
     def test_lidar_transform_requires_explicit_finite_nonzero_direction(self):
@@ -251,6 +268,21 @@ class CalibrationMathTests(unittest.TestCase):
 
         with self.assertRaisesRegex(CalibrationError, "laser plane quality"):
             validate_calibration_payload(payload)
+
+    def test_payload_requires_per_pose_inliers_and_plane_conditioning(self):
+        for mutate in (
+            lambda quality: quality["inlier_points_per_pose"][1].update(
+                points=1
+            ),
+            lambda quality: quality.update(plane_spread_ratio=1e-6),
+        ):
+            with self.subTest(mutate=mutate):
+                payload = valid_calibration()
+                mutate(payload["laser_planes"]["left"]["quality"])
+                with self.assertRaisesRegex(
+                    CalibrationError, "laser plane quality"
+                ):
+                    validate_calibration_payload(payload)
 
     @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
     def test_laser_extraction_ignores_off_board_reflections(self):
@@ -1664,6 +1696,86 @@ class CalibrationServiceTests(unittest.TestCase):
         self.assertEqual(len(status["laser_views"]["left"]["pi"]), 3)
         self.assertEqual(len(status["laser_views"]["right"]["usb"]), 3)
 
+    def test_robust_laser_fit_requires_minimum_inliers_in_each_pose(self):
+        poses = [
+            {"x": 195.0, "y": 0.0, "z": 20.0},
+            {"x": 185.0, "y": 10.0, "z": 30.0},
+            {"x": 175.0, "y": 20.0, "z": 40.0},
+        ]
+        first_pose = [
+            [float(x), float(y), 0.0]
+            for x in range(6)
+            for y in range(5)
+        ]
+        points = first_pose + [[20.0, 20.0, 0.0], [30.0, 30.0, 0.0]]
+        pose_indexes = [0] * 30 + [1, 2]
+
+        with self.assertRaisesRegex(
+            CalibrationError, "retains only 1 Pi poses"
+        ):
+            self.service._fit_laser_plane_views(
+                points,
+                pose_indexes,
+                poses,
+                minimum_points=30,
+                minimum_points_per_view=10,
+                minimum_views=3,
+                minimum_orientations=3,
+            )
+
+    def test_robust_laser_fit_converges_after_more_than_pose_count_passes(self):
+        poses = [
+            {"x": 195.0, "y": 0.0, "z": 20.0},
+            {"x": 185.0, "y": 10.0, "z": 30.0},
+            {"x": 175.0, "y": 20.0, "z": 40.0},
+        ]
+        points = [
+            [float(pose_index * 20 + index), float(index % 7), 0.0]
+            for pose_index in range(3)
+            for index in range(20)
+        ]
+        pose_indexes = [
+            pose_index for pose_index in range(3) for _ in range(20)
+        ]
+        calls = 0
+
+        def slowly_converging_fit(values, **_kwargs):
+            nonlocal calls
+            calls += 1
+            mask = np.ones(len(values), dtype=bool)
+            if calls <= 4:
+                mask[-1] = False
+            return (
+                np.array([0.0, 0.0, 1.0]),
+                0.0,
+                {
+                    "accepted": True,
+                    "rms_mm": 0.1,
+                    "inliers": int(mask.sum()),
+                    "samples": len(values),
+                    "plane_spread_ratio": 0.5,
+                    "minimum_plane_spread_ratio": 0.001,
+                    "inlier_mask": mask.tolist(),
+                },
+            )
+
+        with mock.patch(
+            "software.api.geometric_calibration.fit_plane_robust",
+            side_effect=slowly_converging_fit,
+        ):
+            _, _, quality = self.service._fit_laser_plane_views(
+                points,
+                pose_indexes,
+                poses,
+                minimum_points=30,
+                minimum_points_per_view=10,
+                minimum_views=3,
+                minimum_orientations=3,
+            )
+
+        self.assertEqual(calls, 5)
+        self.assertEqual(quality["views"], 3)
+
     def test_usb_laser_cross_validation_never_replaces_or_blocks_pi_plane(self):
         poses = [
             {"x": 195.0, "y": 0.0, "z": 20.0},
@@ -1795,6 +1907,139 @@ class CalibrationServiceTests(unittest.TestCase):
         self.assertIn(("on", "left"), self.gpio.calls)
         self.assertIn(("off", "left"), self.gpio.calls)
 
+    def test_cancel_waits_for_inflight_enable_and_prevents_future_enable(self):
+        entered = threading.Event()
+        release = threading.Event()
+        cancel_returned = threading.Event()
+
+        def delayed_on(side):
+            entered.set()
+            release.wait(1)
+            self.gpio.state[side] = True
+            self.gpio.calls.append(("on", side))
+            return True
+
+        self.gpio.laser_on = delayed_on
+        enable_thread = threading.Thread(
+            target=lambda: self.service._laser("left", True)
+        )
+        enable_thread.start()
+        self.assertTrue(entered.wait(0.5))
+
+        def cancel():
+            self.service.cancel()
+            cancel_returned.set()
+
+        cancel_thread = threading.Thread(target=cancel)
+        cancel_thread.start()
+        self.assertFalse(cancel_returned.wait(0.05))
+        release.set()
+        enable_thread.join(0.5)
+        cancel_thread.join(0.5)
+
+        self.assertTrue(cancel_returned.is_set())
+        self.assertFalse(any(self.gpio.state.values()))
+        with self.assertRaises(CalibrationCancelled):
+            self.service._laser("right", True)
+
+    def test_commit_boundary_rejects_early_cancel_and_defers_late_cancel(self):
+        self.service._cancel.set()
+        with self.assertRaises(CalibrationCancelled):
+            self.service._begin_commit()
+        self.assertFalse(self.service._commit_in_progress)
+
+        self.service._cancel = threading.Event()
+        self.service._active = True
+        self.service._begin_commit()
+        status = self.service.cancel()
+        self.assertTrue(self.service._commit_in_progress)
+        self.assertFalse(self.service._cancel.is_set())
+        self.assertEqual(status["phase"], "persisting")
+        self.assertIn("Finishing atomic", status["step"])
+        self.assertTrue(
+            self.service._finish_commit({"generation": "committed"})
+        )
+        self.assertTrue(self.service._cancel.is_set())
+        self.assertEqual(self.service.status()["phase"], "complete")
+        self.assertFalse(self.service.active)
+
+    def test_cancel_during_save_finishes_activation_without_cancelled_outcome(self):
+        entered = threading.Event()
+        release = threading.Event()
+        errors = []
+        real_save = self.service._store.save
+        activated = []
+
+        def blocking_save(calibration, report):
+            entered.set()
+            release.wait(1)
+            return real_save(calibration, report)
+
+        self.service._store.save = blocking_save
+        self.service._on_saved = lambda calibration: activated.append(
+            copy.deepcopy(dict(calibration))
+        )
+        self.service._active = True
+        self.service._begin_commit()
+
+        def save_and_activate():
+            try:
+                self.service._save_and_activate(
+                    valid_calibration(), {"generation": "new"}
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=save_and_activate)
+        thread.start()
+        self.assertTrue(entered.wait(0.5))
+        status = self.service.cancel()
+        self.assertEqual(status["phase"], "persisting")
+        self.assertNotEqual(status["phase"], "cancelled")
+        self.assertFalse(self.service._cancel.is_set())
+        release.set()
+        thread.join(1)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(activated, [valid_calibration()])
+        self.assertTrue(self.service._finish_commit({"generation": "new"}))
+        self.assertEqual(self.service.status()["phase"], "complete")
+        self.assertNotEqual(self.service.status()["phase"], "cancelled")
+        self.service.cancel()
+        self.assertEqual(self.service.status()["phase"], "complete")
+        persisted = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["scan_calibration"], valid_calibration())
+
+    def test_activation_failure_restores_persistent_and_runtime_calibration(self):
+        previous_disk = {"version": "disk-old"}
+        previous_runtime = {"version": "runtime-old"}
+        self.config_path.write_text(
+            json.dumps({"scan_calibration": previous_disk}), encoding="utf-8"
+        )
+        before = self.config_path.read_bytes()
+        runtime = {"calibration": copy.deepcopy(previous_runtime)}
+
+        def activate(calibration):
+            runtime["calibration"] = copy.deepcopy(dict(calibration))
+            if calibration.get("checkerboard"):
+                raise RuntimeError("activation failed")
+
+        self.service._on_saved = activate
+        self.service._get_current_calibration = lambda: copy.deepcopy(
+            runtime["calibration"]
+        )
+        with self.assertRaisesRegex(
+            CalibrationError, "previous persistent and runtime calibration restored"
+        ):
+            self.service._save_and_activate(
+                valid_calibration(), {"generation": "new"}
+            )
+
+        self.assertEqual(self.config_path.read_bytes(), before)
+        self.assertEqual(runtime["calibration"], previous_runtime)
+        self.assertFalse(self.service._store.backup_path.exists())
+        self.assertFalse(self.service._store.report_path.exists())
+
     def test_cancellation_during_blocked_hardware_call_is_bounded_and_cleans_up(self):
         entered = threading.Event()
         release = threading.Event()
@@ -1913,6 +2158,81 @@ class AtomicCalibrationStoreTests(unittest.TestCase):
                     )
                 for path in paths:
                     self.assertEqual(path.read_bytes(), before[path])
+
+    def test_save_fsyncs_sidecars_before_active_config(self):
+        events = []
+        real_replace = os.replace
+
+        def replace(source, destination):
+            events.append(("replace", Path(destination).name))
+            return real_replace(source, destination)
+
+        def fsync_directory(path):
+            events.append(("fsync-directory", Path(path).name))
+
+        with (
+            mock.patch(
+                "software.api.geometric_calibration.os.replace",
+                side_effect=replace,
+            ),
+            mock.patch.object(
+                self.store,
+                "_fsync_directory",
+                side_effect=fsync_directory,
+            ),
+        ):
+            self.store.save(valid_calibration(), {"generation": "new"})
+
+        self.assertEqual(
+            events,
+            [
+                ("replace", self.store.report_path.name),
+                ("replace", self.store.backup_path.name),
+                ("fsync-directory", self.path.parent.name),
+                ("replace", self.path.name),
+                ("fsync-directory", self.path.parent.name),
+            ],
+        )
+
+    def test_active_config_fsync_failure_restores_entire_generation(self):
+        self.store.save(valid_calibration(), {"generation": "old"})
+        paths = (self.path, self.store.backup_path, self.store.report_path)
+        before = {path: path.read_bytes() for path in paths}
+
+        with (
+            mock.patch.object(
+                self.store,
+                "_fsync_directory",
+                side_effect=[
+                    None,
+                    CalibrationError("active directory fsync failed"),
+                    None,
+                    None,
+                ],
+            ),
+            self.assertRaisesRegex(
+                CalibrationError, "active directory fsync failed"
+            ),
+        ):
+            self.store.save(valid_calibration(), {"generation": "new"})
+
+        for path in paths:
+            self.assertEqual(path.read_bytes(), before[path])
+
+    def test_directory_fsync_failure_is_explicit_on_supported_platforms(self):
+        with (
+            mock.patch(
+                "software.api.geometric_calibration.os.name", "posix"
+            ),
+            mock.patch(
+                "software.api.geometric_calibration.os.open",
+                side_effect=OSError("fsync unavailable"),
+            ),
+            self.assertRaisesRegex(
+                CalibrationError, "failed to fsync calibration directory"
+            ),
+        ):
+            self.store._fsync_directory(self.path.parent)
 
 
 if __name__ == "__main__":

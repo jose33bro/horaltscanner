@@ -96,6 +96,7 @@
       "maximum_laser_plane_rms_mm": 2,
       "minimum_laser_points": 30,
       "minimum_laser_points_per_view": 10,
+      "minimum_laser_plane_spread_ratio": 0.001,
       "minimum_laser_views": 3,
       "minimum_laser_board_orientations": 3,
       "minimum_laser_orientation_separation_deg": 4,

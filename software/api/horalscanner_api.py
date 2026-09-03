@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import math
@@ -311,6 +312,10 @@ def _install_geometric_calibration(calibration: dict[str, Any]) -> None:
     scan_session.update_calibration(calibration)
 
 
+def _current_geometric_calibration() -> dict[str, Any]:
+    return copy.deepcopy(hardware_config.get("scan_calibration", {}))
+
+
 geometric_calibration = GeometricCalibrationService(
     motor_driver=stm32_driver,
     gpio_driver=gpio_driver,
@@ -320,6 +325,7 @@ geometric_calibration = GeometricCalibrationService(
     store=AtomicCalibrationStore(config_manager.CALIBRATION_STATE_PATH),
     config=scanner_config.get("geometric_calibration", {}),
     on_saved=_install_geometric_calibration,
+    get_current_calibration=_current_geometric_calibration,
 )
 reconstruction_engine = ReconstructionEngine(scan_session)
 pose_memory = PoseMemory()

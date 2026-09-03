@@ -583,6 +583,39 @@ class ScanSession:
             if not self._finite_number(plane.get("offset_mm")):
                 blockers.append(f"Laser '{side}' calibrated plane offset_mm is missing")
             quality = plane.get("quality", {})
+            inlier_points = (
+                quality.get("inlier_points_per_pose")
+                if isinstance(quality, Mapping)
+                else None
+            )
+            minimum_points_per_view = (
+                quality.get("minimum_points_per_view")
+                if isinstance(quality, Mapping)
+                else None
+            )
+            inlier_points_valid = (
+                isinstance(inlier_points, list)
+                and self._finite_number(
+                    minimum_points_per_view, positive=True
+                )
+                and self._finite_number(quality.get("views"), positive=True)
+                and len(inlier_points) == int(float(quality["views"]))
+                and len(
+                    {
+                        entry.get("pose_index")
+                        for entry in inlier_points
+                        if isinstance(entry, Mapping)
+                    }
+                )
+                == len(inlier_points)
+                and all(
+                    isinstance(entry, Mapping)
+                    and self._finite_number(entry.get("points"), positive=True)
+                    and float(entry["points"])
+                    >= float(minimum_points_per_view)
+                    for entry in inlier_points
+                )
+            )
             provenance_valid = (
                 plane.get("source") == "pi_checkerboard_structured_light"
                 and isinstance(quality, Mapping)
@@ -604,6 +637,15 @@ class ScanSession:
                 and float(quality["minimum_board_orientations"]) >= 3
                 and float(quality["independent_board_orientations"])
                 >= float(quality["minimum_board_orientations"])
+                and self._finite_number(
+                    quality.get("plane_spread_ratio"), positive=True
+                )
+                and self._finite_number(
+                    quality.get("minimum_plane_spread_ratio"), positive=True
+                )
+                and float(quality["plane_spread_ratio"])
+                >= float(quality["minimum_plane_spread_ratio"])
+                and inlier_points_valid
             )
             if (
                 not isinstance(quality, Mapping)

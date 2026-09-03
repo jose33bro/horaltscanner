@@ -76,13 +76,25 @@ TF-Luna is mounted to the same carriage. Its expected calibration readings and
 persisted runtime correction use that validated signed USB vector exactly once.
 
 Laser-plane calibration reuses the accepted checkerboard corners for each exact
-camera/pose pair. Red delta is considered only inside an eroded inner-corner
-polygon; ambient saturated spots are excluded, and a camera/laser observation
-is accepted only when row peaks form one thin, continuous line with sufficient
-span and low image-line residual. Reflections on the wall, platform, mount, or
-laser housing are never intersected with the board plane. Missing and edge-only
-hits are recorded and skipped. Because both laser modules are physically on the
-Pi Camera V3 NoIR side, each laser plane is fitted only from valid Pi-camera
+camera/pose pair. Matched laser-minus-ambient red and chromatic response is
+considered only inside an eroded inner-corner polygon, and ambient saturated
+spots are excluded. The matched response is reflectance-normalized from the
+ambient frame so black/white transitions do not become laser peaks. Bounded
+horizontal Gaussian background estimates then remove smooth low-frequency pink
+illumination and require a second, finer-scale sharpness response before row
+peaks are measured. Each remaining peak needs bilateral local red/chromatic
+prominence; its subpixel center and width are measured at half prominence. Rows
+with comparable separated peaks are marked
+ambiguous rather than allowing the line fit to choose one. A camera/laser
+observation is accepted only when the resulting peaks form one thin, continuous
+line with sufficient span and low image-line residual. Broad glow without an
+embedded narrow ridge, checker brightness changes, competing ridges, reflections,
+and edge-only hits are recorded and skipped. Compact per-view diagnostics report
+raw candidate pixels, background-suppressed candidates, peak prominence,
+ambiguous rows, and local width percentiles; images and per-row arrays are not
+embedded. Reflections on the wall, platform, mount, or laser housing are never
+intersected with the board plane. Because both laser modules are physically on
+the Pi Camera V3 NoIR side, each laser plane is fitted only from valid Pi-camera
 on-board lines. USB observations retain the same strict diagnostics and, when
 they independently satisfy all point/view/orientation requirements, cross-check
 the Pi plane without contributing samples to it. Each laser must still provide
@@ -205,6 +217,65 @@ curl -fsS -X POST http://127.0.0.1:5000/api/calibration/geometric/cancel
 curl -fsS http://127.0.0.1:5000/api/calibration/geometric/report?download=1 \
   -o horalscanner-calibration-report.json
 ```
+
+### Update and repeat without replacing local poses
+
+After the ridge-extraction change is merged, preserve the Pi's locally tuned
+11-pose trajectory and scanner configuration while fast-forwarding the code:
+
+```bash
+set -eu
+cd /home/pi/horaltscanner
+test "$(git branch --show-current)" = main
+backup="$HOME/horalscanner-ridge-update-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$backup/config"
+cp -a config/horalscanner.json config/scan_poses.json "$backup/config/"
+if sudo test -e /var/lib/horalscanner/calibration.json; then
+  sudo cp -a /var/lib/horalscanner/calibration.json "$backup/"
+fi
+git fetch origin main
+git restore --source=HEAD --worktree -- \
+  config/horalscanner.json config/scan_poses.json
+git merge --ff-only origin/main
+cp -a "$backup/config/horalscanner.json" config/horalscanner.json
+cp -a "$backup/config/scan_poses.json" config/scan_poses.json
+cmp "$backup/config/horalscanner.json" config/horalscanner.json
+cmp "$backup/config/scan_poses.json" config/scan_poses.json
+test "$(python3 -c \
+  'import json; print(len(json.load(open("config/horalscanner.json"))["scanner"]["geometric_calibration"]["pose_offsets_mm"]))')" \
+  = 11
+/home/pi/horaltscanner_env/bin/python -m pytest -q \
+  software/tests/test_geometric_calibration.py::CalibrationMathTests
+sudo systemctl restart horalscanner
+curl -fsS http://127.0.0.1:5000/api/status | python3 -m json.tool
+```
+
+Keep the exact measured TF-Luna origin/direction and start pose from the previous
+locked-photometry run in
+`/home/pi/geometric-calibration-request.locked-5pct.json`; do not remeasure or
+substitute placeholders during this software-only retest. With the board and
+emergency stop checked and an operator present, repeat the same request:
+
+```bash
+request=/home/pi/geometric-calibration-request.locked-5pct.json
+python3 -m json.tool "$request" >/dev/null
+curl -fsS -X POST -H 'Content-Type: application/json' \
+  --data-binary @"$request" \
+  http://127.0.0.1:5000/api/calibration/geometric/preflight |
+  python3 -m json.tool
+curl -fsS -X POST -H 'Content-Type: application/json' \
+  --data-binary @"$request" \
+  http://127.0.0.1:5000/api/calibration/geometric/start |
+  python3 -m json.tool
+watch -n 1 'curl -fsS http://127.0.0.1:5000/api/calibration/geometric/status'
+curl -fsS \
+  'http://127.0.0.1:5000/api/calibration/geometric/report?download=1' \
+  -o horalscanner-calibration-report-ridge.json
+```
+
+Do not create or copy a calibration file after a failed run. The service writes
+runtime calibration only after every existing point, pose, orientation, spread,
+ray, residual, and 2 mm plane-fit gate succeeds.
 
 The service accepts and atomically installs calibration only after finite,
 invertible transforms and all RMS/residual limits pass. The previous

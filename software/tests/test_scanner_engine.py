@@ -571,6 +571,25 @@ class RealScanSessionTests(unittest.TestCase):
 
         np.testing.assert_allclose(translated, [1.0, 2.0, 1.0])
 
+    def test_usb_translation_preserves_measured_signed_carriage_scale(self):
+        calibration = copy.deepcopy(VALID_CALIBRATION)
+        calibration["cameras"]["usb"].update(
+            carriage_direction=[0.025, -0.035, -1.02],
+            carriage_scale_mm_per_commanded_mm=float(
+                np.linalg.norm([0.025, -0.035, -1.02])
+            ),
+        )
+        session = self.make_session(calibration=calibration)
+        session._axis_position["z"] = 13.0
+
+        translated = session._apply_carriage_translation(
+            np.array([1.0, 2.0, 3.0]),
+            calibration["cameras"]["usb"],
+            {"x": 0.0, "y": 0.0, "z": 7.0},
+        )
+
+        np.testing.assert_allclose(translated, [1.075, 1.895, -0.06])
+
     def test_usb_points_use_absolute_reference_when_scan_pose_differs(self):
         calibration = copy.deepcopy(VALID_CALIBRATION)
         calibration["laser_planes"]["left"].update(

@@ -18,6 +18,7 @@ from software.api.geometric_calibration import (
     CheckerboardDetectionTimeout,
     GeometricCalibrationService,
     BOARD_TO_SCANNER_AT_REFERENCE,
+    PNP_BOARD_FRAME_ADJUSTMENTS,
     checkerboard_view_metrics,
     checkerboard_points,
     fit_plane_robust,
@@ -183,6 +184,17 @@ class CalibrationMathTests(unittest.TestCase):
                     CalibrationError, "reference_axis_position_mm"
                 ):
                     validate_calibration_payload(payload)
+
+    def test_payload_rejects_carriage_scale_inconsistent_with_direction(self):
+        payload = valid_calibration()
+        payload["cameras"]["usb"].update(
+            carriage_axis="z",
+            carriage_direction=[0.0, 0.0, 1.02],
+            carriage_scale_mm_per_commanded_mm=1.0,
+            reference_axis_position_mm=20.0,
+        )
+        with self.assertRaisesRegex(CalibrationError, "carriage scale"):
+            validate_calibration_payload(payload)
 
 
 class _FakeCV:
@@ -842,6 +854,9 @@ class CalibrationServiceTests(unittest.TestCase):
         *,
         opposed_usb_pnp_frame=False,
         live_candidate_split_noise=False,
+        usb_pnp_adjustment=None,
+        usb_carriage_direction=None,
+        usb_same_side=False,
     ):
         poses = self.service._trajectory({})
         self.service._reference_pose = dict(poses[0])
@@ -865,9 +880,30 @@ class CalibrationServiceTests(unittest.TestCase):
                 dtype=float,
             ),
         }
-        usb_pnp_adjustment = np.eye(4)
-        if opposed_usb_pnp_frame:
-            usb_pnp_adjustment[:3, :3] = np.diag([-1.0, -1.0, 1.0])
+        if usb_same_side:
+            camera_to_scanner["usb"] = np.array(
+                [
+                    [0, 0, -1, 240],
+                    [1, 0, 0, 35],
+                    [0, -1, 0, 65],
+                    [0, 0, 0, 1],
+                ],
+                dtype=float,
+            )
+        adjustment_name = usb_pnp_adjustment
+        if opposed_usb_pnp_frame and adjustment_name is None:
+            adjustment_name = "rotate_180_about_board_normal"
+        pnp_adjustment = np.eye(4)
+        if adjustment_name is not None:
+            pnp_adjustment[:3, :3] = PNP_BOARD_FRAME_ADJUSTMENTS[
+                adjustment_name
+            ]
+        carriage_direction = np.asarray(
+            usb_carriage_direction
+            if usb_carriage_direction is not None
+            else [0.0, 0.0, 1.0],
+            dtype=float,
+        )
         rotation_noise_deg = {
             "pi": [0.7, -0.35, 0.25, -0.7, 0.35, -0.25, 0.0],
             "usb": [-0.38, 0.75, -0.28, 0.38, -0.75, 0.28, 0.0],
@@ -882,11 +918,9 @@ class CalibrationServiceTests(unittest.TestCase):
                 )
                 scanner_from_camera = camera_to_scanner[name].copy()
                 if name == "usb":
-                    scanner_from_camera[:3, 3] += [
-                        0,
-                        0,
-                        pose["z"] - poses[0]["z"],
-                    ]
+                    scanner_from_camera[:3, 3] += (
+                        carriage_direction * (pose["z"] - poses[0]["z"])
+                    )
                 if live_candidate_split_noise:
                     scanner_from_camera[:3, :3] = (
                         self.service._rotation_z(
@@ -903,7 +937,7 @@ class CalibrationServiceTests(unittest.TestCase):
                         "board_to_camera": (
                             np.linalg.inv(scanner_from_camera) @ scanner_from_board
                         )
-                        @ (usb_pnp_adjustment if name == "usb" else np.eye(4)),
+                        @ (pnp_adjustment if name == "usb" else np.eye(4)),
                     }
                 )
         return views, camera_to_scanner
@@ -1038,6 +1072,147 @@ class CalibrationServiceTests(unittest.TestCase):
         self.assertEqual(
             result["quality"]["calibration_role"],
             "moving_cross_validation_after_z_correction",
+        )
+
+    def test_usb_joint_fit_selects_planar_normal_and_signed_carriage_vector(self):
+        self.service._config["minimum_views"] = 6
+        expected_carriage = np.array([0.025, -0.035, -1.02])
+        cases = (
+            ("identity", True),
+            ("rotate_180_about_board_x", False),
+            ("rotate_180_about_board_y", False),
+            ("rotate_180_about_board_normal", False),
+        )
+        for adjustment_name, same_side in cases:
+            with self.subTest(
+                adjustment=adjustment_name, same_side=same_side
+            ):
+                views, expected_cameras = self._synthetic_motion_views(
+                    -1.0,
+                    0.01,
+                    usb_pnp_adjustment=adjustment_name,
+                    usb_carriage_direction=expected_carriage,
+                    usb_same_side=same_side,
+                )
+                self.service._motion_model = self.service._estimate_motion_model(
+                    views
+                )
+                result = self.service._calibrate_camera_extrinsics(
+                    "usb",
+                    views["usb"],
+                    {
+                        "quality": {
+                            "accepted": True,
+                            "rms_px": 0.1,
+                            "maximum_rms_px": 1.0,
+                        }
+                    },
+                    {},
+                )
+                np.testing.assert_allclose(
+                    result["camera_to_scanner"],
+                    expected_cameras["usb"],
+                    atol=1e-6,
+                )
+                np.testing.assert_allclose(
+                    result["carriage_direction"],
+                    expected_carriage,
+                    atol=1e-8,
+                )
+                self.assertAlmostEqual(
+                    result["carriage_scale_mm_per_commanded_mm"],
+                    float(np.linalg.norm(expected_carriage)),
+                )
+                self.assertEqual(
+                    result["quality"]["pnp_board_frame_adjustment"],
+                    adjustment_name,
+                )
+                self.assertTrue(result["quality"]["carriage_fit"]["accepted"])
+                self.assertAlmostEqual(
+                    np.linalg.det(
+                        np.asarray(
+                            result["quality"][
+                                "pnp_board_frame_adjustment_matrix"
+                            ]
+                        )
+                    ),
+                    1.0,
+                )
+
+    def test_wrong_planar_normal_exposes_two_x_slope_and_is_rejected(self):
+        views, _ = self._synthetic_motion_views(
+            -1.0,
+            0.01,
+            usb_pnp_adjustment="rotate_180_about_board_y",
+        )
+        self.service._motion_model = self.service._estimate_motion_model(views)
+        result = self.service._calibrate_camera_extrinsics(
+            "usb",
+            views["usb"],
+            {
+                "quality": {
+                    "accepted": True,
+                    "rms_px": 0.1,
+                    "maximum_rms_px": 1.0,
+                }
+            },
+            {},
+        )
+        fits = result["quality"]["pnp_board_frame_candidate_fits"]
+        wrong = fits["identity"]
+        self.assertFalse(wrong["accepted"])
+        self.assertGreater(wrong["translation_rms_mm"], 5.0)
+        x_slope = wrong["translation_slopes_mm_per_commanded_mm"][
+            "commanded_x"
+        ]["scanner_x"]
+        self.assertGreater(abs(x_slope), 1.8)
+        self.assertLess(abs(x_slope), 2.2)
+        self.assertEqual(
+            result["quality"]["pnp_board_frame_adjustment"],
+            "rotate_180_about_board_y",
+        )
+
+    def test_unobservable_candidate_does_not_abort_later_planar_rotations(self):
+        self.service._config["minimum_views"] = 6
+        views, _ = self._synthetic_motion_views(
+            -1.0,
+            0.01,
+            usb_pnp_adjustment="rotate_180_about_board_y",
+        )
+        self.service._motion_model = self.service._estimate_motion_model(views)
+        original_fit = self.service._fit_usb_carriage
+        calls = 0
+
+        def reject_first_candidate(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise CalibrationError("synthetic unobservable candidate")
+            return original_fit(*args, **kwargs)
+
+        with mock.patch.object(
+            self.service,
+            "_fit_usb_carriage",
+            side_effect=reject_first_candidate,
+        ):
+            result = self.service._calibrate_camera_extrinsics(
+                "usb",
+                views["usb"],
+                {
+                    "quality": {
+                        "accepted": True,
+                        "rms_px": 0.1,
+                        "maximum_rms_px": 1.0,
+                    }
+                },
+                {},
+            )
+
+        fits = result["quality"]["pnp_board_frame_candidate_fits"]
+        self.assertIn("synthetic unobservable", fits["identity"]["carriage_fit"]["error"])
+        self.assertEqual(
+            result["quality"]["pnp_board_frame_adjustment"],
+            "rotate_180_about_board_y",
         )
 
     def test_ambiguous_usb_board_frame_convention_is_rejected(self):

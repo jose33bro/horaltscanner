@@ -604,6 +604,22 @@ class ScanSession:
             )
         ):
             blockers.append("Turntable circumference source/quality is missing")
+        command_scale = turntable.get("command_radians_per_mm")
+        commanded_revolution = turntable.get("commanded_mm_per_revolution")
+        if (
+            not self._finite_number(command_scale)
+            or abs(float(command_scale)) <= 1e-12
+            or not self._finite_number(commanded_revolution, positive=True)
+            or not math.isclose(
+                float(commanded_revolution),
+                2.0 * math.pi / abs(float(command_scale)),
+                rel_tol=1e-8,
+                abs_tol=1e-6,
+            )
+            or turntable.get("command_direction")
+            != ("positive" if float(command_scale) > 0 else "negative")
+        ):
+            blockers.append("Turntable signed command scale is missing or invalid")
         lidar = self._calibration.get("lidar", {})
         if not self._matrix_valid(lidar.get("lidar_to_scanner"), (4, 4), transform=True):
             blockers.append("TF-Luna lidar_to_scanner calibration is missing")
@@ -644,6 +660,9 @@ class ScanSession:
             or float(x_scale["repeatability_rms_mm"])
             > float(x_scale["maximum_repeatability_mm"])
             or x_scale.get("motor_rotation_distance_changed") is not False
+            or not self._finite_number(x_scale.get("signed_mm_per_commanded_mm"))
+            or abs(float(x_scale.get("signed_mm_per_commanded_mm", 0)))
+            <= 1e-12
         ):
             blockers.append("X scale validation is missing or rejected")
         return blockers
@@ -1362,7 +1381,7 @@ class ScanSession:
         axis /= np.linalg.norm(axis)
         rotation_axis = str(self._config.get("rotation_axis", "y")).lower()
         travel = self._axis_position[rotation_axis] - float(trajectory_origin[rotation_axis])
-        angle = -2.0 * math.pi * travel / float(turntable["mm_per_revolution"])
+        angle = -float(turntable["command_radians_per_mm"]) * travel
         vector = np.asarray(point, dtype=float) - center
         rotated = (
             vector * math.cos(angle)

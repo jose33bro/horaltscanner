@@ -218,6 +218,10 @@ VALID_CALIBRATION = {
         "axis": [0, 0, 1],
         "diameter_mm": 200,
         "mm_per_revolution": np.pi * 200,
+        "command_radians_per_mm": 0.01,
+        "commanded_mm_per_revolution": np.pi * 200,
+        "command_direction": "positive",
+        "reference_pose_mm": {"x": 195, "y": 0, "z": 20},
         "source": "measured_diameter",
         "quality": {"accepted": True},
     },
@@ -234,6 +238,7 @@ VALID_CALIBRATION = {
     "x_scale_validation": {
         "accepted": True,
         "measured_mm_per_commanded_mm": 1.0,
+        "signed_mm_per_commanded_mm": 1.0,
         "repeatability_rms_mm": 0.1,
         "maximum_repeatability_mm": 3.0,
         "motor_rotation_distance_changed": False,

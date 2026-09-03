@@ -683,11 +683,11 @@ class CalibrationMathTests(unittest.TestCase):
             diagnostic["minimum_ridge_prominence"] * 0.9,
         )
 
-    def test_real_report_checker_gaps_bridge_from_geometric_evidence(self):
+    def test_real_report_zero_energy_checker_gaps_bridge_from_geometry(self):
         report = json.loads(
             RIDGE_BRIDGE_REPORT_FIXTURE.read_text(encoding="utf-8")
         )
-        case = report["left_pi_pose_0"]
+        case = report["left_pi_pose_7"]
         pitch = float(case["projected_checker_pitch_px_median"])
         first_boundary = 20.0
         boundaries = first_boundary + pitch * np.arange(6)
@@ -708,13 +708,22 @@ class CalibrationMathTests(unittest.TestCase):
             dtype=float,
         )
         missing = (
-            ((rows >= boundaries[1]) & (rows < boundaries[2]))
-            | ((rows >= boundaries[3]) & (rows < boundaries[4]))
+            (rows >= boundaries[1]) & (rows < boundaries[2])
         )
         selected_rows = rows[~missing]
+        selected_columns = np.polyval(coefficients, selected_rows)
+        local_slope_delta = 0.08
+        selected_columns[selected_rows < boundaries[1]] += (
+            local_slope_delta
+            * (selected_rows[selected_rows < boundaries[1]] - boundaries[1])
+        )
+        selected_columns[selected_rows >= boundaries[2]] += (
+            local_slope_delta
+            * (selected_rows[selected_rows >= boundaries[2]] - boundaries[2])
+        )
         selected = np.column_stack(
             (
-                np.polyval(coefficients, selected_rows),
+                selected_columns,
                 selected_rows,
             )
         )
@@ -723,16 +732,10 @@ class CalibrationMathTests(unittest.TestCase):
         ridge_response = np.zeros((height, width), dtype=float)
         fine_response = np.zeros((height, width), dtype=float)
         chromatic_response = np.zeros((height, width), dtype=float)
-        image_rows, image_columns = np.indices((height, width), dtype=float)
-        centers = np.polyval(coefficients, image_rows)
-        profile = np.exp(-0.5 * ((image_columns - centers) / 2.0) ** 2)
-        for cell in (1, 3):
+        for cell in (1,):
             start = int(math.ceil(boundaries[cell]))
             stop = int(math.floor(boundaries[cell + 1]))
             ambient[start:stop] = 30.0
-            ridge_response[start:stop] = profile[start:stop] * 24.0
-            fine_response[start:stop] = profile[start:stop] * 10.0
-            chromatic_response[start:stop] = profile[start:stop] * 9.0
 
         diagnostic = _classify_checker_gaps(
             corner_grid=corner_grid,
@@ -754,9 +757,11 @@ class CalibrationMathTests(unittest.TestCase):
 
         self.assertEqual(
             case["checker_gap_rejection_counts"],
-            {"ridge_response_not_low": 2},
+            {"noncoherent_endpoints": 2},
         )
-        self.assertEqual(diagnostic["bridged_checker_gaps"], 2)
+        self.assertGreaterEqual(diagnostic["raw_max_gap_px"], 44.0)
+        self.assertLessEqual(diagnostic["raw_max_gap_px"], 54.0)
+        self.assertEqual(diagnostic["bridged_checker_gaps"], 1)
         self.assertEqual(diagnostic["checker_gap_rejection_counts"], {})
         self.assertLessEqual(
             diagnostic["unexplained_max_gap_px"],
@@ -816,7 +821,7 @@ class CalibrationMathTests(unittest.TestCase):
         )
 
     @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
-    def test_laser_extraction_rejects_gap_on_bright_checker_band(self):
+    def test_laser_extraction_rejects_wrong_checker_phase_bright_gap(self):
         ambient, laser, corners = self._checker_ridge_images()
         laser[104:136] = ambient[104:136]
 

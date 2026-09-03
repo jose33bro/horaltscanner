@@ -493,19 +493,6 @@ def _classify_checker_gaps(
             if (
                 left_segment["rms"] > maximum_residual
                 or right_segment["rms"] > maximum_residual
-                or abs(
-                    float(
-                        np.polyval(
-                            left_segment["coefficients"],
-                            (lower + upper) / 2.0,
-                        )
-                        - np.polyval(
-                            right_segment["coefficients"],
-                            (lower + upper) / 2.0,
-                        )
-                    )
-                )
-                > maximum_residual
             ):
                 reject("noncoherent_endpoints")
                 continue
@@ -534,6 +521,27 @@ def _classify_checker_gaps(
                 continue
 
             first_boundary, second_boundary, pitch_y, pitch = aligned_pair
+            boundary_errors = (
+                abs(
+                    float(
+                        np.polyval(
+                            left_segment["coefficients"], first_boundary
+                        )
+                        - np.polyval(coefficients, first_boundary)
+                    )
+                ),
+                abs(
+                    float(
+                        np.polyval(
+                            right_segment["coefficients"], second_boundary
+                        )
+                        - np.polyval(coefficients, second_boundary)
+                    )
+                ),
+            )
+            if max(boundary_errors) > maximum_residual:
+                reject("noncoherent_endpoints")
+                continue
             minimum_adjacent_span = max(
                 row_stride * 3.0 * path_scale,
                 pitch * 0.35,
@@ -686,10 +694,9 @@ def _classify_checker_gaps(
                 reject("reflectance_samples_unavailable")
                 continue
             gap_level = float(np.median(gap_reflectance))
-            adjacent_level = max(
-                float(np.median(before_reflectance)),
-                float(np.median(after_reflectance)),
-            )
+            before_level = float(np.median(before_reflectance))
+            after_level = float(np.median(after_reflectance))
+            adjacent_level = min(before_level, after_level)
             if (
                 first_contrast < minimum_contrast
                 or second_contrast < minimum_contrast

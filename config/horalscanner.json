@@ -127,7 +127,9 @@
       "minimum_axis_direction_score_ratio": 2,
       "usb_z_scale_tolerance_fraction": 0.15,
       "maximum_usb_z_vertical_alignment_deg": 12,
-      "maximum_carriage_fit_condition_number": 50
+      "maximum_carriage_fit_condition_number": 50,
+      "minimum_carriage_z_leverage_ratio": 0.25,
+      "maximum_usb_z_vector_uncertainty_mm_per_commanded_mm": 0.15
     }
   },
   "slicer": {

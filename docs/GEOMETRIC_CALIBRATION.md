@@ -46,17 +46,36 @@ command rotation within the measured 200 mm diameter tolerance. The service
 then solves the Pi extrinsic before independently solving and cross-validating
 the opposed USB camera against that global scanner-frame model. The USB
 camera's commanded Z displacement is removed before fitting its reference
-transform. The canonical and proper 180-degree-about-normal board-frame
-conventions are evaluated for the opposed view, but reflections are never
-accepted. The fixed Pi observation defines the canonical board convention.
-Raw camera-coordinate
-rotation signs are not compared across cameras. Diagnostics explicitly identify
-the fixed Pi reference as the command-sign source and report the USB
-cross-validation candidates. A bad USB fit, ambiguous board convention,
-out-of-tolerance scale, insufficient axis travel, or excessive robust residuals
-fails calibration; motor `rotation_distance` is never changed. The fitted signed
-Y scale is persisted and used to undo turntable motion during scans. For every
-scan frame, runtime derives
+transform. Each USB view evaluates the four proper centered-board adjustments
+(identity and 180° about board X, Y, or normal) against a robust rotation
+consensus. This normalizes a detector/PnP correspondence-order switch in one
+view without allowing a reflection or hiding continuous camera wobble. The
+selected global convention and every per-view adjustment/residual are reported.
+The fixed Pi observation still defines the canonical board convention; raw
+camera-coordinate rotation signs are not compared across cameras.
+
+The USB carriage coefficient is estimated after the fixed Pi-derived signed X
+and Y mechanism transform has been applied. The estimator residualizes
+commanded Z against commanded X/Y before solving the Z coefficient, so
+correlated commands cannot silently remove its independent leverage. It keeps
+all views whose joint translation RMS is within the unchanged 5 mm extrinsic
+limit. Gross translation rejection is deterministic and may remove a view only
+when another inlier remains at that same Z level. A PnP mask that removes a
+whole Z level fails instead of triggering a biased refit. Calibration also
+requires three Z levels spanning 20 mm, independent-Z leverage ratio at least
+0.25, condition number at most 50, per-level repeatability at most 5 mm, and
+leave-one-view/leave-one-level carriage-vector deviation at most 0.15 mm per
+commanded mm. Reports include those values, per-level sample/inlier counts,
+rejected views, and any direct same-X/same-Y Z contrasts.
+
+The locally validated 11-pose trajectory has independent-Z leverage ratio
+approximately 0.874, and the tracked seven-pose fallback is approximately
+0.767, so neither needs a motion change for this estimator. A configured
+trajectory whose Z is explained by X/Y is rejected before motion begins. A bad
+USB fit, ambiguous board convention, out-of-tolerance scale, insufficient axis
+travel or Z support, or excessive robust residuals fails calibration; motor
+`rotation_distance` is never changed. The fitted signed Y scale is persisted
+and used to undo turntable motion during scans. For every scan frame, runtime derives
 the physical turntable center as
 `reference_center + signed_x_scale * (current_x - reference_x) * scanner_+X`,
 undoes Y rotation about that current center, then maps the result to the
@@ -72,6 +91,13 @@ approximately `[-0.0117, -0.1742, -0.9370]` mm per commanded Z millimeter
 alignment acceptance limit is therefore a measured-machine tolerance of
 **12°**; the near-unit scale, regression observability/condition, 5 mm
 translation residual, and 3° rotation residual checks remain unchanged.
+The captured 35.04° failure contained discrete USB PnP convention switches at
+views 8 and 9. Offline normalization recovered
+`[-0.0150, -0.1853, -0.9251]`, magnitude about `0.944`, vertical alignment
+about `11.36°`, and USB extrinsic residuals about `2.65 mm / 0.53°` with all
+11 views. Thus that run was a fit artifact only after the corrected residuals
+passed every unchanged safety limit; a normalized result that remains near
+35° is still rejected.
 TF-Luna is mounted to the same carriage. Its expected calibration readings and
 persisted runtime correction use that validated signed USB vector exactly once.
 
@@ -225,43 +251,109 @@ curl -fsS http://127.0.0.1:5000/api/calibration/geometric/report?download=1 \
   -o horalscanner-calibration-report.json
 ```
 
-### Update and repeat without replacing local poses
+### Deploy the carriage-fit correction without replacing local configuration
 
-After the ridge-extraction change is merged, preserve the Pi's locally tuned
-11-pose trajectory and scanner configuration while fast-forwarding the code:
+After this correction is merged to `main`, preserve the Pi's locally tuned
+11-pose trajectory, 5% PWM profile, scan poses, and hardware configuration.
+The only intentional local setting change below restores the temporary USB
+vertical-alignment override from 15° to the production 12° gate. These commands
+do not move an axis or energize a laser:
 
 ```bash
 set -eu
 cd /home/pi/horaltscanner
 test "$(git branch --show-current)" = main
-backup="$HOME/horalscanner-ridge-update-$(date +%Y%m%d-%H%M%S)"
+sudo systemctl stop horalscanner
+backup="$HOME/horalscanner-usb-fit-update-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$backup/config"
-cp -a config/horalscanner.json config/scan_poses.json "$backup/config/"
+cp -a config/horalscanner.json config/horalscanner_config.json \
+  config/scan_poses.json "$backup/config/"
 if sudo test -e /var/lib/horalscanner/calibration.json; then
   sudo cp -a /var/lib/horalscanner/calibration.json "$backup/"
 fi
 git fetch origin main
 git restore --source=HEAD --worktree -- \
-  config/horalscanner.json config/scan_poses.json
+  config/horalscanner.json config/horalscanner_config.json config/scan_poses.json
 git merge --ff-only origin/main
 cp -a "$backup/config/horalscanner.json" config/horalscanner.json
+cp -a "$backup/config/horalscanner_config.json" config/horalscanner_config.json
 cp -a "$backup/config/scan_poses.json" config/scan_poses.json
-cmp "$backup/config/horalscanner.json" config/horalscanner.json
+
+/home/pi/horaltscanner_env/bin/python - <<PY
+import copy
+import json
+from pathlib import Path
+
+backup = Path("$backup/config")
+application_path = Path("config/horalscanner.json")
+hardware_path = Path("config/horalscanner_config.json")
+before = json.loads((backup / "horalscanner.json").read_text())
+application = copy.deepcopy(before)
+geometric = application["scanner"]["geometric_calibration"]
+geometric["maximum_usb_z_vertical_alignment_deg"] = 12
+geometric["minimum_carriage_z_leverage_ratio"] = 0.25
+geometric["maximum_usb_z_vector_uncertainty_mm_per_commanded_mm"] = 0.15
+application_path.write_text(json.dumps(application, indent=2) + "\n")
+
+start = geometric["starting_pose_mm"]
+poses = [
+    {
+        axis: float(start[axis]) + float(offset.get(axis, 0))
+        for axis in ("x", "y", "z")
+    }
+    for offset in geometric["pose_offsets_mm"]
+]
+assert len(poses) == 11, f"expected preserved 11-pose trajectory, got {len(poses)}"
+assert poses[0] == {"x": 195.0, "y": 0.0, "z": 20.0}
+assert all(0.0 <= pose["x"] <= 195.0 for pose in poses)
+assert all(20.0 <= pose["z"] <= 40.0 for pose in poses)
+assert geometric["usb_z_scale_tolerance_fraction"] == 0.15
+assert geometric["maximum_usb_z_vertical_alignment_deg"] == 12
+assert geometric["maximum_carriage_fit_condition_number"] == 50
+assert geometric["maximum_extrinsic_rms_mm"] == 5
+assert geometric["maximum_extrinsic_rms_deg"] == 3
+assert geometric["maximum_laser_plane_rms_mm"] == 2
+
+preserved = copy.deepcopy(application)
+preserved_geometric = preserved["scanner"]["geometric_calibration"]
+original = copy.deepcopy(before)
+original_geometric = original["scanner"]["geometric_calibration"]
+for key in (
+    "maximum_usb_z_vertical_alignment_deg",
+    "minimum_carriage_z_leverage_ratio",
+    "maximum_usb_z_vector_uncertainty_mm_per_commanded_mm",
+):
+    preserved_geometric.pop(key, None)
+    original_geometric.pop(key, None)
+assert preserved == original, "an unrelated application setting changed"
+
+hardware = json.loads(hardware_path.read_text())
+assert hardware["lasers"]["pwm_enabled"] is True
+assert hardware["lasers"]["calibration_power"] == 0.05
+PY
+
+cmp "$backup/config/horalscanner_config.json" config/horalscanner_config.json
 cmp "$backup/config/scan_poses.json" config/scan_poses.json
-test "$(python3 -c \
-  'import json; print(len(json.load(open("config/horalscanner.json"))["scanner"]["geometric_calibration"]["pose_offsets_mm"]))')" \
-  = 11
-/home/pi/horaltscanner_env/bin/python -m pytest -q \
-  software/tests/test_geometric_calibration.py::CalibrationMathTests
+/home/pi/horaltscanner_env/bin/python -m py_compile \
+  software/api/geometric_calibration.py
+/home/pi/horaltscanner_env/bin/python -m pytest -q software/tests
+sudo test ! -e /var/lib/horalscanner/calibration.json
 sudo systemctl restart horalscanner
+sudo systemctl status --no-pager horalscanner
 curl -fsS http://127.0.0.1:5000/api/status | python3 -m json.tool
 ```
 
-Keep the exact measured TF-Luna origin/direction and start pose from the previous
-locked-photometry run in
+The final `sudo test` is expected for the stated no-calibration-file starting
+state. If a supervised run has since created a calibration, replace it with
+`sudo python3 -m json.tool /var/lib/horalscanner/calibration.json >/dev/null`;
+never delete a measured calibration as part of deployment.
+
+Keep the exact measured TF-Luna origin/direction and start pose in
 `/home/pi/geometric-calibration-request.locked-5pct.json`; do not remeasure or
 substitute placeholders during this software-only retest. With the board and
-emergency stop checked and an operator present, repeat the same request:
+support rigid, USB cable free, lasers confirmed off, the travel envelope clear,
+an accessible emergency stop, and an operator present, home X/Y/Z and confirm
+X=195, Y=0, Z=20 before repeating the same request:
 
 ```bash
 request=/home/pi/geometric-calibration-request.locked-5pct.json
@@ -277,8 +369,22 @@ curl -fsS -X POST -H 'Content-Type: application/json' \
 watch -n 1 'curl -fsS http://127.0.0.1:5000/api/calibration/geometric/status'
 curl -fsS \
   'http://127.0.0.1:5000/api/calibration/geometric/report?download=1' \
-  -o horalscanner-calibration-report-ridge.json
+  -o horalscanner-calibration-report-usb-fit-1.json
 ```
+
+For an accepted run, verify `carriage_fit` reports all five local Z levels,
+independent-Z leverage at least 0.25, vector uncertainty at most 0.15,
+scale within 15%, vertical alignment at most 12°, and USB extrinsics within
+5 mm / 3°. A `changed_views` list is acceptable only when the normalized
+per-view rotation residuals and final extrinsic gates pass. Do not raise any
+limit for a failure.
+
+With the setup unchanged and still supervised, run the same request once more
+and save `horalscanner-calibration-report-usb-fit-2.json`. Compare the two
+carriage vectors, per-Z-level repeatability, normalized PnP adjustments, and
+extrinsic residuals. Stop and retain both reports if a level disappears, the
+adjustments oscillate without a discrete 180° correspondence switch, the
+vector remains near 35°, or either run fails an existing gate.
 
 Do not create or copy a calibration file after a failed run. The service writes
 runtime calibration only after every existing point, pose, orientation, spread,

@@ -142,8 +142,11 @@ line with sufficient span and low image-line residual. A robust row fit may
 discard isolated outlier rows or one short outlier segment. The strict unexplained
 gap limit remains unchanged. An interval bounded by consecutive
 perspective-projected checker rows may be bridged only when adjacent local line
-fits agree within the unchanged 2 px residual limit and alternating checker
-reflectance confirms one cell. The missing cell must contain either low response
+fits independently meet the unchanged 2 px residual limit and meet the shared
+robust ridge at their own projected checker boundary within 2 px; they are not
+extrapolated across the unobserved cell. Alternating checker reflectance must
+confirm the dark cell from both neighboring cells. The missing cell may contain
+either low response
 or a centered, narrow, chromatic subthreshold ridge; off-axis responses,
 grayscale changes, broad halos, and competing ridges remain rejected. Adjacent
 segments must span at least 35% of the local projected pitch, which keeps sparse

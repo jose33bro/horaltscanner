@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "source": "Sanitized diagnostics from geometric-report-shifted-left-10pct.json (SHA-256 34df02e5ce8668b9baf088839472c6771ad9a99611be98dce46912c6e4f1b10a)",
-  "left_pi_pose_0": {
-    "line_slope_x_per_y": -0.16516160046383524,
-    "line_residual_rms_px": 0.9471132481221746,
-    "p90_local_width_px": 3.9409502613771563,
+  "source": "Sanitized diagnostics from geometric-report-retest-15pct.json (SHA-256 dc2adde4b8230f6d588f879e9740c77422e113506751030253998512acb74d61)",
+  "left_pi_pose_7": {
+    "line_slope_x_per_y": -0.055976703993731225,
+    "line_residual_rms_px": 1.7825373872075911,
+    "p90_local_width_px": 5.279578726800764,
     "raw_max_gap_px": 54.0,
-    "strict_unexplained_gap_limit_px": 29.980338427734374,
-    "projected_checker_pitch_px_median": 50.85596170262985,
+    "strict_unexplained_gap_limit_px": 32.29398801269531,
+    "projected_checker_pitch_px_median": 46.18931152525486,
     "checker_gap_rejection_counts": {
-      "ridge_response_not_low": 2
+      "noncoherent_endpoints": 2
     }
   }
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import itertools
 import json
 import math
 import os
@@ -48,6 +49,8 @@ BOARD_TO_SCANNER_AT_REFERENCE = np.array(
 )
 PNP_BOARD_FRAME_ADJUSTMENTS = {
     "identity": np.eye(3, dtype=float),
+    "rotate_180_about_board_x": np.diag([1.0, -1.0, -1.0]),
+    "rotate_180_about_board_y": np.diag([-1.0, 1.0, -1.0]),
     "rotate_180_about_board_normal": np.diag([-1.0, -1.0, 1.0]),
 }
 
@@ -384,6 +387,25 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
                 raise CalibrationError(
                     f"{name} reference_axis_position_mm is required"
                 )
+            scale = camera.get("carriage_scale_mm_per_commanded_mm")
+            if scale is not None:
+                try:
+                    scale = float(scale)
+                except (TypeError, ValueError):
+                    scale = math.nan
+                if (
+                    not math.isfinite(scale)
+                    or scale <= 0
+                    or not math.isclose(
+                        scale,
+                        float(np.linalg.norm(direction)),
+                        rel_tol=1e-6,
+                        abs_tol=1e-6,
+                    )
+                ):
+                    raise CalibrationError(
+                        f"{name} carriage scale is inconsistent with carriage direction"
+                    )
 
     for side in ("left", "right"):
         plane = calibration.get("laser_planes", {}).get(side, {})
@@ -1315,12 +1337,6 @@ class GeometricCalibrationService:
             )
             self._set_phase("extrinsics", step, 50)
             camera.update(self._calibrate_camera_extrinsics(name, views[name], camera, options))
-            if name == "usb":
-                camera.update(
-                    carriage_axis="z",
-                    carriage_direction=[0.0, 0.0, 1.0],
-                    reference_axis_position_mm=float(self._reference_pose["z"]),
-                )
             with self._lock:
                 self._status["metrics"][name] = copy.deepcopy(camera["quality"])
         return calibration
@@ -1822,7 +1838,8 @@ class GeometricCalibrationService:
                 raise CalibrationError(
                     f"{name} PnP board-frame adjustment would reflect handedness"
                 )
-            candidates = []
+            raw_candidates = []
+            candidate_views = []
             for view in views:
                 board_to_camera = view.get("board_to_camera")
                 if board_to_camera is None:
@@ -1847,19 +1864,52 @@ class GeometricCalibrationService:
                     raise CalibrationError(
                         f"{name} PnP transform must be finite, rigid, and right-handed"
                     )
+                # All candidates rotate around the centered board origin; translations
+                # are unchanged, and reflections are forbidden above.
                 observed[:3, :3] = observed_rotation @ adjustment
                 scanner_from_board = self._board_to_scanner(view["pose"])
                 candidate = scanner_from_board @ np.linalg.inv(observed)
-                if name == "usb":
-                    reference_z = float(self._reference_pose["z"])
-                    candidate[:3, 3] -= np.array(
-                        [0.0, 0.0, float(view["pose"]["z"]) - reference_z]
-                    )
-                candidates.append(candidate)
-            if len(candidates) < minimum:
+                raw_candidates.append(candidate)
+                candidate_views.append(view)
+            if len(raw_candidates) < minimum:
                 raise CalibrationError(
                     f"{name} extrinsics have insufficient valid PnP views"
                 )
+            carriage_fit = None
+            candidates = [candidate.copy() for candidate in raw_candidates]
+            if name == "usb":
+                try:
+                    carriage_fit = self._fit_usb_carriage(
+                        candidate_views,
+                        raw_candidates,
+                        minimum=minimum,
+                    )
+                except CalibrationError as exc:
+                    fits[adjustment_name] = {
+                        "translation_rms_mm": 1.0e12,
+                        "rotation_rms_deg": 1.0e12,
+                        "candidate_residuals": [],
+                        "robust_pnp_inliers": 0,
+                        "translation_slopes_mm_per_commanded_mm": {
+                            "observable": False,
+                            "error": str(exc),
+                        },
+                        "carriage_fit": {
+                            "accepted": False,
+                            "error": str(exc),
+                        },
+                        "accepted": False,
+                        "score": 1.0e12,
+                    }
+                    continue
+                carriage_vector = np.asarray(
+                    carriage_fit["vector_mm_per_commanded_mm"], dtype=float
+                )
+                for candidate, view in zip(candidates, candidate_views):
+                    delta_z = float(view["pose"]["z"]) - float(
+                        self._reference_pose["z"]
+                    )
+                    candidate[:3, 3] -= carriage_vector * delta_z
             (
                 transform,
                 translation_rms,
@@ -1867,22 +1917,93 @@ class GeometricCalibrationService:
                 candidate_residuals,
             ) = self._robust_average_transforms(candidates)
             inliers = sum(item["inlier"] for item in candidate_residuals)
+            if name == "usb" and carriage_fit is not None:
+                combined_inliers = np.asarray(
+                    [
+                        regression_inlier and residual["inlier"]
+                        for regression_inlier, residual in zip(
+                            carriage_fit["inlier_mask"], candidate_residuals
+                        )
+                    ],
+                    dtype=bool,
+                )
+                if int(combined_inliers.sum()) >= max(minimum, 4):
+                    try:
+                        refit = self._fit_usb_carriage(
+                            candidate_views,
+                            raw_candidates,
+                            minimum=minimum,
+                            eligible=combined_inliers,
+                        )
+                    except CalibrationError as exc:
+                        carriage_fit["accepted"] = False
+                        carriage_fit["refit_error"] = str(exc)
+                    else:
+                        carriage_fit = refit
+                        carriage_vector = np.asarray(
+                            carriage_fit["vector_mm_per_commanded_mm"], dtype=float
+                        )
+                        candidates = [
+                            candidate.copy() for candidate in raw_candidates
+                        ]
+                        for candidate, view in zip(candidates, candidate_views):
+                            delta_z = float(view["pose"]["z"]) - float(
+                                self._reference_pose["z"]
+                            )
+                            candidate[:3, 3] -= carriage_vector * delta_z
+                        (
+                            transform,
+                            translation_rms,
+                            rotation_rms,
+                            candidate_residuals,
+                        ) = self._robust_average_transforms(candidates)
+                        inliers = sum(
+                            item["inlier"] for item in candidate_residuals
+                        )
+            translation_slopes = self._translation_slope_diagnostics(
+                candidate_views,
+                candidates,
+                np.asarray(
+                    [item["inlier"] for item in candidate_residuals], dtype=bool
+                ),
+            )
+            carriage_accepted = bool(
+                carriage_fit is None or carriage_fit["accepted"]
+            )
+            score = (
+                translation_rms / max_translation
+                + rotation_rms / max_rotation
+                + max(0, minimum - inliers)
+            )
+            if carriage_fit is not None:
+                score += (
+                    abs(float(carriage_fit["scale_mm_per_commanded_mm"]) - 1.0)
+                    / float(carriage_fit["scale_tolerance_fraction"])
+                    + float(carriage_fit["vertical_alignment_deg"])
+                    / float(carriage_fit["maximum_vertical_alignment_deg"])
+                    + min(
+                        float(carriage_fit["design_condition_number"])
+                        / float(carriage_fit["maximum_design_condition_number"]),
+                        10.0,
+                    )
+                )
+                if not carriage_accepted:
+                    score += 100.0
             fits[adjustment_name] = {
                 "transform": transform,
                 "translation_rms_mm": translation_rms,
                 "rotation_rms_deg": rotation_rms,
                 "candidate_residuals": candidate_residuals,
                 "robust_pnp_inliers": inliers,
+                "translation_slopes_mm_per_commanded_mm": translation_slopes,
+                "carriage_fit": carriage_fit,
                 "accepted": (
                     inliers >= minimum
                     and translation_rms <= max_translation
                     and rotation_rms <= max_rotation
+                    and carriage_accepted
                 ),
-                "score": (
-                    translation_rms / max_translation
-                    + rotation_rms / max_rotation
-                    + max(0, minimum - inliers)
-                ),
+                "score": score,
             }
         accepted_fits = [
             adjustment_name
@@ -1905,8 +2026,22 @@ class GeometricCalibrationService:
                     sort_keys=True,
                 )
             )
+        evaluable_fits = [
+            adjustment_name
+            for adjustment_name, fit in fits.items()
+            if "transform" in fit
+        ]
+        if not evaluable_fits:
+            raise CalibrationError(
+                f"{name} PnP board-frame candidates could not be evaluated; candidates "
+                + json.dumps(
+                    fit_diagnostics,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
         selected_adjustment = min(
-            accepted_fits or fits,
+            accepted_fits or evaluable_fits,
             key=lambda adjustment_name: fits[adjustment_name]["score"],
         )
         selected_fit = fits[selected_adjustment]
@@ -1953,6 +2088,16 @@ class GeometricCalibrationService:
                     sort_keys=True,
                 )
             )
+        if name == "usb" and not selected_fit["carriage_fit"]["accepted"]:
+            raise CalibrationError(
+                "usb carriage Z fit is outside scale, vertical alignment, or "
+                "observability limits; PnP board-frame candidates "
+                + json.dumps(
+                    fit_diagnostics,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
         quality = dict(camera["quality"])
         quality.update(
             extrinsic_translation_rms_mm=translation_rms,
@@ -1973,26 +2118,258 @@ class GeometricCalibrationService:
                 selected_adjustment
             ].tolist(),
             pnp_board_frame_candidate_fits=fit_diagnostics,
+            translation_slopes_mm_per_commanded_mm=selected_fit[
+                "translation_slopes_mm_per_commanded_mm"
+            ],
         )
-        return {"camera_to_scanner": transform.tolist(), "quality": quality}
+        result = {"camera_to_scanner": transform.tolist(), "quality": quality}
+        if name == "usb":
+            carriage_fit = selected_fit["carriage_fit"]
+            quality["carriage_fit"] = copy.deepcopy(
+                {
+                    key: value
+                    for key, value in carriage_fit.items()
+                    if key != "inlier_mask"
+                }
+            )
+            result.update(
+                carriage_axis="z",
+                carriage_direction=copy.deepcopy(
+                    carriage_fit["vector_mm_per_commanded_mm"]
+                ),
+                carriage_scale_mm_per_commanded_mm=float(
+                    carriage_fit["scale_mm_per_commanded_mm"]
+                ),
+                reference_axis_position_mm=float(self._reference_pose["z"]),
+            )
+        return result
+
+    def _fit_usb_carriage(
+        self,
+        views: list[dict],
+        candidates: list[np.ndarray],
+        *,
+        minimum: int,
+        eligible: np.ndarray | None = None,
+    ) -> dict[str, Any]:
+        regression = self._robust_translation_regression(
+            views,
+            candidates,
+            minimum=4,
+            eligible=eligible,
+        )
+        vector = np.asarray(regression["coefficients"][3], dtype=float)
+        scale = float(np.linalg.norm(vector))
+        vertical_alignment = (
+            math.degrees(
+                math.acos(np.clip(abs(float(vector[2])) / scale, 0.0, 1.0))
+            )
+            if scale > 1e-12
+            else math.inf
+        )
+        scale_tolerance = float(
+            self._config.get("usb_z_scale_tolerance_fraction", 0.15)
+        )
+        maximum_vertical_alignment = float(
+            self._config.get("maximum_usb_z_vertical_alignment_deg", 10.0)
+        )
+        maximum_condition = float(
+            self._config.get("maximum_carriage_fit_condition_number", 50.0)
+        )
+        if not all(
+            math.isfinite(value) and value > 0
+            for value in (
+                scale_tolerance,
+                maximum_vertical_alignment,
+                maximum_condition,
+            )
+        ):
+            raise CalibrationError(
+                "USB carriage fit tolerances must be finite and positive"
+            )
+        accepted = (
+            regression["observable"]
+            and int(regression["inlier_mask"].sum()) >= minimum
+            and abs(scale - 1.0) <= scale_tolerance
+            and vertical_alignment <= maximum_vertical_alignment
+            and regression["design_condition_number"] <= maximum_condition
+        )
+        return {
+            "accepted": bool(accepted),
+            "vector_mm_per_commanded_mm": vector.tolist(),
+            "scale_mm_per_commanded_mm": scale,
+            "signed_vertical_scale_mm_per_commanded_mm": float(vector[2]),
+            "vertical_alignment_deg": vertical_alignment,
+            "maximum_vertical_alignment_deg": maximum_vertical_alignment,
+            "scale_tolerance_fraction": scale_tolerance,
+            "design_condition_number": regression["design_condition_number"],
+            "maximum_design_condition_number": maximum_condition,
+            "regression_inliers": int(regression["inlier_mask"].sum()),
+            "regression_samples": len(views),
+            "inlier_mask": regression["inlier_mask"].tolist(),
+        }
+
+    def _robust_translation_regression(
+        self,
+        views: list[dict],
+        candidates: list[np.ndarray],
+        *,
+        minimum: int,
+        eligible: np.ndarray | None = None,
+    ) -> dict[str, Any]:
+        if len(views) != len(candidates):
+            raise CalibrationError("translation regression views and candidates differ")
+        deltas = np.asarray(
+            [
+                [
+                    float(view["pose"][axis]) - float(self._reference_pose[axis])
+                    for axis in ("x", "y", "z")
+                ]
+                for view in views
+            ],
+            dtype=float,
+        )
+        design = np.column_stack((np.ones(len(deltas)), deltas))
+        translations = np.asarray(
+            [candidate[:3, 3] for candidate in candidates], dtype=float
+        )
+        allowed = (
+            np.ones(len(views), dtype=bool)
+            if eligible is None
+            else np.asarray(eligible, dtype=bool)
+        )
+        allowed_indexes = np.flatnonzero(allowed)
+        if len(allowed_indexes) < minimum:
+            raise CalibrationError(
+                "USB carriage motion is not observable from enough PnP views"
+            )
+
+        best_coefficients = None
+        best_score = math.inf
+        subset_size = 4
+        subsets = itertools.combinations(allowed_indexes.tolist(), subset_size)
+        for subset in subsets:
+            subset_indexes = np.asarray(subset, dtype=int)
+            subset_design = design[subset_indexes]
+            if np.linalg.matrix_rank(subset_design) < 4:
+                continue
+            coefficients, _, _, _ = np.linalg.lstsq(
+                subset_design, translations[subset_indexes], rcond=None
+            )
+            residuals = np.linalg.norm(
+                translations[allowed] - design[allowed] @ coefficients, axis=1
+            )
+            keep = max(minimum, int(math.ceil(0.7 * len(residuals))))
+            score = float(
+                np.sqrt(np.mean(np.square(np.partition(residuals, keep - 1)[:keep])))
+            )
+            if score < best_score:
+                best_score = score
+                best_coefficients = coefficients
+        if best_coefficients is None:
+            raise CalibrationError(
+                "USB carriage motion is not independently observable from X/Y motion"
+            )
+
+        all_residuals = np.linalg.norm(
+            translations - design @ best_coefficients, axis=1
+        )
+        _, residual_mask, _ = self._robust_rms(
+            all_residuals[allowed].tolist(), minimum_cutoff=0.5
+        )
+        inlier_mask = np.zeros(len(views), dtype=bool)
+        inlier_mask[allowed_indexes] = residual_mask
+        if int(inlier_mask.sum()) < minimum:
+            raise CalibrationError(
+                "USB carriage fit retains insufficient robust PnP inliers"
+            )
+        coefficients, _, rank, _ = np.linalg.lstsq(
+            design[inlier_mask], translations[inlier_mask], rcond=None
+        )
+        feature_spread = np.std(deltas[inlier_mask], axis=0)
+        if bool(np.any(feature_spread <= 1e-9)):
+            condition = math.inf
+        else:
+            standardized = (
+                deltas[inlier_mask] - np.mean(deltas[inlier_mask], axis=0)
+            ) / feature_spread
+            condition = float(
+                np.linalg.cond(
+                    np.column_stack((np.ones(int(inlier_mask.sum())), standardized))
+                )
+            )
+        return {
+            "coefficients": coefficients,
+            "inlier_mask": inlier_mask,
+            "design_condition_number": condition,
+            "observable": int(rank) == 4 and math.isfinite(condition),
+        }
+
+    def _translation_slope_diagnostics(
+        self,
+        views: list[dict],
+        candidates: list[np.ndarray],
+        inliers: np.ndarray,
+    ) -> dict[str, Any]:
+        try:
+            regression = self._robust_translation_regression(
+                views,
+                candidates,
+                minimum=4,
+                eligible=inliers,
+            )
+        except CalibrationError as exc:
+            return {"observable": False, "error": str(exc)}
+        coefficients = np.asarray(regression["coefficients"], dtype=float)
+        diagnostics = {
+            "observable": bool(regression["observable"]),
+            "design_condition_number": regression["design_condition_number"],
+        }
+        diagnostics.update(
+            {
+                command_axis: {
+                    scanner_axis: round(
+                        float(coefficients[index, scanner_index]), 6
+                    )
+                    for scanner_index, scanner_axis in enumerate(
+                        ("scanner_x", "scanner_y", "scanner_z")
+                    )
+                }
+                for index, command_axis in enumerate(
+                    ("commanded_x", "commanded_y", "commanded_z"), start=1
+                )
+            }
+        )
+        return diagnostics
 
     @staticmethod
     def _extrinsic_fit_diagnostics(
         fits: Mapping[str, Mapping[str, Any]],
     ) -> dict[str, dict[str, Any]]:
-        return {
-            name: {
+        diagnostics = {}
+        for name, fit in fits.items():
+            diagnostics[name] = {
                 key: copy.deepcopy(fit[key])
                 for key in (
                     "translation_rms_mm",
                     "rotation_rms_deg",
                     "robust_pnp_inliers",
+                    "translation_slopes_mm_per_commanded_mm",
                     "accepted",
                     "score",
                 )
             }
-            for name, fit in fits.items()
-        }
+            carriage_fit = fit["carriage_fit"]
+            diagnostics[name]["carriage_fit"] = (
+                None
+                if carriage_fit is None
+                else {
+                    key: copy.deepcopy(value)
+                    for key, value in carriage_fit.items()
+                    if key != "inlier_mask"
+                }
+            )
+        return diagnostics
 
     def _validate_x_scale(self) -> dict:
         self._set_phase("x-scale", "Validating X scale and repeatability", 60)
@@ -2145,7 +2522,10 @@ class GeometricCalibrationService:
         transform = np.asarray(camera["camera_to_scanner"], dtype=float).copy()
         if camera_name == "usb":
             reference = float(camera.get("reference_axis_position_mm", pose["z"]))
-            transform[:3, 3] += np.array([0.0, 0.0, pose["z"] - reference])
+            carriage_direction = np.asarray(
+                camera.get("carriage_direction", [0.0, 0.0, 1.0]), dtype=float
+            )
+            transform[:3, 3] += carriage_direction * (pose["z"] - reference)
         origin = transform[:3, 3]
         board_transform = self._board_to_scanner(pose)
         plane_point = board_transform[:3, 3]

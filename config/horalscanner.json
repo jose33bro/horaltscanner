@@ -101,7 +101,10 @@
       "maximum_x_repeatability_mm": 3,
       "y_angular_scale_tolerance_fraction": 0.08,
       "maximum_axis_fit_rotation_rms_deg": 2,
-      "minimum_axis_direction_score_ratio": 2
+      "minimum_axis_direction_score_ratio": 2,
+      "usb_z_scale_tolerance_fraction": 0.15,
+      "maximum_usb_z_vertical_alignment_deg": 10,
+      "maximum_carriage_fit_condition_number": 50
     }
   },
   "slicer": {

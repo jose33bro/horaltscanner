@@ -119,6 +119,31 @@
   ],
   "sources": {
     "coherence": "geometric-report-pr110-live.json (SHA-256 fbb46399b29f1556ce7326dc8d429d38137d95471eec0d7987024751a829b490)",
-    "response": "geometric-report-pr111-live.json (SHA-256 ac54c2a5cb821994924036179ad977cd717908a2be54c7c6018b7ecc8de1413e)"
+    "response": "geometric-report-pr111-live.json (SHA-256 ac54c2a5cb821994924036179ad977cd717908a2be54c7c6018b7ecc8de1413e)",
+    "jpeg_spatial": "pose6-24deg-ambient.jpg (SHA-256 1511da4c6d4eca6f415c2c828cd9f58e4a0cf69ee96dba1154bdc8a35412ccca) + pose6-24deg-left.jpg (SHA-256 cd0fe6c9bc7865c927a8277057bb07257accc23ffa4e026921564bed3316309a)"
+  },
+  "jpeg_pose6_gap_evidence": {
+    "registration_correlation": 0.984559,
+    "registration_translation_px": [0.024556, -0.003079],
+    "line_residual_rms_px": 0.447454,
+    "p90_local_width_px": 3.298057,
+    "gaps": [
+      {
+        "raw_gap_px": 50,
+        "qualified_center_rows": 1,
+        "qualified_off_axis_rows": 47,
+        "off_axis_signed_offset_px_p50": 12,
+        "checker_column_distance_px_p50": 2.43,
+        "checker_column_distance_px_p90": 2.56
+      },
+      {
+        "raw_gap_px": 48,
+        "qualified_center_rows": 1,
+        "qualified_off_axis_rows": 45,
+        "off_axis_signed_offset_px_p50": 21,
+        "checker_column_distance_px_p50": 1.77,
+        "checker_column_distance_px_p90": 1.93
+      }
+    ]
   }
 }

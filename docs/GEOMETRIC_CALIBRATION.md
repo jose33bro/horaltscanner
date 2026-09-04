@@ -159,7 +159,12 @@ centerline. An off-axis peak counts as a competitor only when its own co-located
 response is comparably strong, sharp, and chromatic for at least three
 consecutive rows. Isolated or stronger grayscale checker artifacts therefore
 cannot mask a real centerline, while shifted, broad-halo, and competing ridges
-remain rejected. Adjacent segments must span at least 35% of the local projected
+remain rejected. In the gap-only path, an off-axis run is explained as a checker
+edge only when it remains on one projected checker column for three rows, the
+ambient edge has the existing minimum checker contrast, the response is within
+the unchanged 2 px geometry residual, and that column lies beyond the existing
+line-width core. A nearby ridge that does not track the checker edge remains a
+competitor. Adjacent segments must span at least 35% of the local projected
 pitch, which keeps sparse stubs out while supporting perspective-shortened edge
 segments. Non-checker gaps,
 two-square gaps, segment jumps, reflections, and edge-only hits are recorded and

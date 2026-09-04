@@ -351,6 +351,16 @@ def _checker_row_crossings(
     return np.sort(np.asarray(crossings, dtype=float))
 
 
+def _checker_column_lines(corner_grid: np.ndarray) -> list[np.ndarray]:
+    lines = []
+    for checker_column in np.swapaxes(corner_grid, 0, 1):
+        coefficients = np.polyfit(
+            checker_column[:, 1], checker_column[:, 0], 1
+        )
+        lines.append(np.asarray(coefficients, dtype=float))
+    return lines
+
+
 def _sample_along_line(
     image: np.ndarray,
     coefficients: np.ndarray,
@@ -416,6 +426,7 @@ def _classify_checker_gaps(
     gaps = np.diff(line_rows)
     raw_max_gap = float(np.max(gaps)) if len(gaps) else math.inf
     crossings = _checker_row_crossings(corner_grid, coefficients)
+    checker_column_lines = _checker_column_lines(corner_grid)
     vertical_pitches = np.diff(crossings)
     vertical_pitches = vertical_pitches[vertical_pitches > row_stride]
     path_scale = math.hypot(1.0, float(coefficients[0]))
@@ -602,7 +613,8 @@ def _classify_checker_gaps(
                     int(math.floor(missing_stop)),
                 )
                 centered_rows = []
-                competing_rows = []
+                competing_candidates = []
+                checker_edge_rows: dict[int, set[int]] = {}
                 response_threshold = minimum_prominence * 0.9
                 for row in range(first_row, last_row + 1):
                     center = int(round(float(np.polyval(paired_coefficients, row))))
@@ -665,38 +677,117 @@ def _classify_checker_gaps(
                         if core_index is not None
                         else 0.0
                     )
-                    off_axis_index = (
-                        int(
-                            qualified_off_axis[
-                                int(
-                                    np.argmax(
-                                        responses[qualified_off_axis]
-                                    )
-                                )
-                            ]
+                    off_axis_groups = (
+                        np.split(
+                            qualified_off_axis,
+                            np.flatnonzero(
+                                np.diff(qualified_off_axis) > 1
+                            )
+                            + 1,
                         )
                         if len(qualified_off_axis)
-                        else None
+                        else []
                     )
-                    off_axis_peak = (
-                        float(responses[off_axis_index])
-                        if off_axis_index is not None
-                        else 0.0
-                    )
+                    off_axis_candidates = [
+                        int(
+                            group[
+                                int(np.argmax(responses[group]))
+                            ]
+                        )
+                        for group in off_axis_groups
+                        if len(group)
+                    ]
                     centered_ridge = core_index is not None
                     if centered_ridge:
                         centered_rows.append(row)
-                    if off_axis_index is not None:
+                    for off_axis_index in off_axis_candidates:
+                        off_axis_peak = float(
+                            responses[off_axis_index]
+                        )
                         competing_ridge = (
                             not centered_ridge
                             or off_axis_peak
                             >= core_peak * ambiguity_ratio
                         )
                         if competing_ridge:
-                            competing_rows.append(row)
+                            off_axis_column = left + off_axis_index
+                            checker_edge = None
+                            checker_edge_distance = math.inf
+                            for column_index, column_line in enumerate(
+                                checker_column_lines
+                            ):
+                                projected_column = float(
+                                    np.polyval(column_line, row)
+                                )
+                                search_start = max(
+                                    1,
+                                    int(math.floor(projected_column))
+                                    - core_radius,
+                                )
+                                search_stop = min(
+                                    ambient_luminance.shape[1] - 2,
+                                    int(math.ceil(projected_column))
+                                    + core_radius,
+                                )
+                                if search_stop < search_start:
+                                    continue
+                                edge_columns = np.arange(
+                                    search_start, search_stop + 1
+                                )
+                                edge_gradients = np.abs(
+                                    ambient_luminance[
+                                        row, edge_columns + 1
+                                    ]
+                                    - ambient_luminance[
+                                        row, edge_columns - 1
+                                    ]
+                                )
+                                refined_column = int(
+                                    edge_columns[
+                                        int(np.argmax(edge_gradients))
+                                    ]
+                                )
+                                edge_contrast = float(
+                                    np.max(edge_gradients)
+                                )
+                                distance = abs(
+                                    off_axis_column - refined_column
+                                )
+                                if (
+                                    abs(projected_column - center)
+                                    > core_radius
+                                    and edge_contrast >= minimum_contrast
+                                    and distance <= maximum_residual
+                                    and distance < checker_edge_distance
+                                ):
+                                    checker_edge = column_index
+                                    checker_edge_distance = distance
+                            competing_candidates.append(
+                                (row, checker_edge)
+                            )
+                            if checker_edge is not None:
+                                checker_edge_rows.setdefault(
+                                    checker_edge, set()
+                                ).add(row)
                 centered_groups = _contiguous_row_groups(
                     np.asarray(centered_rows, dtype=float), 1
                 )
+                explained_checker_edge_pairs = set()
+                for edge_index, edge_rows in checker_edge_rows.items():
+                    for group in _contiguous_row_groups(
+                        np.asarray(list(edge_rows), dtype=float), 1
+                    ):
+                        if len(group) >= 3:
+                            explained_checker_edge_pairs.update(
+                                (int(row), edge_index)
+                                for row in group
+                            )
+                competing_rows = [
+                    row
+                    for row, edge in competing_candidates
+                    if (row, edge)
+                    not in explained_checker_edge_pairs
+                ]
                 competing_groups = _contiguous_row_groups(
                     np.asarray(competing_rows, dtype=float), 1
                 )
@@ -709,7 +800,10 @@ def _classify_checker_gaps(
                     default=0,
                 )
                 if (
-                    maximum_centered_run < 3
+                    (
+                        maximum_centered_run < 3
+                        and not explained_checker_edge_pairs
+                    )
                     or maximum_competing_run >= 3
                 ):
                     reject("ridge_response_not_low")

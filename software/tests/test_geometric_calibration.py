@@ -1011,7 +1011,32 @@ class CalibrationMathTests(unittest.TestCase):
                         int(math.ceil(gap_start)),
                         int(math.floor(gap_stop)) + 1,
                     ):
-                        center = float(np.polyval(coefficients, row)) + 12.0
+                        line_center = float(
+                            np.polyval(coefficients, row)
+                        )
+                        checker_cell_centers = (
+                            90.0 + 20.0 * np.arange(10)
+                        )
+                        eligible_centers = checker_cell_centers[
+                            (np.abs(checker_cell_centers - line_center) > 6.0)
+                            & (
+                                np.abs(
+                                    checker_cell_centers - line_center
+                                )
+                                <= 24.0
+                            )
+                        ]
+                        center = float(
+                            eligible_centers[
+                                int(
+                                    np.argmin(
+                                        np.abs(
+                                            eligible_centers - line_center
+                                        )
+                                    )
+                                )
+                            ]
+                        )
                         columns = np.arange(width, dtype=float)
                         shifted = np.exp(
                             -0.5 * np.square((columns - center) / 1.4)
@@ -1048,6 +1073,175 @@ class CalibrationMathTests(unittest.TestCase):
                 self.assertEqual(competing["bridged_checker_gaps"], 0)
                 self.assertEqual(
                     set(competing["checker_gap_rejection_counts"]),
+                    {"ridge_response_not_low"},
+                )
+
+    def test_jpeg_derived_checker_column_artifact_is_not_a_competing_ridge(self):
+        report = json.loads(
+            RIDGE_BRIDGE_REPORT_FIXTURE.read_text(encoding="utf-8")
+        )
+        evidence = report["jpeg_pose6_gap_evidence"]
+        case = next(
+            item
+            for item in report["left_pi_response"]
+            if item["pose_index"] == 6
+        )
+        pitch = float(case["projected_checker_pitch_px_median"])
+        boundaries = 20.0 + pitch * np.arange(6)
+        checker_columns = 80.0 + 20.0 * np.arange(11)
+        corner_grid = np.asarray(
+            [
+                [
+                    [column, boundary]
+                    for column in checker_columns
+                ]
+                for boundary in boundaries
+            ],
+            dtype=float,
+        )
+        rows = np.arange(
+            math.ceil(boundaries[0]),
+            math.floor(boundaries[-1]) + 1,
+            2,
+            dtype=float,
+        )
+        height, width = 340, 420
+        for cell, gap in zip((1, 3), evidence["gaps"]):
+            with self.subTest(raw_gap_px=gap["raw_gap_px"]):
+                lower = float(rows[rows < boundaries[cell]][-1])
+                upper = lower + float(gap["raw_gap_px"])
+                missing = (rows > lower) & (rows < upper)
+                selected_rows = rows[~missing]
+                curvature = np.square(
+                    selected_rows - float(np.mean(selected_rows))
+                )
+                curvature -= np.polyval(
+                    np.polyfit(selected_rows, curvature, 1),
+                    selected_rows,
+                )
+                curvature *= evidence["line_residual_rms_px"] / float(
+                    np.sqrt(np.mean(np.square(curvature)))
+                )
+                selected_columns = (
+                    case["line_slope_x_per_y"] * selected_rows
+                    + 200.0
+                    + curvature
+                )
+                selected = np.column_stack(
+                    (selected_columns, selected_rows)
+                )
+                coefficients = np.polyfit(
+                    selected_rows, selected_columns, 1
+                )
+                ambient = np.full((height, width), 130.0, dtype=float)
+                top = int(round(boundaries[cell]))
+                bottom = int(round(boundaries[cell + 1]))
+                ambient[
+                    top:bottom, : int(checker_columns[6])
+                ] = 30.0
+
+                def classify(*, add_competitor):
+                    ridge = np.zeros((height, width), dtype=float)
+                    fine = np.zeros((height, width), dtype=float)
+                    chromatic = np.zeros((height, width), dtype=float)
+                    columns = np.arange(width, dtype=float)
+                    for row in range(
+                        max(
+                            int(math.ceil(lower + 2.0)),
+                            int(math.ceil(boundaries[cell] + 2.0)),
+                        ),
+                        min(
+                            int(math.floor(upper - 2.0)),
+                            int(
+                                math.floor(
+                                    boundaries[cell + 1] - 2.0
+                                )
+                            ),
+                        )
+                        + 1,
+                    ):
+                        checker_edge_profile = np.exp(
+                            -0.5
+                            * np.square(
+                                (
+                                    columns
+                                    - checker_columns[6]
+                                )
+                                / 1.4
+                            )
+                        )
+                        ridge[row] = checker_edge_profile * 120.0
+                        fine[row] = checker_edge_profile * 70.0
+                        chromatic[row] = (
+                            checker_edge_profile * 100.0
+                        )
+                        if add_competitor:
+                            competing_profile = np.exp(
+                                -0.5
+                                * np.square(
+                                    (
+                                        columns
+                                        - (checker_columns[6] + 6.0)
+                                    )
+                                    / 0.4
+                                )
+                            )
+                            ridge[row] = np.maximum(
+                                ridge[row],
+                                competing_profile * 110.0,
+                            )
+                            fine[row] = np.maximum(
+                                fine[row],
+                                competing_profile * 70.0,
+                            )
+                            chromatic[row] = np.maximum(
+                                chromatic[row],
+                                competing_profile * 100.0,
+                            )
+                    return _classify_checker_gaps(
+                        corner_grid=corner_grid,
+                        selected=selected,
+                        coefficients=coefficients,
+                        row_stride=2,
+                        strict_gap_limit=case[
+                            "strict_unexplained_gap_limit_px"
+                        ],
+                        maximum_residual=2.0,
+                        maximum_width=12.0,
+                        minimum_prominence=16.0,
+                        minimum_chromatic_support=7.0,
+                        minimum_sharpness_ratio=0.2,
+                        ambiguity_ratio=0.75,
+                        ridge_response=ridge,
+                        fine_response=fine,
+                        chromatic_response=chromatic,
+                        ambient_luminance=ambient,
+                        reference_luminance=130.0,
+                    )
+
+                explained = classify(add_competitor=False)
+                self.assertEqual(
+                    explained["bridged_checker_gaps"], 1, explained
+                )
+                self.assertEqual(
+                    explained["checker_gap_rejection_counts"], {}
+                )
+
+                edge_adjacent_competitor = classify(
+                    add_competitor=True
+                )
+                self.assertEqual(
+                    edge_adjacent_competitor[
+                        "bridged_checker_gaps"
+                    ],
+                    0,
+                )
+                self.assertEqual(
+                    set(
+                        edge_adjacent_competitor[
+                            "checker_gap_rejection_counts"
+                        ]
+                    ),
                     {"ridge_response_not_low"},
                 )
 

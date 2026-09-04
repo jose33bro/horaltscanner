@@ -1,31 +1,58 @@
 {
-  "schema_version": 2,
-  "source": "Sanitized diagnostics from geometric-report-pr109-280mm.json (SHA-256 9a55e1991f07a4af66caf364ec8f9be4824631cdece4e3a533daa5e09f78bb39)",
-  "left_pi": [
+  "schema_version": 3,
+  "source": "Sanitized diagnostics from geometric-report-pr110-live.json (SHA-256 fbb46399b29f1556ce7326dc8d429d38137d95471eec0d7987024751a829b490)",
+  "left_pi_response": [
+    {
+      "pose_index": 0,
+      "gap_cells": [1, 3],
+      "line_slope_x_per_y": -0.12251494075098761,
+      "line_residual_rms_px": 0.5141551654694778,
+      "p90_local_width_px": 3.0791680760405487,
+      "raw_max_gap_px": 52.0,
+      "strict_unexplained_gap_limit_px": 27.705050756835934,
+      "projected_checker_pitch_px_median": 49.213595970083354,
+      "checker_gap_rejection_counts": {
+        "ridge_response_not_low": 2
+      }
+    },
+    {
+      "pose_index": 1,
+      "gap_cells": [1, 3],
+      "line_slope_x_per_y": -0.12230588679056094,
+      "line_residual_rms_px": 0.405321593279337,
+      "p90_local_width_px": 3.303393176952284,
+      "raw_max_gap_px": 52.0,
+      "strict_unexplained_gap_limit_px": 27.722600024414064,
+      "projected_checker_pitch_px_median": 49.25634827185013,
+      "checker_gap_rejection_counts": {
+        "ridge_response_not_low": 2
+      }
+    }
+  ],
+  "left_pi_coherence": [
     {
       "pose_index": 6,
-      "line_slope_x_per_y": -0.05545470220351425,
-      "line_residual_rms_px": 1.7812307439760668,
-      "p90_local_width_px": 4.812071149472787,
-      "raw_max_gap_px": 54.0,
-      "strict_unexplained_gap_limit_px": 32.298666210937505,
-      "projected_checker_pitch_px_median": 46.33684186427385,
-      "observed_line_segments": 3,
-      "sufficiently_long_line_segments": 2,
+      "gap_cells": [1, 3],
+      "line_slope_x_per_y": -0.09689959941540369,
+      "line_residual_rms_px": 0.43426268199795265,
+      "p90_local_width_px": 3.367441110506275,
+      "raw_max_gap_px": 50.0,
+      "strict_unexplained_gap_limit_px": 32.24814235839844,
+      "projected_checker_pitch_px_median": 46.26245739642723,
       "checker_gap_rejection_counts": {
-        "noncoherent_endpoints": 2
+        "noncoherent_endpoints": 1,
+        "ridge_response_not_low": 1
       }
     },
     {
       "pose_index": 7,
-      "line_slope_x_per_y": -0.059673787146239686,
-      "line_residual_rms_px": 1.6383967469967906,
-      "p90_local_width_px": 5.1932491270390875,
-      "raw_max_gap_px": 54.0,
-      "strict_unexplained_gap_limit_px": 32.29860424804687,
-      "projected_checker_pitch_px_median": 46.314678666536444,
-      "observed_line_segments": 3,
-      "sufficiently_long_line_segments": 3,
+      "gap_cells": [1, 3],
+      "line_slope_x_per_y": -0.09736527387571149,
+      "line_residual_rms_px": 0.4592295752556019,
+      "p90_local_width_px": 3.5180962876971993,
+      "raw_max_gap_px": 50.0,
+      "strict_unexplained_gap_limit_px": 32.23781865234375,
+      "projected_checker_pitch_px_median": 46.25700605365492,
       "checker_gap_rejection_counts": {
         "noncoherent_endpoints": 1,
         "ridge_response_not_low": 1

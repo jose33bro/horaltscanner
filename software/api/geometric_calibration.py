@@ -601,9 +601,8 @@ def _classify_checker_gaps(
                     ridge_response.shape[0] - 1,
                     int(math.floor(missing_stop)),
                 )
-                evaluated_rows = max(last_row - first_row + 1, 0)
-                active_rows = 0
-                centered_rows = 0
+                centered_rows = []
+                competing_rows = []
                 response_threshold = minimum_prominence * 0.9
                 for row in range(first_row, last_row + 1):
                     center = int(round(float(np.polyval(paired_coefficients, row))))
@@ -624,38 +623,94 @@ def _classify_checker_gaps(
                     off_axis_indexes = np.flatnonzero(offsets > core_radius)
                     if not len(core_indexes):
                         continue
-                    core_index = int(
-                        core_indexes[
-                            int(np.argmax(responses[core_indexes]))
-                        ]
+                    candidate_columns = left + np.arange(len(responses))
+                    fine_values = np.asarray(
+                        fine_response[row, candidate_columns],
+                        dtype=float,
                     )
-                    core_peak = float(responses[core_index])
-                    off_axis_peak = (
-                        float(np.max(responses[off_axis_indexes]))
-                        if len(off_axis_indexes)
+                    chromatic_values = np.asarray(
+                        chromatic_response[row, candidate_columns],
+                        dtype=float,
+                    )
+                    qualified = (
+                        (responses >= response_threshold)
+                        & (
+                            fine_values
+                            >= responses * minimum_sharpness_ratio
+                        )
+                        & (
+                            chromatic_values
+                            >= minimum_chromatic_support * 0.5
+                        )
+                    )
+                    qualified_core = core_indexes[qualified[core_indexes]]
+                    qualified_off_axis = off_axis_indexes[
+                        qualified[off_axis_indexes]
+                    ]
+                    core_index = (
+                        int(
+                            qualified_core[
+                                int(
+                                    np.argmax(
+                                        responses[qualified_core]
+                                    )
+                                )
+                            ]
+                        )
+                        if len(qualified_core)
+                        else None
+                    )
+                    core_peak = (
+                        float(responses[core_index])
+                        if core_index is not None
                         else 0.0
                     )
-                    if max(core_peak, off_axis_peak) < response_threshold:
-                        continue
-                    active_rows += 1
-                    peak_column = left + core_index
-                    if (
-                        core_peak < response_threshold
-                        or float(fine_response[row, peak_column])
-                        < core_peak * minimum_sharpness_ratio
-                        or float(chromatic_response[row, peak_column])
-                        < minimum_chromatic_support * 0.5
-                        or off_axis_peak >= core_peak * ambiguity_ratio
-                    ):
-                        continue
-                    centered_rows += 1
-                minimum_centered_rows = max(
-                    3, int(math.ceil(evaluated_rows * 0.2))
+                    off_axis_index = (
+                        int(
+                            qualified_off_axis[
+                                int(
+                                    np.argmax(
+                                        responses[qualified_off_axis]
+                                    )
+                                )
+                            ]
+                        )
+                        if len(qualified_off_axis)
+                        else None
+                    )
+                    off_axis_peak = (
+                        float(responses[off_axis_index])
+                        if off_axis_index is not None
+                        else 0.0
+                    )
+                    centered_ridge = core_index is not None
+                    if centered_ridge:
+                        centered_rows.append(row)
+                    if off_axis_index is not None:
+                        competing_ridge = (
+                            not centered_ridge
+                            or off_axis_peak
+                            >= core_peak * ambiguity_ratio
+                        )
+                        if competing_ridge:
+                            competing_rows.append(row)
+                centered_groups = _contiguous_row_groups(
+                    np.asarray(centered_rows, dtype=float), 1
                 )
-                centered_fraction = centered_rows / max(active_rows, 1)
+                competing_groups = _contiguous_row_groups(
+                    np.asarray(competing_rows, dtype=float), 1
+                )
+                maximum_centered_run = max(
+                    (len(group) for group in centered_groups),
+                    default=0,
+                )
+                maximum_competing_run = max(
+                    (len(group) for group in competing_groups),
+                    default=0,
+                )
                 if (
-                    centered_rows < minimum_centered_rows
-                    or centered_fraction < ambiguity_ratio
+                    maximum_centered_run < 3
+                    or maximum_competing_run >= 3
                 ):
                     reject("ridge_response_not_low")
                     continue

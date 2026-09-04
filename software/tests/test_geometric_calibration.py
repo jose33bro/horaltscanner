@@ -922,7 +922,7 @@ class CalibrationMathTests(unittest.TestCase):
                         int(math.ceil(gap_start)),
                         int(math.floor(gap_stop)) + 1,
                     )
-                    artifact_rows = set(gap_rows[::5].tolist())
+                    artifact_rows = set(gap_rows[::4].tolist())
                     if len(gap_rows) > 1:
                         artifact_rows.add(int(gap_rows[1]))
                     artifact_fractions.append(
@@ -937,6 +937,15 @@ class CalibrationMathTests(unittest.TestCase):
                         ridge_response[row] = centered * 24.0
                         fine_response[row] = centered * 15.0
                         chromatic_response[row] = centered * 9.0
+                        grayscale = np.exp(
+                            -0.5
+                            * np.square(
+                                (columns - (center + 4.0)) / 1.0
+                            )
+                        )
+                        ridge_response[row] = np.maximum(
+                            ridge_response[row], grayscale * 30.0
+                        )
                         if int(row) in artifact_rows:
                             shifted = np.exp(
                                 -0.5
@@ -970,14 +979,18 @@ class CalibrationMathTests(unittest.TestCase):
                 )
 
                 self.assertEqual(
-                    case["checker_gap_rejection_counts"],
-                    {"ridge_response_not_low": 2},
+                    set(case["checker_gap_rejection_counts"]),
+                    {"ridge_response_not_low"},
+                )
+                self.assertEqual(
+                    sum(case["checker_gap_rejection_counts"].values()),
+                    len(case["gap_cells"]),
                 )
                 self.assertTrue(
-                    all(fraction > 0.2 for fraction in artifact_fractions)
+                    all(fraction > 0.25 for fraction in artifact_fractions)
                 )
                 self.assertTrue(
-                    all(fraction < 0.25 for fraction in artifact_fractions)
+                    all(fraction < 0.3 for fraction in artifact_fractions)
                 )
                 self.assertEqual(
                     diagnostic["bridged_checker_gaps"],
@@ -988,6 +1001,54 @@ class CalibrationMathTests(unittest.TestCase):
                 )
                 self.assertGreater(
                     diagnostic["checker_gap_response_p90_max"], 16.0
+                )
+
+                competing_ridge = ridge_response.copy()
+                competing_fine = fine_response.copy()
+                competing_chromatic = chromatic_response.copy()
+                for gap_start, gap_stop in gap_bounds:
+                    for row in range(
+                        int(math.ceil(gap_start)),
+                        int(math.floor(gap_stop)) + 1,
+                    ):
+                        center = float(np.polyval(coefficients, row)) + 12.0
+                        columns = np.arange(width, dtype=float)
+                        shifted = np.exp(
+                            -0.5 * np.square((columns - center) / 1.4)
+                        )
+                        competing_ridge[row] = np.maximum(
+                            competing_ridge[row], shifted * 23.0
+                        )
+                        competing_fine[row] = np.maximum(
+                            competing_fine[row], shifted * 15.0
+                        )
+                        competing_chromatic[row] = np.maximum(
+                            competing_chromatic[row], shifted * 9.0
+                        )
+                competing = _classify_checker_gaps(
+                    corner_grid=corner_grid,
+                    selected=selected,
+                    coefficients=coefficients,
+                    row_stride=2,
+                    strict_gap_limit=case[
+                        "strict_unexplained_gap_limit_px"
+                    ],
+                    maximum_residual=2.0,
+                    maximum_width=12.0,
+                    minimum_prominence=16.0,
+                    minimum_chromatic_support=7.0,
+                    minimum_sharpness_ratio=0.2,
+                    ambiguity_ratio=0.75,
+                    ridge_response=competing_ridge,
+                    fine_response=competing_fine,
+                    chromatic_response=competing_chromatic,
+                    ambient_luminance=ambient,
+                    reference_luminance=130.0,
+                )
+                self.assertEqual(competing["bridged_checker_gaps"], 0)
+                self.assertEqual(
+                    set(competing["checker_gap_rejection_counts"]),
+                    {"ridge_response_not_low"},
                 )
 
     @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")

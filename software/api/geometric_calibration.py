@@ -374,8 +374,6 @@ def _sample_line_band_max(
     start_row: float,
     stop_row: float,
     radius: int,
-    *,
-    inner_radius: int | None = None,
 ) -> np.ndarray:
     height, width = image.shape[:2]
     first = max(0, int(math.ceil(min(start_row, stop_row))))
@@ -389,12 +387,7 @@ def _sample_line_band_max(
         left = max(0, int(center) - radius)
         right = min(width, int(center) + radius + 1)
         if right > left:
-            columns = np.arange(left, right)
-            values = np.asarray(image[row, left:right], dtype=float)
-            if inner_radius is not None:
-                values = values[np.abs(columns - int(center)) > inner_radius]
-            if len(values):
-                maxima.append(float(np.max(values)))
+            maxima.append(float(np.max(image[row, left:right])))
     return np.asarray(maxima, dtype=float)
 
 
@@ -410,6 +403,7 @@ def _classify_checker_gaps(
     minimum_prominence: float,
     minimum_chromatic_support: float,
     minimum_sharpness_ratio: float,
+    ambiguity_ratio: float,
     ridge_response: np.ndarray,
     fine_response: np.ndarray,
     chromatic_response: np.ndarray,
@@ -513,13 +507,30 @@ def _classify_checker_gaps(
                 np.sqrt(np.mean(np.square(paired_residuals)))
             )
             left_count = left_segment["stop"] - left_segment["start"]
-            endpoint_residuals = (
-                abs(float(paired_residuals[left_count - 1])),
-                abs(float(paired_residuals[left_count])),
+            per_segment_pair_rms = (
+                float(
+                    np.sqrt(
+                        np.mean(
+                            np.square(paired_residuals[:left_count])
+                        )
+                    )
+                ),
+                float(
+                    np.sqrt(
+                        np.mean(
+                            np.square(paired_residuals[left_count:])
+                        )
+                    )
+                ),
+            )
+            segment_offset_difference = abs(
+                float(np.mean(paired_residuals[:left_count]))
+                - float(np.mean(paired_residuals[left_count:]))
             )
             if (
                 paired_rms > maximum_residual
-                or max(endpoint_residuals) > maximum_residual
+                or max(per_segment_pair_rms) > maximum_residual
+                or segment_offset_difference > maximum_residual
             ):
                 reject("noncoherent_endpoints")
                 continue
@@ -581,74 +592,71 @@ def _classify_checker_gaps(
                 or active_fraction > 0.2
             ):
                 core_radius = max(1, int(math.ceil(maximum_width * 0.5)))
-                core_response = _sample_line_band_max(
-                    ridge_response,
-                    paired_coefficients,
-                    missing_start,
-                    missing_stop,
-                    core_radius,
+                band_radius = max(
+                    core_radius + 1,
+                    int(math.ceil(maximum_width * 2.0)),
                 )
-                core_fine_response = _sample_line_band_max(
-                    fine_response,
-                    paired_coefficients,
-                    missing_start,
-                    missing_stop,
-                    core_radius,
+                first_row = max(0, int(math.ceil(missing_start)))
+                last_row = min(
+                    ridge_response.shape[0] - 1,
+                    int(math.floor(missing_stop)),
                 )
-                core_chromatic_response = _sample_line_band_max(
-                    chromatic_response,
-                    paired_coefficients,
-                    missing_start,
-                    missing_stop,
-                    core_radius,
-                )
-                off_axis_response = _sample_line_band_max(
-                    ridge_response,
-                    paired_coefficients,
-                    missing_start,
-                    missing_stop,
-                    max(core_radius + 1, int(math.ceil(maximum_width * 2.0))),
-                    inner_radius=core_radius,
-                )
-                if not all(
-                    len(values)
-                    for values in (
-                        core_response,
-                        core_fine_response,
-                        core_chromatic_response,
+                evaluated_rows = max(last_row - first_row + 1, 0)
+                active_rows = 0
+                centered_rows = 0
+                response_threshold = minimum_prominence * 0.9
+                for row in range(first_row, last_row + 1):
+                    center = int(round(float(np.polyval(paired_coefficients, row))))
+                    left = max(0, center - band_radius)
+                    right = min(
+                        ridge_response.shape[1],
+                        center + band_radius + 1,
                     )
+                    if right <= left:
+                        continue
+                    columns = np.arange(left, right)
+                    offsets = np.abs(columns - center)
+                    responses = np.asarray(
+                        ridge_response[row, left:right],
+                        dtype=float,
+                    )
+                    core_indexes = np.flatnonzero(offsets <= core_radius)
+                    off_axis_indexes = np.flatnonzero(offsets > core_radius)
+                    if not len(core_indexes):
+                        continue
+                    core_index = int(
+                        core_indexes[
+                            int(np.argmax(responses[core_indexes]))
+                        ]
+                    )
+                    core_peak = float(responses[core_index])
+                    off_axis_peak = (
+                        float(np.max(responses[off_axis_indexes]))
+                        if len(off_axis_indexes)
+                        else 0.0
+                    )
+                    if max(core_peak, off_axis_peak) < response_threshold:
+                        continue
+                    active_rows += 1
+                    peak_column = left + core_index
+                    if (
+                        core_peak < response_threshold
+                        or float(fine_response[row, peak_column])
+                        < core_peak * minimum_sharpness_ratio
+                        or float(chromatic_response[row, peak_column])
+                        < minimum_chromatic_support * 0.5
+                        or off_axis_peak >= core_peak * ambiguity_ratio
+                    ):
+                        continue
+                    centered_rows += 1
+                minimum_centered_rows = max(
+                    3, int(math.ceil(evaluated_rows * 0.2))
+                )
+                centered_fraction = centered_rows / max(active_rows, 1)
+                if (
+                    centered_rows < minimum_centered_rows
+                    or centered_fraction < ambiguity_ratio
                 ):
-                    reject("ridge_response_not_low")
-                    continue
-                core_p90 = float(np.percentile(core_response, 90))
-                fine_p90 = float(np.percentile(core_fine_response, 90))
-                chromatic_p90 = float(
-                    np.percentile(core_chromatic_response, 90)
-                )
-                off_axis_p90 = (
-                    float(np.percentile(off_axis_response, 90))
-                    if len(off_axis_response)
-                    else 0.0
-                )
-                off_axis_active = (
-                    float(np.mean(off_axis_response >= minimum_prominence))
-                    if len(off_axis_response)
-                    else 0.0
-                )
-                coherent_subthreshold_ridge = (
-                    core_p90 > minimum_prominence * 0.9
-                    and chromatic_p90 >= minimum_chromatic_support * 0.5
-                    and fine_p90
-                    >= core_p90 * minimum_sharpness_ratio
-                    and not (
-                        off_axis_p90 >= max(
-                            minimum_prominence * 0.9,
-                            core_p90 * 0.9,
-                        )
-                        and off_axis_active > 0.2
-                    )
-                )
-                if not coherent_subthreshold_ridge:
                     reject("ridge_response_not_low")
                     continue
 
@@ -1240,6 +1248,7 @@ def extract_laser_line_pixels(
         minimum_prominence=minimum_prominence,
         minimum_chromatic_support=minimum_chromatic_support,
         minimum_sharpness_ratio=minimum_sharpness_ratio,
+        ambiguity_ratio=ambiguity_ratio,
         ridge_response=ridge_response,
         fine_response=fine_response,
         chromatic_response=np.maximum(normalized_chromatic_delta, 0.0),

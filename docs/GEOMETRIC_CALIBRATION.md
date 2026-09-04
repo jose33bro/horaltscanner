@@ -143,19 +143,23 @@ discard isolated outlier rows or one short outlier segment. The strict unexplain
 gap limit remains unchanged. An interval bounded by consecutive
 perspective-projected checker rows may be bridged only when adjacent local line
 fits independently meet the unchanged 2 px residual limit. Their combined
-observed points must also fit one line within 2 px, including both nearest
-observed endpoints. That pairwise line—not either noisy short-segment slope—is
-used to intersect projected checker boundaries and sample the gap; no local
-slope is extrapolated across the unobserved cell. Alternating checker
+observed points and each segment relative to that line must also remain within
+2 px, and the two segments' mean offsets may differ by at most 2 px. This
+rejects a shifted segment without letting one checker-boundary localization
+sample veto an otherwise coherent ridge. That pairwise line—not either noisy
+short-segment slope—is used to intersect projected checker boundaries and
+sample the gap; no local slope is extrapolated across the unobserved cell.
+Alternating checker
 reflectance must confirm the dark cell from both neighboring cells. The missing
-cell may contain
-either low response
-or a centered, narrow, chromatic subthreshold ridge; off-axis responses,
-grayscale changes, broad halos, and competing ridges remain rejected. Adjacent
-segments must span at least 35% of the local projected pitch, which keeps sparse
-stubs out while supporting perspective-shortened edge segments. Non-checker
-gaps, two-square gaps, segment jumps, reflections, and edge-only hits are
-recorded and skipped. Compact
+cell may contain either low response or a centered, narrow, chromatic
+subthreshold ridge. That evidence is evaluated at one co-located peak per row;
+at least 20% of gap rows and 75% of response-active rows must support the
+centerline, while a comparable off-axis peak rejects that row. Off-axis
+responses, grayscale changes, broad halos, and competing ridges remain
+rejected. Adjacent segments must span at least 35% of the local projected pitch,
+which keeps sparse stubs out while supporting perspective-shortened edge
+segments. Non-checker gaps, two-square gaps, segment jumps, reflections, and
+edge-only hits are recorded and skipped. Compact
 per-view diagnostics report raw and unexplained maximum gaps, bridged checker
 gaps, projected pitch/limit aggregates, segment/outlier counts, raw candidate
 pixels, background-suppressed candidates, peak prominence, ambiguous rows, and

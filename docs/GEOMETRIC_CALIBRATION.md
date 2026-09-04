@@ -153,13 +153,17 @@ Alternating checker
 reflectance must confirm the dark cell from both neighboring cells. The missing
 cell may contain either low response or a centered, narrow, chromatic
 subthreshold ridge. That evidence is evaluated at one co-located peak per row;
-at least 20% of gap rows and 75% of response-active rows must support the
-centerline, while a comparable off-axis peak rejects that row. Off-axis
-responses, grayscale changes, broad halos, and competing ridges remain
-rejected. Adjacent segments must span at least 35% of the local projected pitch,
-which keeps sparse stubs out while supporting perspective-shortened edge
-segments. Non-checker gaps, two-square gaps, segment jumps, reflections, and
-edge-only hits are recorded and skipped. Compact
+the strongest qualified sharp/chromatic peak is selected rather than the
+strongest raw response. At least three consecutive rows must support the
+centerline. An off-axis peak counts as a competitor only when its own co-located
+response is comparably strong, sharp, and chromatic for at least three
+consecutive rows. Isolated or stronger grayscale checker artifacts therefore
+cannot mask a real centerline, while shifted, broad-halo, and competing ridges
+remain rejected. Adjacent segments must span at least 35% of the local projected
+pitch, which keeps sparse stubs out while supporting perspective-shortened edge
+segments. Non-checker gaps,
+two-square gaps, segment jumps, reflections, and edge-only hits are recorded and
+skipped. Compact
 per-view diagnostics report raw and unexplained maximum gaps, bridged checker
 gaps, projected pitch/limit aggregates, segment/outlier counts, raw candidate
 pixels, background-suppressed candidates, peak prominence, ambiguous rows, and

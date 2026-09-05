@@ -51,6 +51,7 @@
       "board_rows": 6,
       "square_size_mm": 13,
       "turntable_diameter_mm": 200,
+      "laser_sides_to_calibrate": ["left", "right"],
       "starting_pose_mm": {
         "x": 195,
         "y": 0,

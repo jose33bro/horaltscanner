@@ -149,7 +149,8 @@
         "normal": null,
         "offset_mm": null,
         "quality": null
-      }
+      },
+      "calibrated_sides": []
     },
     "turntable": {
       "center_mm": null,

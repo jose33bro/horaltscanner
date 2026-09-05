@@ -375,6 +375,38 @@ class CalibrationMathTests(unittest.TestCase):
         with self.assertRaisesRegex(CalibrationError, "laser plane is invalid"):
             validate_calibration_payload(payload)
 
+    def test_payload_allows_partial_calibration_for_declared_side_only(self):
+        payload = valid_calibration()
+        payload["laser_planes"]["right"] = {
+            "normal": None,
+            "offset_mm": None,
+            "quality": None,
+        }
+        payload["laser_planes"]["calibrated_sides"] = ["left"]
+
+        validate_calibration_payload(payload)
+
+    def test_payload_still_requires_both_sides_when_both_declared_calibrated(self):
+        payload = valid_calibration()
+        payload["laser_planes"]["right"] = {
+            "normal": None,
+            "offset_mm": None,
+            "quality": None,
+        }
+        payload["laser_planes"]["calibrated_sides"] = ["left", "right"]
+
+        with self.assertRaisesRegex(CalibrationError, "laser plane is invalid"):
+            validate_calibration_payload(payload)
+
+    def test_payload_rejects_empty_calibrated_sides(self):
+        payload = valid_calibration()
+        payload["laser_planes"]["calibrated_sides"] = []
+
+        with self.assertRaisesRegex(
+            CalibrationError, "at least one laser side must be calibrated"
+        ):
+            validate_calibration_payload(payload)
+
     @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
     def test_laser_extraction_ignores_off_board_reflections(self):
         ambient, laser, corners = self._synthetic_laser_images()
@@ -4036,6 +4068,100 @@ class CalibrationServiceTests(unittest.TestCase):
 
         self.assertEqual(len(raised.exception.quality["per_pose_residuals"]), 3)
         self.assertEqual(raised.exception.quality["views"], 3)
+
+    def test_resolve_laser_sides_defaults_to_both_and_honors_config(self):
+        self.assertEqual(self.service._resolve_laser_sides(None), ["left", "right"])
+        self.assertEqual(
+            self.service._resolve_laser_sides({"laser_sides": ["right"]}), ["right"]
+        )
+        self.service._config["laser_sides_to_calibrate"] = ["left"]
+        self.assertEqual(self.service._resolve_laser_sides(None), ["left"])
+        with self.assertRaisesRegex(CalibrationError, "laser_sides"):
+            self.service._resolve_laser_sides({"laser_sides": ["front"]})
+        with self.assertRaisesRegex(CalibrationError, "laser_sides"):
+            self.service._resolve_laser_sides({"laser_sides": []})
+
+    def test_calibrate_lasers_restricts_acquisition_to_selected_side(self):
+        poses = [
+            {"x": 195.0, "y": 0.0, "z": 20.0},
+            {"x": 185.0, "y": 10.0, "z": 30.0},
+            {"x": 175.0, "y": 20.0, "z": 40.0},
+        ]
+        self.service._move_to = lambda _pose: None
+        self.service._capture = lambda _name: b"jpeg"
+        pose_index = {pose["x"]: index for index, pose in enumerate(poses)}
+
+        def extract(_name, _side, _ambient, _laser, pose, _calibration, **_kwargs):
+            x = float(pose_index[pose["x"]] * 10)
+            return {
+                "points": [[x, float(index), 0.0] for index in range(15)],
+                "diagnostic": {"accepted": True, "reason": None},
+            }
+
+        self.service._laser_board_points = extract
+        views = {
+            name: [
+                {"pose": dict(pose), "corners": np.zeros((66, 2))}
+                for pose in poses
+            ]
+            for name in ("pi", "usb")
+        }
+
+        result = self.service._calibrate_lasers(
+            poses, {"cameras": {}}, checkerboard_views=views, laser_sides=["left"]
+        )
+
+        self.assertIn("left", result)
+        self.assertNotIn("right", result)
+        self.assertEqual(result["calibrated_sides"], ["left"])
+        self.assertTrue(any(call == ("on", "left") for call in self.gpio.calls))
+        self.assertFalse(any(call == ("on", "right") for call in self.gpio.calls))
+        status = self.service.status()
+        self.assertEqual(len(status["laser_views"]["left"]["pi"]), 3)
+        self.assertEqual(len(status["laser_views"]["right"]["pi"]), 0)
+
+    def test_merge_laser_planes_preserves_untouched_side(self):
+        previous = {
+            "laser_planes": {
+                "right": {
+                    "normal": [0.0, 1.0, 0.0],
+                    "offset_mm": -15.0,
+                    "quality": {"accepted": True},
+                },
+            }
+        }
+        self.service._get_current_calibration = lambda: previous
+        new_planes = {
+            "left": {
+                "normal": [1.0, 0.0, 0.0],
+                "offset_mm": -20.0,
+                "quality": {"accepted": True},
+            },
+            "calibrated_sides": ["left"],
+        }
+
+        merged = self.service._merge_laser_planes(new_planes)
+
+        self.assertEqual(merged["left"]["offset_mm"], -20.0)
+        self.assertEqual(merged["right"]["offset_mm"], -15.0)
+        self.assertEqual(sorted(merged["calibrated_sides"]), ["left", "right"])
+
+    def test_merge_laser_planes_leaves_never_calibrated_side_null(self):
+        self.service._get_current_calibration = lambda: {}
+        new_planes = {
+            "left": {
+                "normal": [1.0, 0.0, 0.0],
+                "offset_mm": -20.0,
+                "quality": {"accepted": True},
+            },
+            "calibrated_sides": ["left"],
+        }
+
+        merged = self.service._merge_laser_planes(new_planes)
+
+        self.assertIsNone(merged["right"]["normal"])
+        self.assertIsNone(merged["right"]["offset_mm"])
+        self.assertEqual(merged["calibrated_sides"], ["left"])
 
     def test_unverified_usb_laser_path_never_replaces_or_blocks_pi_plane(self):
         poses = [

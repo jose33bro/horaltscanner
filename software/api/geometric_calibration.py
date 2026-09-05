@@ -1684,7 +1684,7 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
     for side in ("left", "right"):
         if side not in calibrated_sides:
             continue
-        plane = calibration.get("laser_planes", {}).get(side, {})
+        plane = laser_planes_payload.get(side, {})
         normal = np.asarray(plane.get("normal"), dtype=float)
         if (
             normal.shape != (3,)

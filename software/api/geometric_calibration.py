@@ -2703,6 +2703,8 @@ class GeometricCalibrationService:
             calibration["x_scale_validation"] = self._validate_x_scale()
             calibration["turntable"] = self._turntable_calibration()
             laser_sides = readiness["laser_sides"]
+            if not laser_sides:
+                raise CalibrationError("no laser side selected for calibration")
             calibration["laser_planes"] = self._merge_laser_planes(
                 self._calibrate_lasers(
                     poses, calibration, views, laser_sides=laser_sides
@@ -5101,12 +5103,30 @@ class GeometricCalibrationService:
                 if isinstance(existing, Mapping)
                 else {"normal": None, "offset_mm": None, "quality": None}
             )
+        new_calibrated_sides = {
+            side for side in new_planes.get("calibrated_sides", []) or []
+            if side in self.LASER_SIDES
+        }
+        previous_calibrated_sides_raw = previous_planes.get("calibrated_sides")
+        if isinstance(previous_calibrated_sides_raw, (list, tuple)):
+            previous_calibrated_sides = {
+                side
+                for side in previous_calibrated_sides_raw
+                if side in self.LASER_SIDES
+            }
+        else:
+            # Legacy persisted calibration predating this metadata: infer
+            # which untouched sides were already calibrated from populated
+            # plane data instead of trusting missing metadata.
+            previous_calibrated_sides = {
+                side
+                for side in self.LASER_SIDES
+                if side not in new_planes
+                and merged[side].get("normal") is not None
+                and merged[side].get("offset_mm") is not None
+            }
         merged["calibrated_sides"] = sorted(
-            side
-            for side in self.LASER_SIDES
-            if isinstance(merged.get(side), Mapping)
-            and merged[side].get("normal") is not None
-            and merged[side].get("offset_mm") is not None
+            new_calibrated_sides | previous_calibrated_sides
         )
         return merged
 
@@ -5117,10 +5137,13 @@ class GeometricCalibrationService:
         checkerboard_views: Mapping[str, list[dict]] | None = None,
         laser_sides: list[str] | None = None,
     ) -> dict:
+        # Side resolution (request options vs. config default) happens once,
+        # in `_resolve_laser_sides`/`readiness`, before `_worker` calls this
+        # method with an explicit `laser_sides`. When called without one
+        # (e.g. directly in tests) default to both sides rather than
+        # re-resolving from config, to keep a single source of truth.
         active_sides = (
-            list(laser_sides)
-            if laser_sides is not None
-            else self._resolve_laser_sides(None)
+            list(laser_sides) if laser_sides is not None else list(self.LASER_SIDES)
         )
         self._set_phase(
             "laser-planes",

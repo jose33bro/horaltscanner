@@ -1669,11 +1669,17 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
 
     laser_planes_payload = calibration.get("laser_planes", {})
     calibrated_sides = laser_planes_payload.get("calibrated_sides")
-    if not isinstance(calibrated_sides, (list, tuple)) or not calibrated_sides:
+    if calibrated_sides is None:
         # Legacy/full payloads without explicit metadata require both sides,
         # preserving prior strict behavior.
         calibrated_sides = ("left", "right")
-    if not any(side in ("left", "right") for side in calibrated_sides):
+    elif not isinstance(calibrated_sides, (list, tuple)):
+        raise CalibrationError("calibrated_sides must be a list of laser sides")
+    elif not all(side in ("left", "right") for side in calibrated_sides):
+        raise CalibrationError(
+            "calibrated_sides must only contain 'left' and/or 'right'"
+        )
+    if not calibrated_sides:
         raise CalibrationError("at least one laser side must be calibrated")
     for side in ("left", "right"):
         if side not in calibrated_sides:
@@ -5372,7 +5378,7 @@ class GeometricCalibrationService:
                     self._status["metrics"][f"laser_{side}"] = copy.deepcopy(
                         quality
                     )
-                raise CalibrationError(f"Laser '{side}' failed: plane consensus failed: {exc}") from exc
+                raise CalibrationError(f"Laser '{side}' plane consensus failed: {exc}") from exc
             quality.update(
                 primary_camera="pi",
                 camera_views=len(accepted_pose_indexes[side]["pi"]),

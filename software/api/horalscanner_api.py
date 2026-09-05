@@ -1369,6 +1369,7 @@ def _geometric_calibration_options(data):
         raise ValueError("calibration request must be a JSON object")
     start = data.get("starting_pose_mm", data.get("start_pose"))
     lidar = data.get("lidar", data.get("lidar_measurements"))
+    laser_sides = data.get("laser_sides")
     result = {}
 
     def finite_vector(value, label, keys=None):
@@ -1399,6 +1400,16 @@ def _geometric_calibration_options(data):
         }
         if not math.isfinite(result["lidar"]["reference_z_mm"]):
             raise ValueError("TF-Luna reference_z_mm must be finite")
+    if laser_sides is not None:
+        if (
+            not isinstance(laser_sides, (list, tuple))
+            or not laser_sides
+            or not all(side in ("left", "right") for side in laser_sides)
+        ):
+            raise ValueError(
+                "laser_sides must be a non-empty list containing 'left' and/or 'right'"
+            )
+        result["laser_sides"] = list(dict.fromkeys(laser_sides))
     return result
 
 

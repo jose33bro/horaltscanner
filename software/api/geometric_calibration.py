@@ -1667,7 +1667,17 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
                         f"{name} carriage scale is inconsistent with carriage direction"
                     )
 
+    laser_planes_payload = calibration.get("laser_planes", {})
+    calibrated_sides = laser_planes_payload.get("calibrated_sides")
+    if not isinstance(calibrated_sides, (list, tuple)) or not calibrated_sides:
+        # Legacy/full payloads without explicit metadata require both sides,
+        # preserving prior strict behavior.
+        calibrated_sides = ("left", "right")
+    if not any(side in ("left", "right") for side in calibrated_sides):
+        raise CalibrationError("at least one laser side must be calibrated")
     for side in ("left", "right"):
+        if side not in calibrated_sides:
+            continue
         plane = calibration.get("laser_planes", {}).get(side, {})
         normal = np.asarray(plane.get("normal"), dtype=float)
         if (
@@ -2332,6 +2342,8 @@ class GeometricCalibrationService:
         "complete",
     )
 
+    LASER_SIDES = ("left", "right")
+
     def __init__(
         self,
         *,
@@ -2424,6 +2436,35 @@ class GeometricCalibrationService:
         with self._lock:
             return self._active
 
+    def _resolve_laser_sides(
+        self, options: Mapping[str, Any] | None
+    ) -> list[str]:
+        """Resolve which laser side(s) should be calibrated this run.
+
+        Explicit ``laser_sides`` in the request options take precedence over
+        the ``laser_sides_to_calibrate`` config default, allowing left/right
+        lasers to be calibrated sequentially and independently.
+        """
+        requested = (options or {}).get("laser_sides")
+        if requested is None:
+            requested = self._config.get(
+                "laser_sides_to_calibrate", list(self.LASER_SIDES)
+            )
+        if not isinstance(requested, (list, tuple)) or not requested:
+            raise CalibrationError(
+                "laser_sides must be a non-empty list containing 'left' "
+                "and/or 'right'"
+            )
+        sides: list[str] = []
+        for side in requested:
+            if side not in self.LASER_SIDES:
+                raise CalibrationError(
+                    f"laser_sides contains an invalid entry: {side!r}"
+                )
+            if side not in sides:
+                sides.append(side)
+        return sides
+
     def readiness(
         self,
         options: Mapping[str, Any] | None = None,
@@ -2431,6 +2472,11 @@ class GeometricCalibrationService:
         probe_devices: bool = False,
     ) -> dict:
         blockers: list[str] = []
+        try:
+            laser_sides = self._resolve_laser_sides(options)
+        except CalibrationError as exc:
+            laser_sides = []
+            blockers.append(str(exc))
         if self._cv is None:
             blockers.append("OpenCV is required for geometric calibration")
         if (
@@ -2558,7 +2604,11 @@ class GeometricCalibrationService:
                 "TF-Luna measured origin_mm and direction are required; the beam transform "
                 "is not fully observable from range readings alone"
             )
-        return {"ready": not blockers, "blockers": blockers}
+        return {
+            "ready": not blockers,
+            "blockers": blockers,
+            "laser_sides": laser_sides,
+        }
 
     def preflight(self, options: Mapping[str, Any] | None = None) -> dict:
         """Probe required devices under the shared lock without commanding motion."""
@@ -2646,8 +2696,11 @@ class GeometricCalibrationService:
             calibration["checkerboard"] = self._board_contract()
             calibration["x_scale_validation"] = self._validate_x_scale()
             calibration["turntable"] = self._turntable_calibration()
-            calibration["laser_planes"] = self._calibrate_lasers(
-                poses, calibration, views
+            laser_sides = readiness["laser_sides"]
+            calibration["laser_planes"] = self._merge_laser_planes(
+                self._calibrate_lasers(
+                    poses, calibration, views, laser_sides=laser_sides
+                )
             )
             calibration["lidar"] = self._calibrate_lidar(poses, calibration, options["lidar"])
             self._set_phase("validation", "Validating all numeric and residual checks", 92)
@@ -5014,13 +5067,60 @@ class GeometricCalibrationService:
             },
         }
 
+    def _merge_laser_planes(self, new_planes: Mapping[str, Any]) -> dict:
+        """Merge freshly-fit laser plane(s) with any previously persisted side.
+
+        This allows the left and right lasers to be calibrated sequentially
+        in separate runs: a run that only calibrates ``left`` keeps the
+        previously persisted ``right`` plane (or leaves it null if it has
+        never been calibrated) instead of wiping it out.
+        """
+        previous: Mapping[str, Any] = {}
+        if self._get_current_calibration is not None:
+            try:
+                previous = self._get_current_calibration() or {}
+            except Exception:
+                previous = {}
+        previous_planes = previous.get("laser_planes")
+        if not isinstance(previous_planes, Mapping):
+            previous_planes = {}
+        merged: dict[str, Any] = {}
+        for side in self.LASER_SIDES:
+            if side in new_planes:
+                merged[side] = copy.deepcopy(new_planes[side])
+                continue
+            existing = previous_planes.get(side)
+            merged[side] = (
+                copy.deepcopy(dict(existing))
+                if isinstance(existing, Mapping)
+                else {"normal": None, "offset_mm": None, "quality": None}
+            )
+        merged["calibrated_sides"] = sorted(
+            side
+            for side in self.LASER_SIDES
+            if isinstance(merged.get(side), Mapping)
+            and merged[side].get("normal") is not None
+            and merged[side].get("offset_mm") is not None
+        )
+        return merged
+
     def _calibrate_lasers(
         self,
         poses: list[dict[str, float]],
         calibration: Mapping[str, Any],
         checkerboard_views: Mapping[str, list[dict]] | None = None,
+        laser_sides: list[str] | None = None,
     ) -> dict:
-        self._set_phase("laser-planes", "Fitting left and right laser planes", 68)
+        active_sides = (
+            list(laser_sides)
+            if laser_sides is not None
+            else self._resolve_laser_sides(None)
+        )
+        self._set_phase(
+            "laser-planes",
+            "Fitting " + " and ".join(active_sides) + " laser plane(s)",
+            68,
+        )
         samples: dict[str, dict[str, list[list[float]]]] = {
             side: {name: [] for name in ("pi", "usb")}
             for side in ("left", "right")
@@ -5084,7 +5184,7 @@ class GeometricCalibrationService:
                         "camera 'usb' has no verified matched-photometry "
                         "capture path"
                     )
-                    for side in ("left", "right"):
+                    for side in active_sides:
                         self._laser(side, True)
                         try:
                             self._sleep_interruptible(
@@ -5208,7 +5308,7 @@ class GeometricCalibrationService:
         minimum_orientations = int(
             self._config.get("minimum_laser_board_orientations", 3)
         )
-        for side in ("left", "right"):
+        for side in active_sides:
             pi_poses = [
                 poses[index]
                 for index in sorted(accepted_pose_indexes[side]["pi"])
@@ -5239,9 +5339,9 @@ class GeometricCalibrationService:
                         sufficiency
                     )
                 raise CalibrationError(
-                    f"{side} laser has insufficient valid Pi-camera checkerboard "
-                    f"intersections: {len(samples[side]['pi'])} points, "
-                    f"{len(pi_poses)} poses, "
+                    f"Laser '{side}' failed: insufficient valid Pi-camera "
+                    f"checkerboard intersections: {len(samples[side]['pi'])} "
+                    f"points, {len(pi_poses)} poses, "
                     f"{orientation_count} independent orientations; requires "
                     f"{minimum_points} points, {minimum_views} poses, "
                     f"{minimum_orientations} orientations"
@@ -5272,7 +5372,7 @@ class GeometricCalibrationService:
                     self._status["metrics"][f"laser_{side}"] = copy.deepcopy(
                         quality
                     )
-                raise CalibrationError(f"{side} laser plane consensus failed: {exc}") from exc
+                raise CalibrationError(f"Laser '{side}' failed: plane consensus failed: {exc}") from exc
             quality.update(
                 primary_camera="pi",
                 camera_views=len(accepted_pose_indexes[side]["pi"]),
@@ -5288,8 +5388,8 @@ class GeometricCalibrationService:
                         quality
                     )
                 raise CalibrationError(
-                    f"{side} laser plane RMS {quality['rms_mm']:.2f}mm exceeds "
-                    f"{maximum_rms:.2f}mm"
+                    f"Laser '{side}' failed: plane RMS {quality['rms_mm']:.2f}mm "
+                    f"exceeds {maximum_rms:.2f}mm"
                 )
             usb_poses = [
                 poses[index]
@@ -5334,6 +5434,7 @@ class GeometricCalibrationService:
             }
             with self._lock:
                 self._status["metrics"][f"laser_{side}"] = copy.deepcopy(quality)
+        result["calibrated_sides"] = list(active_sides)
         return result
 
     def _record_laser_pose_consensus(

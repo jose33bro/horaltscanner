@@ -9,6 +9,8 @@ modèle sont documentées dans
 
 - `hardware/cad/pi_camera_tilt_mount/stl/pi_camera_tilt_base.stl`
 - `hardware/cad/pi_camera_tilt_mount/stl/fit_test_rear_cavity_30.45x38.2.stl`
+- `hardware/cad/pi_camera_tilt_mount/stl/adjustment_rod_M5x50_ball6.5_square_m3.stl`
+- `hardware/cad/pi_camera_tilt_mount/stl/wheel_crank_50mm_square_m3.stl`
 
 ## Fonction mécanique
 
@@ -21,7 +23,7 @@ modèle sont documentées dans
 - La plaque verticale porte un trou M5 centré entre les oreilles, à 22,00 mm du
   haut pour la fixation mécanique.
 - La partie tablette de 24,00 mm reçoit un passage central pour la nappe
-  CSI/DSI, orienté vers l'avant depuis le centre.
+  CSI, orienté vers l'avant depuis le centre.
 
 ## Assemblage
 
@@ -75,5 +77,5 @@ python3 hardware/cad/pi_camera_tilt_mount/generate.py
 ```
 
 ## Notes
-- La commande régénère `pi_camera_tilt_base.stl` et le test d'encombrement;
-  elle ne génère pas les autres STL de ce répertoire.
+- La commande régénère les quatre STL listés ci-dessus : la base, le test
+  d'encombrement, la tige d'ajustement et la roue/crank.

@@ -1,0 +1,16 @@
+# CI/test-only dependencies (non-Raspberry Pi runners).
+# Kept as the single source of truth for the package set installed by both
+# .github/workflows/ci.yml and .github/workflows/copilot-setup-steps.yml.
+pytest
+pytest-cov
+flask
+flask-cors
+pydantic
+requests
+numpy
+scipy
+pyyaml
+python-dateutil
+pyserial
+pillow
+opencv-python-headless

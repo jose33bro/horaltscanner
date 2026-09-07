@@ -11,7 +11,9 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
   avant la base;
 - `stl/adjustment_rod_M5x50_ball6.5_square_m3.stl` : tige d'ajustement M5
   sur 50 mm, bille Ø 6,5 mm côté caméra et carré côté roue/plateau, avec trou
-  M3 central dans le carré.
+  M3 central dans le carré;
+- `stl/wheel_crank_50mm_square_m3.stl` : roue/crank de 50 mm de diamètre avec
+  carré de montage et trou M3 central pour serrage sur plaque de 3 mm.
 
 Les autres fichiers STL éventuellement présents dans ce répertoire ne sont pas
 générés par `generate.py`.

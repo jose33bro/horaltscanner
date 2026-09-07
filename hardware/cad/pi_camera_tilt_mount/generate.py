@@ -53,6 +53,11 @@ BALL_SHANK_LENGTH = 8.00
 DRIVE_SQUARE_WIDTH = 5.00
 DRIVE_SQUARE_LENGTH = 10.00
 M3_CLEARANCE_DIAMETER = 3.20
+WHEEL_DIAMETER = 50.00
+WHEEL_THICKNESS = 6.00
+WHEEL_HUB_WIDTH = 8.00
+WHEEL_HUB_LENGTH = 10.00
+WHEEL_HUB_M3_CLEARANCE_DIAMETER = 3.20
 
 
 def make_box(
@@ -291,6 +296,32 @@ def make_adjustment_rod() -> TopoDS_Shape:
     return cut(fuse(rod, ball, drive_square), drive_hole)
 
 
+def make_wheel_crank() -> TopoDS_Shape:
+    wheel = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(0, 0, 0),
+            gp_Dir(0, 0, 1),
+        ),
+        WHEEL_DIAMETER / 2,
+        WHEEL_THICKNESS,
+    ).Shape()
+    hub = make_box(
+        WHEEL_HUB_WIDTH,
+        WHEEL_HUB_WIDTH,
+        WHEEL_HUB_LENGTH,
+        z=-(WHEEL_HUB_LENGTH / 2),
+    )
+    hub_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(0, 0, -(WHEEL_HUB_LENGTH / 2)),
+            gp_Dir(0, 0, 1),
+        ),
+        WHEEL_HUB_M3_CLEARANCE_DIAMETER / 2,
+        WHEEL_HUB_LENGTH + 2,
+    ).Shape()
+    return cut(fuse(wheel, hub), hub_hole)
+
+
 def make_fit_test() -> TopoDS_Shape:
     return make_box(PLATE_WIDTH, MATERIAL_THICKNESS, PLATE_HEIGHT)
 
@@ -308,3 +339,4 @@ if __name__ == "__main__":
     export_model(make_mount(), "pi_camera_tilt_base.stl")
     export_model(make_fit_test(), "fit_test_rear_cavity_30.45x38.2.stl")
     export_model(make_adjustment_rod(), "adjustment_rod_M5x50_ball6.5_square_m3.stl")
+    export_model(make_wheel_crank(), "wheel_crank_50mm_square_m3.stl")

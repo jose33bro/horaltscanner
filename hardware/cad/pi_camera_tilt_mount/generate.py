@@ -28,6 +28,10 @@ LOWER_RAIL_DROP = 5.00
 LOWER_RAIL_OVERLAP = 0.50
 LOWER_RAIL_FRONT_CUT_DEPTH = 3.00
 
+CABLE_PASSAGE_WIDTH = 12.00
+CABLE_PASSAGE_HEIGHT = 5.00
+CABLE_PASSAGE_Y_OFFSET = 8.00
+
 EAR_PROJECTION = 8.70
 EAR_WIDTH = 8.50
 EAR_GAP = 5.33
@@ -139,6 +143,13 @@ def make_mount() -> TopoDS_Shape:
         y=shelf_front_y + (LOWER_RAIL_FRONT_CUT_DEPTH / 2),
         z=-LOWER_RAIL_DROP,
     )
+    cable_passage = make_box(
+        CABLE_PASSAGE_WIDTH,
+        shelf_depth + 2,
+        CABLE_PASSAGE_HEIGHT,
+        y=shelf_front_y + CABLE_PASSAGE_Y_OFFSET,
+        z=MATERIAL_THICKNESS / 2,
+    )
 
     ear_radius = EAR_HEIGHT / 2
     ear_center_distance = EAR_PROJECTION - ear_radius
@@ -194,7 +205,7 @@ def make_mount() -> TopoDS_Shape:
         left_ear_round,
         right_ear_round,
     )
-    mount = cut(cut(mount, left_front_cut), right_front_cut)
+    mount = cut(cut(cut(mount, left_front_cut), right_front_cut), cable_passage)
     left_screw_pilot = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
             gp_Pnt(-(PLATE_WIDTH / 2) - 1, rail_y, -(LOWER_RAIL_DROP / 2)),

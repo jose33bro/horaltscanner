@@ -21,6 +21,8 @@ générés par `generate.py`.
 - rails sous la tablette : 5,00 mm de large, 16,00 mm de long et 5,00 mm de
   descente, avec un avant-trou horizontal Ø 2,70 mm dans chaque rail et une
   découpe de 3,00 mm depuis l'avant pour dégager le passage M3;
+- passage de nappe du câble CSI/DSI dans la partie tablette : ouverture centrale
+  vers l'avant, dans la tablette de 24,00 mm.
 - oreilles : projection 8,70 mm, largeur 8,50 mm, hauteur 5,99 mm et espace
   central 5,33 mm;
 - trou d'axe traversant : Ø 3,40 mm;

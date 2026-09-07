@@ -34,7 +34,7 @@ pytest>=9.1.1
 pytest-cov>=3.0.0
 
 # Logging et monitoring
-python-dateutil>=2.8.0
+python-dateutil>=2.9.0.post0
 
 # JSON/YAML
 pyyaml>=5.4.0

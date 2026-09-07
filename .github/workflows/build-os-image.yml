@@ -66,25 +66,25 @@ jobs:
             OS_LIST_URL="https://downloads.raspberrypi.com/os_list_imagingutility_v3.json"
             RESOLVED_RPI_OS_URL=$(curl -fsSL "$OS_LIST_URL" \
               | python3 -c '
-import json, sys
+              import json, sys
 
-def find_url(items):
-    for item in items:
-        name = item.get("name", "")
-        url = item.get("url", "")
-        if "Lite" in name and "64-bit" in name and url.endswith(".img.xz"):
-            return url
-        result = find_url(item.get("subitems", []))
-        if result:
-            return result
-    return None
+              def find_url(items):
+                  for item in items:
+                      name = item.get("name", "")
+                      url = item.get("url", "")
+                      if "Lite" in name and "64-bit" in name and url.endswith(".img.xz"):
+                          return url
+                      result = find_url(item.get("subitems", []))
+                      if result:
+                          return result
+                  return None
 
-data = json.load(sys.stdin)
-url = find_url(data.get("os_list", []))
-if not url:
-    sys.exit(1)
-print(url)
-')
+              data = json.load(sys.stdin)
+              url = find_url(data.get("os_list", []))
+              if not url:
+                  sys.exit(1)
+              print(url)
+              ')
             test -n "$RESOLVED_RPI_OS_URL"
           fi
 

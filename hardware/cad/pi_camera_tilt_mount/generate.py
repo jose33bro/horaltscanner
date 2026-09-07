@@ -37,6 +37,8 @@ EAR_WIDTH = 8.50
 EAR_GAP = 5.33
 EAR_HEIGHT = 5.99
 PIVOT_CLEARANCE_DIAMETER = 3.40
+M5_COARSE_TAP_PILOT_DIAMETER = 4.20
+M5_THREAD_HOLE_OFFSET_FROM_TOP = 22.00
 
 CSI_SLOT_WIDTH = 18.00
 CSI_SLOT_HEIGHT = 9.56
@@ -231,6 +233,14 @@ def make_mount() -> TopoDS_Shape:
         PIVOT_CLEARANCE_DIAMETER / 2,
         (2 * EAR_WIDTH) + EAR_GAP + 2,
     ).Shape()
+    m5_thread_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(0, 0, PLATE_HEIGHT - M5_THREAD_HOLE_OFFSET_FROM_TOP),
+            gp_Dir(0, 1, 0),
+        ),
+        M5_COARSE_TAP_PILOT_DIAMETER / 2,
+        MATERIAL_THICKNESS + 2,
+    ).Shape()
     csi_slot = make_box(
         CSI_SLOT_WIDTH,
         MATERIAL_THICKNESS + 2,
@@ -238,7 +248,7 @@ def make_mount() -> TopoDS_Shape:
         y=CSI_SLOT_FRONT_OFFSET,
         z=CSI_SLOT_BOTTOM + (CSI_SLOT_HEIGHT / 2),
     )
-    return cut(cut(mount, pivot_hole), csi_slot)
+    return cut(cut(cut(mount, pivot_hole), m5_thread_hole), csi_slot)
 
 
 def make_fit_test() -> TopoDS_Shape:

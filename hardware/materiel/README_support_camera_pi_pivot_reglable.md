@@ -18,6 +18,8 @@ modèle sont documentées dans
 - Deux oreilles reçoivent la caméra et son axe traversant M3.
 - Les deux rails inférieurs reçoivent une vis M3 depuis chaque côté, avec un
   dépouille de 3,00 mm depuis l'avant pour dégager le passage M3.
+- La plaque verticale porte un trou M5 centré entre les oreilles, à 22,00 mm du
+  haut pour la fixation mécanique.
 - La partie tablette de 24,00 mm reçoit un passage central pour la nappe
   CSI/DSI, orienté vers l'avant depuis le centre.
 

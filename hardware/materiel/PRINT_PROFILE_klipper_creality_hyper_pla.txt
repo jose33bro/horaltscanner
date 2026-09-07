@@ -43,11 +43,6 @@ X/Y distance support: 0.6 mm
    - Support NON (ou touching buildplate only si besoin)
    - Brim 8 mm
 
-3) pi_camera_tilt_base.stl
-   - Grande face à plat
-   - Support NON
-   - Brim 3-5 mm (optionnel)
-
 [AJUSTEMENT FILETAGE M5/M3 APRES TEST]
 Si c'est trop serré:
   - XY compensation = -0.06 mm

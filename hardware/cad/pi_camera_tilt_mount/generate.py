@@ -3,7 +3,7 @@ from pathlib import Path
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere
 from OCP.StlAPI import StlAPI_Writer
 from OCP.TopoDS import TopoDS_Shape
 from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
@@ -44,6 +44,14 @@ CSI_SLOT_WIDTH = 18.00
 CSI_SLOT_HEIGHT = 9.56
 CSI_SLOT_BOTTOM = 5.00
 CSI_SLOT_FRONT_OFFSET = -4.00
+
+ROD_LENGTH = 50.00
+ROD_DIAMETER = 5.00
+BALL_DIAMETER = 6.50
+BALL_SHANK_LENGTH = 8.00
+DRIVE_SQUARE_WIDTH = 5.00
+DRIVE_SQUARE_LENGTH = 10.00
+M3_CLEARANCE_DIAMETER = 3.20
 
 
 def make_box(
@@ -251,6 +259,37 @@ def make_mount() -> TopoDS_Shape:
     return cut(cut(cut(mount, pivot_hole), m5_thread_hole), csi_slot)
 
 
+def make_adjustment_rod() -> TopoDS_Shape:
+    rod_radius = ROD_DIAMETER / 2
+    rod = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(0, 0, -(ROD_LENGTH / 2)),
+            gp_Dir(0, 0, 1),
+        ),
+        rod_radius,
+        ROD_LENGTH,
+    ).Shape()
+    ball = BRepPrimAPI_MakeSphere(
+        gp_Pnt(0, 0, (ROD_LENGTH / 2) + (BALL_DIAMETER / 2)),
+        BALL_DIAMETER / 2,
+    ).Shape()
+    drive_square = make_box(
+        DRIVE_SQUARE_WIDTH,
+        DRIVE_SQUARE_WIDTH,
+        DRIVE_SQUARE_LENGTH,
+        z=-(ROD_LENGTH / 2) - (DRIVE_SQUARE_LENGTH / 2),
+    )
+    drive_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(0, 0, -(ROD_LENGTH / 2) - (DRIVE_SQUARE_LENGTH / 2)),
+            gp_Dir(0, 0, 1),
+        ),
+        M3_CLEARANCE_DIAMETER / 2,
+        DRIVE_SQUARE_LENGTH + 2,
+    ).Shape()
+    return cut(fuse(rod, ball, drive_square), drive_hole)
+
+
 def make_fit_test() -> TopoDS_Shape:
     return make_box(PLATE_WIDTH, MATERIAL_THICKNESS, PLATE_HEIGHT)
 
@@ -267,3 +306,4 @@ def export_model(model: TopoDS_Shape, filename: str) -> None:
 if __name__ == "__main__":
     export_model(make_mount(), "pi_camera_tilt_base.stl")
     export_model(make_fit_test(), "fit_test_rear_cavity_30.45x38.2.stl")
+    export_model(make_adjustment_rod(), "adjustment_rod_M5x50_ball6.5_square_m3.stl")

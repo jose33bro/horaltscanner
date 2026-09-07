@@ -16,7 +16,8 @@ modèle sont documentées dans
 - Pièce : `pi_camera_tilt_base.stl`
 - Fenêtre CSI : **18,00 × 9,56 mm** dans la plaque verticale, centrée bas et décalée vers l'avant.
 - Deux oreilles reçoivent la caméra et son axe traversant M3.
-- Les deux rails inférieurs reçoivent une vis M3 depuis chaque côté.
+- Les deux rails inférieurs reçoivent une vis M3 depuis chaque côté, avec un
+  dépouille de 3,00 mm depuis l'avant pour dégager le passage M3.
 
 ## Assemblage
 

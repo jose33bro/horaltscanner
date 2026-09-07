@@ -26,6 +26,7 @@ LOWER_RAIL_WIDTH = 5.00
 LOWER_RAIL_LENGTH = 16.00
 LOWER_RAIL_DROP = 5.00
 LOWER_RAIL_OVERLAP = 0.50
+LOWER_RAIL_FRONT_CUT_DEPTH = 3.00
 
 EAR_PROJECTION = 8.70
 EAR_WIDTH = 8.50
@@ -122,6 +123,22 @@ def make_mount() -> TopoDS_Shape:
         y=rail_y,
         z=-LOWER_RAIL_DROP,
     )
+    left_front_cut = make_box(
+        LOWER_RAIL_WIDTH,
+        LOWER_RAIL_FRONT_CUT_DEPTH,
+        rail_height,
+        x=-rail_x,
+        y=shelf_front_y + (LOWER_RAIL_FRONT_CUT_DEPTH / 2),
+        z=-LOWER_RAIL_DROP,
+    )
+    right_front_cut = make_box(
+        LOWER_RAIL_WIDTH,
+        LOWER_RAIL_FRONT_CUT_DEPTH,
+        rail_height,
+        x=rail_x,
+        y=shelf_front_y + (LOWER_RAIL_FRONT_CUT_DEPTH / 2),
+        z=-LOWER_RAIL_DROP,
+    )
 
     ear_radius = EAR_HEIGHT / 2
     ear_center_distance = EAR_PROJECTION - ear_radius
@@ -177,6 +194,7 @@ def make_mount() -> TopoDS_Shape:
         left_ear_round,
         right_ear_round,
     )
+    mount = cut(cut(mount, left_front_cut), right_front_cut)
     left_screw_pilot = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
             gp_Pnt(-(PLATE_WIDTH / 2) - 1, rail_y, -(LOWER_RAIL_DROP / 2)),

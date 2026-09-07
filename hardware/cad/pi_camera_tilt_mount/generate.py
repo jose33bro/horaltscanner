@@ -36,6 +36,7 @@ PIVOT_CLEARANCE_DIAMETER = 3.40
 CSI_SLOT_WIDTH = 18.00
 CSI_SLOT_HEIGHT = 9.56
 CSI_SLOT_BOTTOM = 5.00
+CSI_SLOT_FRONT_OFFSET = -4.00
 
 
 def make_box(
@@ -205,7 +206,8 @@ def make_mount() -> TopoDS_Shape:
         CSI_SLOT_WIDTH,
         MATERIAL_THICKNESS + 2,
         CSI_SLOT_HEIGHT,
-        z=CSI_SLOT_BOTTOM,
+        y=CSI_SLOT_FRONT_OFFSET,
+        z=CSI_SLOT_BOTTOM + (CSI_SLOT_HEIGHT / 2),
     )
     return cut(cut(mount, pivot_hole), csi_slot)
 

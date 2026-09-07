@@ -23,7 +23,7 @@ générés par `generate.py`.
 - oreilles : projection 8,70 mm, largeur 8,50 mm, hauteur 5,99 mm et espace
   central 5,33 mm;
 - trou d'axe traversant : Ø 3,40 mm;
-- fenêtre CSI dans la plaque verticale : 18,00 × 9,56 mm.
+- fenêtre CSI dans la plaque verticale : 18,00 × 9,56 mm, centrée en bas et décalée vers l'avant.
 
 ## Génération
 

@@ -8,7 +8,12 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
 
 - `stl/pi_camera_tilt_base.stl` : base orientable définitive;
 - `stl/fit_test_rear_cavity_30.45x38.2.stl` : test d'encombrement à imprimer
-  avant la base.
+  avant la base;
+- `stl/adjustment_rod_M5x50_ball6.5_square_m3.stl` : tige d'ajustement M5
+  sur 50 mm, bille Ø 6,5 mm côté caméra et carré côté roue/plateau, avec trou
+  M3 central dans le carré;
+- `stl/wheel_crank_50mm_square_m3.stl` : roue/crank de 50 mm de diamètre avec
+  carré de montage et trou M3 central pour serrage sur plaque de 3 mm.
 
 Les autres fichiers STL éventuellement présents dans ce répertoire ne sont pas
 générés par `generate.py`.
@@ -19,11 +24,15 @@ générés par `generate.py`.
 - tablette inférieure vers l'avant : projection 24,00 mm;
 - parois latérales de tablette : 3,20 mm d'épaisseur et 6,20 mm de hauteur;
 - rails sous la tablette : 5,00 mm de large, 16,00 mm de long et 5,00 mm de
-  descente, avec un avant-trou horizontal Ø 2,70 mm dans chaque rail;
+  descente, avec un avant-trou horizontal Ø 2,70 mm dans chaque rail et une
+  découpe de 3,00 mm depuis l'avant pour dégager le passage M3;
+- passage de nappe du câble CSI/DSI dans la partie tablette : ouverture centrale
+  vers l'avant, dans la tablette de 24,00 mm.
 - oreilles : projection 8,70 mm, largeur 8,50 mm, hauteur 5,99 mm et espace
   central 5,33 mm;
 - trou d'axe traversant : Ø 3,40 mm;
-- fenêtre CSI dans la plaque verticale : 18,00 × 9,56 mm.
+- trou de fixation M5 sur la plaque verticale, centré entre les oreilles et à 22,00 mm du haut;
+- fenêtre CSI dans la plaque verticale : 18,00 × 9,56 mm, centrée en bas et décalée vers l'avant.
 
 ## Génération
 

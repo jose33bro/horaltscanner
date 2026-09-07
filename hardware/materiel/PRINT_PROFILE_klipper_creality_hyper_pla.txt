@@ -38,12 +38,12 @@ X/Y distance support: 0.6 mm
    - Mettre le grand dos de la plaque contre le plateau (à plat)
    - Support OUI (réglages ci-dessus)
 
-2) ball_screw_M5x40_ball5_square_flat.stl
+2) fit_test_rear_cavity_30.45x38.2.stl
    - Déjà orientée à plat
    - Support NON (ou touching buildplate only si besoin)
    - Brim 8 mm
 
-3) knurled_wheel_D100_T15_pitch5_flattooth.stl
+3) pi_camera_tilt_base.stl
    - Grande face à plat
    - Support NON
    - Brim 3-5 mm (optionnel)

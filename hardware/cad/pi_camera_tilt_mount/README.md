@@ -10,7 +10,8 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
 - `stl/fit_test_rear_cavity_30.45x38.2.stl` : test d'encombrement à imprimer
   avant la base;
 - `stl/adjustment_rod_M5x50_ball6.5_square_m3.stl` : tige d'ajustement M5
-  sur 50 mm, bille Ø 6,5 mm à une extrémité et carré à l'autre avec trou M3.
+  sur 50 mm, bille Ø 6,5 mm côté caméra et carré côté roue/plateau, avec trou
+  M3 central dans le carré.
 
 Les autres fichiers STL éventuellement présents dans ce répertoire ne sont pas
 générés par `generate.py`.

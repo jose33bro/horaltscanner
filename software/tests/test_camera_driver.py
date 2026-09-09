@@ -60,14 +60,6 @@ class LogitechCameraOpenTests(unittest.TestCase):
         # Ensure the class-level "last working device" cache doesn't leak
         # state between tests (or from a previous test module run).
         camera_driver.LogitechCamera._last_working_device_id = None
-        # Isolate the candidate probing from the real machine: without this,
-        # actual /dev/v4l/by-id/* and /dev/video* nodes (e.g. on a Raspberry Pi
-        # with a Logitech webcam attached) leak into the candidate list and
-        # break the expected probe order. Tests that need specific devices
-        # re-patch glob.glob themselves.
-        glob_patcher = mock.patch.object(camera_driver.glob, "glob", return_value=[])
-        glob_patcher.start()
-        self.addCleanup(glob_patcher.stop)
 
     def test_opens_on_configured_device_id_without_fallback(self):
         fake_cv2 = FakeCv2ForLogitech(working_indices={0})

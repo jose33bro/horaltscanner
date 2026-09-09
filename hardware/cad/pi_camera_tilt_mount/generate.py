@@ -48,7 +48,6 @@ CSI_SLOT_FRONT_OFFSET = -4.00
 ROD_LENGTH = 50.00
 ROD_DIAMETER = 5.00
 BALL_DIAMETER = 6.50
-BALL_SHANK_LENGTH = 8.00
 # Ball end is for the camera side; the square end is for the wheel/plate mount.
 DRIVE_SQUARE_WIDTH = 5.00
 DRIVE_SQUARE_LENGTH = 10.00

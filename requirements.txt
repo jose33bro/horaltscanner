@@ -4,7 +4,7 @@
 pyserial>=3.5
 
 # GPIO Raspberry Pi
-gpiozero>=1.6.0
+gpiozero>=2.0.1.post3
 RPi.GPIO>=0.7.0
 
 # Vision par ordinateur

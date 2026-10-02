@@ -124,6 +124,28 @@ class HoralScannerAPITests(unittest.TestCase):
 
         self.client = self.app.test_client()
 
+    def test_geometric_options_normalize_laser_sides(self):
+        options = self.api_module._geometric_calibration_options(
+            {"laser_sides": [" RIGHT ", "Left", "right"]}
+        )
+        self.assertEqual(options["laser_sides"], ["right", "left"])
+        self.assertNotIn(
+            "laser_sides", self.api_module._geometric_calibration_options({})
+        )
+
+    def test_geometric_routes_reject_invalid_laser_sides_before_preflight(self):
+        with patch.object(self.api_module.geometric_calibration, "preflight") as preflight:
+            for route in ("preflight", "start"):
+                for value in (None, [], "left", [None], [1], [["left"]], ["front"]):
+                    with self.subTest(route=route, value=value):
+                        response = self.client.post(
+                            f"/api/calibration/geometric/{route}",
+                            json={"laser_sides": value},
+                        )
+                        self.assertEqual(response.status_code, 400)
+                        self.assertIn("laser_sides", response.get_json()["error"])
+            preflight.assert_not_called()
+
     def test_laser_route_uses_gpio_driver(self):
         response = self.client.post("/api/laser/left", json={"state": True})
 

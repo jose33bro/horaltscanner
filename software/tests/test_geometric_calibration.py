@@ -31,6 +31,7 @@ from software.api.geometric_calibration import (
     checkerboard_points,
     extract_laser_line_pixels,
     fit_plane_robust,
+    normalize_laser_sides,
     transform_from_beam,
     validate_calibration_payload,
     validate_view_diversity,
@@ -155,6 +156,22 @@ def valid_calibration():
 
 
 class CalibrationMathTests(unittest.TestCase):
+    def test_laser_side_normalization_preserves_first_seen_order(self):
+        self.assertEqual(
+            normalize_laser_sides([" RIGHT ", "Left", "right", "\tLEFT\n"]),
+            ["right", "left"],
+        )
+        self.assertEqual(normalize_laser_sides((" Left ",)), ["left"])
+
+    def test_laser_side_normalization_rejects_invalid_values(self):
+        for value in (None, [], (), "left", {"left"}, {}, [None], [1], [True],
+                      [["left"]], [{"side": "left"}], ["front"], [" "]):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(CalibrationError, "laser_sides"):
+                    normalize_laser_sides(value)
+        with self.assertRaisesRegex(CalibrationError, "entries must be strings"):
+            normalize_laser_sides(["left", None])
+
     def test_checkerboard_is_centered_and_uses_exact_measured_geometry(self):
         points = checkerboard_points()
         self.assertEqual(points.shape, (66, 3))
@@ -403,9 +420,61 @@ class CalibrationMathTests(unittest.TestCase):
         payload["laser_planes"]["calibrated_sides"] = []
 
         with self.assertRaisesRegex(
-            CalibrationError, "at least one laser side must be calibrated"
+            CalibrationError, "calibrated_sides must be a non-empty list"
         ):
             validate_calibration_payload(payload)
+
+    def test_payload_normalizes_calibrated_sides(self):
+        payload = valid_calibration()
+        payload["laser_planes"]["calibrated_sides"] = [" LEFT ", "left"]
+        payload["laser_planes"]["right"] = None
+        validate_calibration_payload(payload)
+
+    def test_payload_rejects_invalid_calibrated_sides_metadata(self):
+        for value in (None, "left", {}, [None], [1], [["left"]], ["front"]):
+            with self.subTest(value=value):
+                payload = valid_calibration()
+                payload["laser_planes"]["calibrated_sides"] = value
+                with self.assertRaisesRegex(CalibrationError, "calibrated_sides"):
+                    validate_calibration_payload(payload)
+
+    def test_payload_requires_valid_geometry_for_each_declared_side(self):
+        invalid_planes = (
+            None, [], "plane", {},
+            {"normal": [[1, 0], [0]], "offset_mm": 0},
+            {"normal": ["bad", 0, 0], "offset_mm": 0},
+            {"normal": [math.nan, 0, 0], "offset_mm": 0},
+            {"normal": [0, 0, 0], "offset_mm": 0},
+            {"normal": [1, 0, 0], "offset_mm": None},
+            {"normal": [1, 0, 0], "offset_mm": "bad"},
+            {"normal": [1, 0, 0], "offset_mm": math.inf},
+            {"normal": [1, 0, 0], "offset_mm": []},
+            {"normal": [1, 0, 0], "offset_mm": True},
+            {"normal": [1, 0, 0], "offset_mm": 10 ** 400},
+        )
+        for metadata in (None, ["right"], ["left", "right"]):
+            for plane in invalid_planes:
+                with self.subTest(metadata=metadata, plane=plane):
+                    payload = valid_calibration()
+                    if metadata is not None:
+                        payload["laser_planes"]["calibrated_sides"] = metadata
+                    payload["laser_planes"]["right"] = plane
+                    with self.assertRaisesRegex(CalibrationError, "right laser plane"):
+                        validate_calibration_payload(payload)
+
+    def test_payload_rejects_malformed_plane_container_and_quality(self):
+        for value in (None, [], "planes"):
+            with self.subTest(value=value):
+                payload = valid_calibration()
+                payload["laser_planes"] = value
+                with self.assertRaisesRegex(CalibrationError, "laser_planes"):
+                    validate_calibration_payload(payload)
+        for quality in (None, [], {"rms_mm": None}, {"maximum_rms_mm": "bad"}):
+            with self.subTest(quality=quality):
+                payload = valid_calibration()
+                payload["laser_planes"]["left"]["quality"] = quality
+                with self.assertRaisesRegex(CalibrationError, "left laser plane quality"):
+                    validate_calibration_payload(payload)
 
     @unittest.skipIf(cv2 is None, "OpenCV is required for laser image tests")
     def test_laser_extraction_ignores_off_board_reflections(self):
@@ -4076,6 +4145,16 @@ class CalibrationServiceTests(unittest.TestCase):
         )
         self.service._config["laser_sides_to_calibrate"] = ["left"]
         self.assertEqual(self.service._resolve_laser_sides(None), ["left"])
+        self.assertEqual(
+            self.service._resolve_laser_sides(
+                {"laser_sides": [" RIGHT ", "left", "right"]}
+            ),
+            ["right", "left"],
+        )
+        self.service._config["laser_sides_to_calibrate"] = [" LEFT ", "left"]
+        self.assertEqual(self.service._resolve_laser_sides(None), ["left"])
+        with self.assertRaisesRegex(CalibrationError, "laser_sides"):
+            self.service._resolve_laser_sides({"laser_sides": None})
         with self.assertRaisesRegex(CalibrationError, "laser_sides"):
             self.service._resolve_laser_sides({"laser_sides": ["front"]})
         with self.assertRaisesRegex(CalibrationError, "laser_sides"):
@@ -4107,18 +4186,40 @@ class CalibrationServiceTests(unittest.TestCase):
             for name in ("pi", "usb")
         }
 
-        result = self.service._calibrate_lasers(
-            poses, {"cameras": {}}, checkerboard_views=views, laser_sides=["left"]
-        )
+        for requested, expected in (
+            (["left"], ["left"]),
+            ([" RIGHT ", "right"], ["right"]),
+            (["right", "Left", "right"], ["right", "left"]),
+        ):
+            with self.subTest(requested=requested):
+                self.gpio.calls.clear()
+                before = self.service.status()["laser_views"]
+                with mock.patch.object(self.service, "_sleep_interruptible"):
+                    result = self.service._calibrate_lasers(
+                        poses, {"cameras": {}},
+                        checkerboard_views=views, laser_sides=requested,
+                    )
+                self.assertEqual(result["calibrated_sides"], expected)
+                self.assertEqual(
+                    [side for operation, side in self.gpio.calls if operation == "on"],
+                    expected * len(poses),
+                )
+                status = self.service.status()
+                for side in ("left", "right"):
+                    self.assertEqual(side in result, side in expected)
+                    self.assertEqual(
+                        len(status["laser_views"][side]["pi"])
+                        - len(before[side]["pi"]),
+                        len(poses) if side in expected else 0,
+                    )
+                self.assertFalse(any(self.gpio.state.values()))
 
-        self.assertIn("left", result)
-        self.assertNotIn("right", result)
-        self.assertEqual(result["calibrated_sides"], ["left"])
-        self.assertTrue(any(call == ("on", "left") for call in self.gpio.calls))
-        self.assertFalse(any(call == ("on", "right") for call in self.gpio.calls))
-        status = self.service.status()
-        self.assertEqual(len(status["laser_views"]["left"]["pi"]), 3)
-        self.assertEqual(len(status["laser_views"]["right"]["pi"]), 0)
+    def test_calibrate_lasers_rejects_invalid_sides_before_hardware_access(self):
+        for value in ([], [None], ["front"]):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(CalibrationError, "laser_sides"):
+                    self.service._calibrate_lasers([], {}, laser_sides=value)
+        self.assertEqual(self.gpio.calls, [])
 
     def test_merge_laser_planes_preserves_untouched_side(self):
         previous = {
@@ -4162,6 +4263,151 @@ class CalibrationServiceTests(unittest.TestCase):
         self.assertIsNone(merged["right"]["normal"])
         self.assertIsNone(merged["right"]["offset_mm"])
         self.assertEqual(merged["calibrated_sides"], ["left"])
+
+    def test_merge_laser_planes_sanitizes_malformed_legacy_side(self):
+        new_planes = {
+            "left": valid_calibration()["laser_planes"]["left"],
+            "calibrated_sides": [" LEFT ", "left"],
+        }
+        valid_right = valid_calibration()["laser_planes"]["right"]
+        for plane in (
+            None, [], {}, {"normal": [1, 0, 0]},
+            dict(valid_right, normal=[math.nan, 0, 0]),
+            dict(valid_right, normal=[2, 0, 0]),
+            dict(valid_right, offset_mm="bad"),
+            dict(valid_right, offset_mm=math.inf),
+            dict(valid_right, quality=None),
+            dict(valid_right, quality=[]),
+        ):
+            for metadata in (None, ["right"], [" RIGHT ", "right"]):
+                with self.subTest(plane=plane, metadata=metadata):
+                    previous_planes = {"right": plane}
+                    if metadata is not None:
+                        previous_planes["calibrated_sides"] = metadata
+                    previous = {"laser_planes": previous_planes}
+                    self.service._get_current_calibration = lambda: previous
+                    merged = self.service._merge_laser_planes(new_planes)
+                    self.assertEqual(
+                        merged["right"],
+                        {"normal": None, "offset_mm": None, "quality": None},
+                    )
+                    self.assertEqual(merged["calibrated_sides"], ["left"])
+                    payload = valid_calibration()
+                    payload["laser_planes"] = merged
+                    validate_calibration_payload(payload)
+
+    def test_merge_laser_planes_preserves_valid_plane_and_explicit_metadata(self):
+        previous = valid_calibration()
+        previous["laser_planes"]["calibrated_sides"] = [" RIGHT ", "right"]
+        self.service._get_current_calibration = lambda: previous
+        new_planes = {
+            "left": valid_calibration()["laser_planes"]["left"],
+            "calibrated_sides": ["left"],
+        }
+        merged = self.service._merge_laser_planes(new_planes)
+        self.assertEqual(merged["right"], previous["laser_planes"]["right"])
+        self.assertEqual(merged["calibrated_sides"], ["left", "right"])
+        merged["right"]["quality"]["accepted"] = False
+        self.assertTrue(previous["laser_planes"]["right"]["quality"]["accepted"])
+        for metadata in ([], None, "right", [None], ["left"]):
+            with self.subTest(metadata=metadata):
+                previous["laser_planes"]["calibrated_sides"] = metadata
+                merged = self.service._merge_laser_planes(new_planes)
+                self.assertEqual(merged["calibrated_sides"], ["left"])
+
+    def test_merge_laser_planes_handles_invalid_previous_root(self):
+        new_planes = {
+            "left": valid_calibration()["laser_planes"]["left"],
+            "calibrated_sides": ["left"],
+        }
+        for previous in ([], "legacy", {"laser_planes": []}):
+            with self.subTest(previous=previous):
+                self.service._get_current_calibration = lambda: previous
+                merged = self.service._merge_laser_planes(new_planes)
+                self.assertIsNone(merged["right"]["normal"])
+                self.assertEqual(merged["calibrated_sides"], ["left"])
+
+    def test_merge_laser_planes_rejects_contradictory_new_metadata(self):
+        for metadata in (["right"], ["left", "right"], [None], []):
+            with self.subTest(metadata=metadata):
+                with self.assertRaises(CalibrationError):
+                    self.service._merge_laser_planes({
+                        "left": valid_calibration()["laser_planes"]["left"],
+                        "calibrated_sides": metadata,
+                    })
+
+    def test_matched_pi_capture_retries_empty_frames_and_completed_io_errors(self):
+        valid_frame = (b"jpeg", {})
+        for first in (None, (b"", {}), (b"jpeg", None), OSError("camera busy")):
+            with self.subTest(first=first):
+                session = mock.Mock()
+                session.capture_jpeg.side_effect = [first, valid_frame]
+                with mock.patch.object(self.service, "_sleep_interruptible") as pause:
+                    self.assertEqual(
+                        self.service._capture_matched_pi(session, side="right"),
+                        valid_frame,
+                    )
+                self.assertEqual(session.capture_jpeg.call_count, 2)
+                pause.assert_called_once_with(0.1)
+
+    def test_matched_pi_capture_retries_are_bounded_and_report_side(self):
+        session = mock.Mock()
+        session.capture_jpeg.return_value = (b"", {})
+        with mock.patch.object(self.service, "_sleep_interruptible"):
+            with self.assertRaisesRegex(CalibrationError, "left.*after 2 attempts"):
+                self.service._capture_matched_pi(session, side="left")
+        self.assertEqual(session.capture_jpeg.call_count, 2)
+
+    def test_matched_pi_capture_never_retries_timeouts_or_photometric_failures(self):
+        for failure in (CalibrationError("capture timed out"), CalibrationCancelled()):
+            with self.subTest(failure=failure):
+                with mock.patch.object(
+                    self.service, "_hardware_call", side_effect=failure
+                ) as capture:
+                    with self.assertRaises(type(failure)):
+                        self.service._capture_matched_pi(mock.Mock(), side="left")
+                capture.assert_called_once()
+        session = mock.Mock()
+        session.capture_jpeg.side_effect = RuntimeError("photometric controls changed")
+        with self.assertRaisesRegex(CalibrationError, "controls changed"):
+            self.service._capture_matched_pi(session, side="left")
+        session.capture_jpeg.assert_called_once()
+
+    def test_matched_pi_capture_cancellation_stops_retry(self):
+        session = mock.Mock()
+        session.capture_jpeg.return_value = None
+        with mock.patch.object(
+            self.service, "_sleep_interruptible",
+            side_effect=lambda _: self.service._cancel.set(),
+        ):
+            with self.assertRaises(CalibrationCancelled):
+                self.service._capture_matched_pi(session)
+        session.capture_jpeg.assert_called_once()
+
+    def test_selected_side_capture_failure_turns_lasers_off_and_restores_camera(self):
+        camera = _TrackedPhotometricCamera()
+        self.service._cameras["pi"] = camera
+        self.service._move_to = mock.Mock()
+        ambient = (b"jpeg", _PhotometricSession.capture_metadata())
+        with (
+            mock.patch.object(self.service, "_sleep_interruptible"),
+            mock.patch.object(
+                _PhotometricSession, "capture_jpeg",
+                side_effect=[ambient, (b"", {}), (b"", {})],
+            ) as capture,
+        ):
+            with self.assertRaisesRegex(CalibrationError, "right.*after 2 attempts"):
+                self.service._calibrate_lasers(
+                    [{"x": 195, "y": 0, "z": 20}], {}, laser_sides=["right"]
+                )
+        self.assertEqual(capture.call_count, 3)
+        self.assertEqual(
+            [call for call in self.gpio.calls if call[0] == "on"],
+            [("on", "right")],
+        )
+        self.assertFalse(any(self.gpio.state.values()))
+        self.assertEqual(camera.restorations, 1)
+        self.assertFalse(camera.photometry_active)
 
     def test_unverified_usb_laser_path_never_replaces_or_blocks_pi_plane(self):
         poses = [

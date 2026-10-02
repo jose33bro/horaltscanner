@@ -68,6 +68,7 @@ from software.api.geometric_calibration import (
     AtomicCalibrationStore,
     CalibrationError,
     GeometricCalibrationService,
+    normalize_laser_sides,
 )
 from software.api.scanner_engine import (
     ReconstructionEngine,
@@ -1400,16 +1401,11 @@ def _geometric_calibration_options(data):
         }
         if not math.isfinite(result["lidar"]["reference_z_mm"]):
             raise ValueError("TF-Luna reference_z_mm must be finite")
-    if laser_sides is not None:
-        if (
-            not isinstance(laser_sides, (list, tuple))
-            or not laser_sides
-            or not all(side in ("left", "right") for side in laser_sides)
-        ):
-            raise ValueError(
-                "laser_sides must be a non-empty list containing 'left' and/or 'right'"
-            )
-        result["laser_sides"] = list(dict.fromkeys(laser_sides))
+    if "laser_sides" in data:
+        try:
+            result["laser_sides"] = normalize_laser_sides(laser_sides)
+        except CalibrationError as exc:
+            raise ValueError(str(exc)) from exc
     return result
 
 

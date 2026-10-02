@@ -63,6 +63,62 @@ PNP_BOARD_FRAME_ADJUSTMENTS = {
 MINIMUM_DIRECT_Z_CONTRASTS = 3
 DIRECT_Z_ESTIMATOR = "same_xy_z_contrast_geometric_median"
 RESIDUALIZED_Z_ESTIMATOR = "z_residualized_against_commanded_x_y"
+LASER_SIDES = ("left", "right")
+
+
+def normalize_laser_sides(value: Any, field_name: str = "laser_sides") -> list[str]:
+    if not isinstance(value, (list, tuple)) or not value:
+        raise CalibrationError(
+            f"{field_name} must be a non-empty list containing 'left' and/or 'right'"
+        )
+    sides: list[str] = []
+    for raw in value:
+        if not isinstance(raw, str):
+            raise CalibrationError(f"{field_name} entries must be strings")
+        side = raw.strip().lower()
+        if side not in LASER_SIDES:
+            raise CalibrationError(f"{field_name} contains an invalid entry: {raw!r}")
+        if side not in sides:
+            sides.append(side)
+    return sides
+
+
+def _validate_laser_plane_geometry(plane: Any, side: str) -> None:
+    if not isinstance(plane, Mapping):
+        raise CalibrationError(f"{side} laser plane is invalid (expected an object)")
+    try:
+        normal = np.asarray(plane.get("normal"), dtype=float)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise CalibrationError(f"{side} laser plane is invalid (normal)") from exc
+    if (
+        normal.shape != (3,)
+        or not np.isfinite(normal).all()
+        or not math.isclose(
+            float(np.linalg.norm(normal)), 1.0, rel_tol=0, abs_tol=1e-6
+        )
+    ):
+        raise CalibrationError(f"{side} laser plane is invalid (normal)")
+    offset = plane.get("offset_mm")
+    try:
+        valid_offset = (
+            not isinstance(offset, bool)
+            and np.isscalar(offset)
+            and math.isfinite(float(offset))
+        )
+    except (TypeError, ValueError, OverflowError):
+        valid_offset = False
+    if not valid_offset:
+        raise CalibrationError(f"{side} laser plane offset is invalid")
+
+
+def _sanitize_laser_plane(plane: Any, side: str) -> dict[str, Any]:
+    try:
+        _validate_laser_plane_geometry(plane, side)
+        if not isinstance(plane.get("quality"), Mapping):
+            raise CalibrationError(f"{side} laser plane quality is invalid")
+    except CalibrationError:
+        return {"normal": None, "offset_mm": None, "quality": None}
+    return copy.deepcopy(dict(plane))
 
 
 def checkerboard_points(
@@ -1668,37 +1724,27 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
                     )
 
     laser_planes_payload = calibration.get("laser_planes", {})
-    calibrated_sides = laser_planes_payload.get("calibrated_sides")
-    if calibrated_sides is None:
+    if not isinstance(laser_planes_payload, Mapping):
+        raise CalibrationError("laser_planes must be an object")
+    if "calibrated_sides" not in laser_planes_payload:
         # Legacy/full payloads without explicit metadata require both sides,
         # preserving prior strict behavior.
-        calibrated_sides = ("left", "right")
-    elif not isinstance(calibrated_sides, (list, tuple)):
-        raise CalibrationError("calibrated_sides must be a list of laser sides")
-    elif not all(side in ("left", "right") for side in calibrated_sides):
-        raise CalibrationError(
-            "calibrated_sides must only contain 'left' and/or 'right'"
+        calibrated_sides = list(LASER_SIDES)
+    else:
+        calibrated_sides = normalize_laser_sides(
+            laser_planes_payload["calibrated_sides"], "calibrated_sides"
         )
-    if not calibrated_sides:
-        raise CalibrationError("at least one laser side must be calibrated")
-    for side in ("left", "right"):
-        if side not in calibrated_sides:
-            continue
+    for side in calibrated_sides:
         plane = laser_planes_payload.get(side, {})
-        normal = np.asarray(plane.get("normal"), dtype=float)
-        if (
-            normal.shape != (3,)
-            or not np.isfinite(normal).all()
-            or not math.isclose(
-                float(np.linalg.norm(normal)), 1.0, rel_tol=0, abs_tol=1e-6
-            )
-        ):
-            raise CalibrationError(f"{side} laser plane is invalid")
-        if not math.isfinite(float(plane.get("offset_mm", math.nan))):
-            raise CalibrationError(f"{side} laser plane offset is invalid")
+        _validate_laser_plane_geometry(plane, side)
         quality = plane.get("quality", {})
-        rms = float(quality.get("rms_mm", math.inf))
-        maximum = float(quality.get("maximum_rms_mm", math.nan))
+        if not isinstance(quality, Mapping):
+            raise CalibrationError(f"{side} laser plane quality is invalid")
+        try:
+            rms = float(quality.get("rms_mm", math.inf))
+            maximum = float(quality.get("maximum_rms_mm", math.nan))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise CalibrationError(f"{side} laser plane quality is invalid") from exc
         try:
             views = float(quality.get("views", math.nan))
             minimum_views = float(quality.get("minimum_views", math.nan))
@@ -2348,7 +2394,7 @@ class GeometricCalibrationService:
         "complete",
     )
 
-    LASER_SIDES = ("left", "right")
+    LASER_SIDES = LASER_SIDES
 
     def __init__(
         self,
@@ -2451,25 +2497,13 @@ class GeometricCalibrationService:
         the ``laser_sides_to_calibrate`` config default, allowing left/right
         lasers to be calibrated sequentially and independently.
         """
-        requested = (options or {}).get("laser_sides")
-        if requested is None:
+        if options is not None and "laser_sides" in options:
+            requested = options["laser_sides"]
+        else:
             requested = self._config.get(
                 "laser_sides_to_calibrate", list(self.LASER_SIDES)
             )
-        if not isinstance(requested, (list, tuple)) or not requested:
-            raise CalibrationError(
-                "laser_sides must be a non-empty list containing 'left' "
-                "and/or 'right'"
-            )
-        sides: list[str] = []
-        for side in requested:
-            if side not in self.LASER_SIDES:
-                raise CalibrationError(
-                    f"laser_sides contains an invalid entry: {side!r}"
-                )
-            if side not in sides:
-                sides.append(side)
-        return sides
+        return normalize_laser_sides(requested)
 
     def readiness(
         self,
@@ -5089,45 +5123,48 @@ class GeometricCalibrationService:
                 previous = self._get_current_calibration() or {}
             except Exception:
                 previous = {}
-        previous_planes = previous.get("laser_planes")
+        previous_planes = (
+            previous.get("laser_planes") if isinstance(previous, Mapping) else None
+        )
         if not isinstance(previous_planes, Mapping):
             previous_planes = {}
         merged: dict[str, Any] = {}
         for side in self.LASER_SIDES:
-            if side in new_planes:
-                merged[side] = copy.deepcopy(new_planes[side])
-                continue
-            existing = previous_planes.get(side)
-            merged[side] = (
-                copy.deepcopy(dict(existing))
-                if isinstance(existing, Mapping)
-                else {"normal": None, "offset_mm": None, "quality": None}
+            merged[side] = _sanitize_laser_plane(
+                new_planes[side] if side in new_planes else previous_planes.get(side),
+                side,
             )
-        new_calibrated_sides = {
-            side for side in new_planes.get("calibrated_sides", []) or []
-            if side in self.LASER_SIDES
-        }
-        previous_calibrated_sides_raw = previous_planes.get("calibrated_sides")
-        if isinstance(previous_calibrated_sides_raw, (list, tuple)):
-            previous_calibrated_sides = {
-                side
-                for side in previous_calibrated_sides_raw
-                if side in self.LASER_SIDES
-            }
+        if "calibrated_sides" in new_planes:
+            new_calibrated_sides = normalize_laser_sides(
+                new_planes["calibrated_sides"], "calibrated_sides"
+            )
+        else:
+            new_calibrated_sides = [
+                side for side in self.LASER_SIDES if side in new_planes
+            ]
+        for side in new_calibrated_sides:
+            if side not in new_planes or merged[side]["normal"] is None:
+                raise CalibrationError(f"{side} laser plane is invalid")
+        if "calibrated_sides" in previous_planes:
+            try:
+                previous_calibrated_sides = normalize_laser_sides(
+                    previous_planes["calibrated_sides"], "calibrated_sides"
+                )
+            except CalibrationError:
+                previous_calibrated_sides = []
         else:
             # Legacy persisted calibration predating this metadata: infer
             # which untouched sides were already calibrated from populated
             # plane data instead of trusting missing metadata.
-            previous_calibrated_sides = {
-                side
-                for side in self.LASER_SIDES
-                if side not in new_planes
-                and merged[side].get("normal") is not None
-                and merged[side].get("offset_mm") is not None
-            }
-        merged["calibrated_sides"] = sorted(
-            new_calibrated_sides | previous_calibrated_sides
-        )
+            previous_calibrated_sides = list(self.LASER_SIDES)
+        merged["calibrated_sides"] = list(new_calibrated_sides)
+        for side in previous_calibrated_sides:
+            if (
+                side not in new_planes
+                and merged[side]["normal"] is not None
+                and side not in merged["calibrated_sides"]
+            ):
+                merged["calibrated_sides"].append(side)
         return merged
 
     def _calibrate_lasers(
@@ -5143,7 +5180,9 @@ class GeometricCalibrationService:
         # (e.g. directly in tests) default to both sides rather than
         # re-resolving from config, to keep a single source of truth.
         active_sides = (
-            list(laser_sides) if laser_sides is not None else list(self.LASER_SIDES)
+            normalize_laser_sides(laser_sides)
+            if laser_sides is not None
+            else list(self.LASER_SIDES)
         )
         self._set_phase(
             "laser-planes",
@@ -5249,7 +5288,7 @@ class GeometricCalibrationService:
                                     }
                                 else:
                                     laser, laser_metadata = (
-                                        self._capture_matched_pi(pi_session)
+                                        self._capture_matched_pi(pi_session, side=side)
                                     )
                                     laser_photometry = (
                                         pi_session.metadata_for_report(
@@ -6541,22 +6580,38 @@ class GeometricCalibrationService:
             raise CalibrationError(f"camera '{name}' returned no fresh frame")
         return frame
 
-    def _capture_matched_pi(self, session: Any) -> tuple[bytes, dict]:
-        frame = self._hardware_call(
-            "Pi Camera matched photometric capture",
-            session.capture_jpeg,
-            float(self._config.get("capture_timeout_s", 5.0)),
-        )
-        if (
-            not isinstance(frame, tuple)
-            or len(frame) != 2
-            or not frame[0]
-            or not isinstance(frame[1], dict)
-        ):
-            raise CalibrationError(
-                "Pi Camera returned no verified matched photometric frame"
-            )
-        return frame
+    def _capture_matched_pi(
+        self, session: Any, *, side: str | None = None
+    ) -> tuple[bytes, dict]:
+        label = f"Pi Camera {side or 'ambient'} matched photometric capture"
+        for attempt in range(2):
+            self._check_cancelled()
+            try:
+                frame = self._hardware_call(
+                    label,
+                    session.capture_jpeg,
+                    float(self._config.get("capture_timeout_s", 5.0)),
+                )
+            except CalibrationError as exc:
+                # Only completed I/O failures are safe to retry; a timed-out
+                # hardware thread may still be accessing the same camera.
+                if attempt or not isinstance(exc.__cause__, OSError):
+                    raise
+            else:
+                if (
+                    isinstance(frame, tuple)
+                    and len(frame) == 2
+                    and isinstance(frame[0], bytes)
+                    and frame[0]
+                    and isinstance(frame[1], dict)
+                ):
+                    return frame
+                if attempt:
+                    raise CalibrationError(
+                        f"{label}: no verified matched photometric frame after 2 attempts"
+                    )
+            self._sleep_interruptible(0.1)
+        raise CalibrationError(f"{label} failed")
 
     def _laser(self, side: str, enabled: bool) -> None:
         with self._lock:

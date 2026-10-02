@@ -38,9 +38,9 @@ PI_CAMERA_DEFAULT_POSE: dict[str, float] = {
 #: Pose applied when entering Logitech USB camera calibration.
 #: Z adjusts the height for the USB camera viewpoint.
 LOGITECH_DEFAULT_POSE: dict[str, float] = {
-    "x": 100.0,
+    "x": 175.0,
     "y": 0.0,
-    "z": 150.0,
+    "z": 120.0,
 }
 
 _CAMERA_DEFAULT_POSES: dict[str, dict[str, float]] = {
@@ -147,13 +147,17 @@ def move_to_pose(
     moved: list[str] = []
     errors: list[str] = []
 
-    # Retrieve current absolute positions so we can compute relative deltas.
-    status = stm32_driver.get_motor_status()
-    current_positions: dict[str, float] = status.get("positions", {})
-    homed_axes = status.get("homed")
-
+    # Retrieve current absolute positions/homed state fresh before *each*
+    # axis move (not once up front): on this hardware moving one axis (e.g.
+    # X) can also shift another axis's reported position (e.g. Z) via
+    # mechanical/firmware coupling that is not fully characterised. Using a
+    # single stale snapshot for later axes caused the computed delta to
+    # overshoot/undershoot the target pose.
     for axis, target_mm in pose.items():
         axis_lower = axis.lower()
+        status = stm32_driver.get_motor_status()
+        current_positions: dict[str, float] = status.get("positions", {})
+        homed_axes = status.get("homed")
         current = current_positions.get(axis_lower, 0.0)
         delta = target_mm - current
         if isinstance(homed_axes, dict) and not homed_axes.get(axis_lower, False):

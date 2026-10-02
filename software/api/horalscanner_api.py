@@ -298,7 +298,10 @@ lidar_driver = LidarDriver(
     baud=int(serial_config.get("lidar_baud", 115200)),
 )
 pi_camera = PiCamera()
-usb_camera = LogitechCamera(device_id=camera_config.get("usb_device_id", "auto"))
+usb_camera = LogitechCamera(
+    device_id=camera_config.get("usb_device_id", "auto"),
+    photometry=camera_config.get("usb_photometry"),
+)
 _scan_hardware_lock = HardwareReservationLock()
 scan_session = ScanSession(
     simulation=_simulation_enabled(scanner_config),

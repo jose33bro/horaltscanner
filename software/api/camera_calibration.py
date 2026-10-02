@@ -32,14 +32,15 @@ PI_CAMERA_CALIBRATION_POSE: dict[str, float | None] = {
 }
 
 # Logitech USB camera: X/Y/Z — all three axes are used.
-# Z=20.0 matches `geometric_calibration.starting_pose_mm.z` in
-# config/horalscanner.json, the pose empirically validated to keep the
-# checkerboard target in focus and fully framed (z=50 produced a blurry,
-# badly-cropped, too-close image).
+# X=175.0 / Z=120.0 match `geometric_calibration.starting_pose_mm` in
+# config/horalscanner.json, the pose empirically validated on hardware to
+# keep the full (11,6) checkerboard target in frame on all sides (other
+# poses tested, e.g. x=0/z=20, x=100 or x=150, left the board partially
+# out of frame or too close/blurry).
 LOGITECH_CALIBRATION_POSE: dict[str, float | None] = {
-    "x": 0.0,
+    "x": 175.0,
     "y": 0.0,
-    "z": 20.0,
+    "z": 120.0,
 }
 
 _POSES: dict[str, dict[str, float | None]] = {
@@ -125,12 +126,19 @@ def move_to_calibration_pose(
         # `move_motor(axis, mm)` moves by a *relative* distance, so the
         # current absolute position must be read first and the delta to the
         # target pose computed, instead of passing the target directly.
-        status = stm32_driver.get_motor_status()
-        current_positions: dict[str, float] = status.get("positions", {})
+        #
+        # The position is re-read from the driver *before each axis move*
+        # (not once up front) because on this hardware moving one axis (e.g.
+        # X) can also shift another axis's reported position (e.g. Z) via
+        # mechanical/firmware coupling that isn't fully characterised. Using
+        # a stale snapshot for later axes caused the computed delta to
+        # overshoot/undershoot the target pose.
         for axis in ("x", "y", "z"):
             target = pose.get(axis)
             if target is None:
                 continue  # skip Z for Pi Camera
+            status = stm32_driver.get_motor_status()
+            current_positions: dict[str, float] = status.get("positions", {})
             current = current_positions.get(axis, 0.0)
             delta = target - current
             if abs(delta) < 0.01:
@@ -228,9 +236,14 @@ def restore_scan_pose(camera: str, stm32_driver: Any) -> dict[str, Any]:
         # `move_motor(axis, mm)` moves by a *relative* distance, so the
         # current absolute position must be read first and the delta to the
         # target pose computed, instead of passing the target directly.
-        status = stm32_driver.get_motor_status()
-        current_positions: dict[str, float] = status.get("positions", {})
+        #
+        # Re-read the position before each axis move (see the matching
+        # comment in `move_to_calibration_pose`) instead of once up front,
+        # since moving one axis can shift another axis's reported position
+        # on this hardware.
         for axis, target in pose.items():
+            status = stm32_driver.get_motor_status()
+            current_positions: dict[str, float] = status.get("positions", {})
             current = current_positions.get(axis, 0.0)
             delta = float(target) - current
             if abs(delta) < 0.01:

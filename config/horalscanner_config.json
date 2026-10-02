@@ -117,8 +117,8 @@
     "usb_device_id": "auto",
     "usb_photometry": {
       "auto_exposure": 1,
-      "exposure_time_absolute": 80,
-      "gain": 15,
+      "exposure_time_absolute": 1200,
+      "gain": 220,
       "white_balance_automatic": 0,
       "white_balance_temperature": 4800,
       "backlight_compensation": 0,

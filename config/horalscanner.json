@@ -56,9 +56,9 @@
         "right"
       ],
       "starting_pose_mm": {
-        "x": 175,
+        "x": 195,
         "y": 0,
-        "z": 120
+        "z": 20
       },
       "pose_offsets_mm": [
         {

@@ -114,7 +114,16 @@
   "cameras": {
     "pi_name": "Pi Camera V3 NoIR",
     "usb_name": "Logitech C270",
-    "usb_device_id": "auto"
+    "usb_device_id": "auto",
+    "usb_photometry": {
+      "auto_exposure": 1,
+      "exposure_time_absolute": 80,
+      "gain": 15,
+      "white_balance_automatic": 0,
+      "white_balance_temperature": 4800,
+      "backlight_compensation": 0,
+      "power_line_frequency": 2
+    }
   },
   "scan_calibration": {
     "checkerboard": {

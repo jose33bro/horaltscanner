@@ -210,6 +210,95 @@ class LogitechCameraOpenTests(unittest.TestCase):
         self.assertEqual(fake_cv2_2._opened_log[0], 3)
 
 
+class LogitechCameraPhotometryTests(unittest.TestCase):
+    """Opening a UVC device resets its auto-exposure/gain to defaults;
+    these tests cover re-applying configured manual controls so they stick.
+    """
+
+    def setUp(self):
+        camera_driver.LogitechCamera._last_working_device_id = None
+
+    def test_open_without_photometry_does_not_shell_out(self):
+        fake_cv2 = FakeCv2ForLogitech(working_indices={0})
+        camera = camera_driver.LogitechCamera(device_id=0)
+
+        with (
+            mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
+            mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
+            mock.patch.object(camera_driver.subprocess, "run") as run,
+        ):
+            self.assertTrue(camera.open())
+
+        run.assert_not_called()
+        # No extra frames should be discarded beyond the normal open() read.
+        self.assertEqual(
+            [event for event in camera._cap.events if event[0] == "read"],
+            [("read",)],
+        )
+
+    def test_open_applies_configured_manual_exposure_and_gain(self):
+        fake_cv2 = FakeCv2ForLogitech(working_indices={0})
+        photometry = {
+            "auto_exposure": 1,
+            "exposure_time_absolute": 80,
+            "gain": 15,
+        }
+        camera = camera_driver.LogitechCamera(device_id=0, photometry=photometry)
+
+        with (
+            mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
+            mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
+            mock.patch.object(camera_driver.shutil, "which", return_value="/usr/bin/v4l2-ctl"),
+            mock.patch.object(camera_driver.subprocess, "run") as run,
+        ):
+            self.assertTrue(camera.open())
+
+        run.assert_called_once()
+        args = run.call_args.args[0]
+        self.assertEqual(args[:3], ["/usr/bin/v4l2-ctl", "-d", "/dev/video0"])
+        self.assertEqual(
+            args[3],
+            "--set-ctrl=auto_exposure=1,exposure_time_absolute=80,gain=15",
+        )
+        # The sensor needs a few settled frames after the control change.
+        read_events = [event for event in camera._cap.events if event[0] == "read"]
+        self.assertEqual(len(read_events), 1 + camera.PHOTOMETRY_SETTLE_FRAMES)
+
+    def test_open_logs_and_continues_when_v4l2_ctl_is_missing(self):
+        fake_cv2 = FakeCv2ForLogitech(working_indices={0})
+        camera = camera_driver.LogitechCamera(
+            device_id=0, photometry={"gain": 15}
+        )
+
+        with (
+            mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
+            mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
+            mock.patch.object(camera_driver.shutil, "which", return_value=None),
+            mock.patch.object(camera_driver.subprocess, "run") as run,
+        ):
+            self.assertTrue(camera.open())
+
+        run.assert_not_called()
+
+    def test_open_continues_when_v4l2_ctl_invocation_fails(self):
+        fake_cv2 = FakeCv2ForLogitech(working_indices={0})
+        camera = camera_driver.LogitechCamera(
+            device_id=0, photometry={"gain": 15}
+        )
+
+        with (
+            mock.patch.object(camera_driver, "cv2", fake_cv2, create=True),
+            mock.patch.object(camera_driver, "_CV2_AVAILABLE", True),
+            mock.patch.object(camera_driver.shutil, "which", return_value="/usr/bin/v4l2-ctl"),
+            mock.patch.object(
+                camera_driver.subprocess,
+                "run",
+                side_effect=camera_driver.subprocess.TimeoutExpired(cmd="v4l2-ctl", timeout=5),
+            ),
+        ):
+            self.assertTrue(camera.open())
+
+
 class _QueuedCapture:
     def __init__(self, frames, *, fail_read=False):
         self.frames = list(frames)

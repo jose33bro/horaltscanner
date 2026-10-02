@@ -2,10 +2,10 @@
   "scanner": {
     "resolution": "1920x1080",
     "laser_power": 100,
-    "lidar_offset_mm": 0,
+    "lidar_offset_mm": 15.0,
     "capture_fps": 30,
-    "mode": "real",
     "simulation": false,
+    "mode": "real",
     "acquisition": {
       "scan_pose_camera": "pi",
       "center_x_before_scan": true,

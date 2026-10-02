@@ -20,11 +20,16 @@ TFLUNA_OUTPUT_ENABLE = b"\x5A\x05\x07\x01\x67"
 class LidarDriver:
     """Driver for TF-Luna LIDAR over serial (USB-TTL)."""
 
-    def __init__(self, port: str = "/dev/tfluna_usb_a1", baud: int = TFLUNA_BAUD):
+    def __init__(
+        self,
+        port: str = "/dev/tfluna_usb_a1",
+        baud: int = TFLUNA_BAUD,
+        offset_mm: float = 0.0,
+    ):
         self.port = port
         self.baud = baud
         self._ser = None
-        self._offset_mm: float = 0.0
+        self._offset_mm: float = float(offset_mm)
         self._io_lock = threading.RLock()
 
     # ------------------------------------------------------------------

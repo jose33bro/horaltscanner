@@ -39,7 +39,11 @@ class CameraCalibrationModuleTests(unittest.TestCase):
         class FakeSTM32:
             def __init__(self):
                 self.calls = []
-                self.status = {"positions": {"x": 5.0, "y": 10.0, "z": 20.0}}
+                # Positions deliberately offset from every tested target pose
+                # so that `move_to_calibration_pose`'s relative-delta logic
+                # always issues a real move (rather than skipping an axis
+                # already at its target).
+                self.status = {"positions": {"x": 5.0, "y": 10.0, "z": 99.0}}
 
             def move_motor(self, axis, distance):
                 self.calls.append((axis, distance))
@@ -163,7 +167,9 @@ class CameraCalibrationAPITests(unittest.TestCase):
         class FakeSTM32:
             def __init__(self):
                 self.calls = []
-                self.status = {"positions": {"x": 0.0, "y": 0.0, "z": 0.0}}
+                # Offset from every tested target pose so relative-delta
+                # moves are always real (not skipped as already-at-target).
+                self.status = {"positions": {"x": 5.0, "y": 5.0, "z": 5.0}}
 
             def move_motor(self, axis, distance):
                 self.calls.append(("move_motor", axis, distance))

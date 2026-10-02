@@ -4222,22 +4222,12 @@ class CalibrationServiceTests(unittest.TestCase):
         self.assertEqual(self.gpio.calls, [])
 
     def test_merge_laser_planes_preserves_untouched_side(self):
-        previous = {
-            "laser_planes": {
-                "right": {
-                    "normal": [0.0, 1.0, 0.0],
-                    "offset_mm": -15.0,
-                    "quality": {"accepted": True},
-                },
-            }
-        }
+        right = valid_calibration()["laser_planes"]["right"]
+        right.update(normal=[0.0, 1.0, 0.0], offset_mm=-15.0)
+        previous = {"laser_planes": {"right": right}}
         self.service._get_current_calibration = lambda: previous
         new_planes = {
-            "left": {
-                "normal": [1.0, 0.0, 0.0],
-                "offset_mm": -20.0,
-                "quality": {"accepted": True},
-            },
+            "left": valid_calibration()["laser_planes"]["left"],
             "calibrated_sides": ["left"],
         }
 
@@ -4250,11 +4240,7 @@ class CalibrationServiceTests(unittest.TestCase):
     def test_merge_laser_planes_leaves_never_calibrated_side_null(self):
         self.service._get_current_calibration = lambda: {}
         new_planes = {
-            "left": {
-                "normal": [1.0, 0.0, 0.0],
-                "offset_mm": -20.0,
-                "quality": {"accepted": True},
-            },
+            "left": valid_calibration()["laser_planes"]["left"],
             "calibrated_sides": ["left"],
         }
 
@@ -4278,6 +4264,14 @@ class CalibrationServiceTests(unittest.TestCase):
             dict(valid_right, offset_mm=math.inf),
             dict(valid_right, quality=None),
             dict(valid_right, quality=[]),
+            dict(valid_right, quality={}),
+            dict(valid_right, quality={"accepted": True}),
+            dict(valid_right, quality=dict(valid_right["quality"], rms_mm=None)),
+            dict(valid_right, quality=dict(valid_right["quality"], views=10 ** 400)),
+            dict(valid_right, quality=dict(
+                valid_right["quality"],
+                inlier_points_per_pose=[{"pose_index": [], "points": 10}],
+            )),
         ):
             for metadata in (None, ["right"], [" RIGHT ", "right"]):
                 with self.subTest(plane=plane, metadata=metadata):
@@ -4370,6 +4364,11 @@ class CalibrationServiceTests(unittest.TestCase):
         session = mock.Mock()
         session.capture_jpeg.side_effect = RuntimeError("photometric controls changed")
         with self.assertRaisesRegex(CalibrationError, "controls changed"):
+            self.service._capture_matched_pi(session, side="left")
+        session.capture_jpeg.assert_called_once()
+        session.capture_jpeg.reset_mock()
+        session.capture_jpeg.side_effect = TimeoutError("camera request timed out")
+        with self.assertRaisesRegex(CalibrationError, "camera request timed out"):
             self.service._capture_matched_pi(session, side="left")
         session.capture_jpeg.assert_called_once()
 

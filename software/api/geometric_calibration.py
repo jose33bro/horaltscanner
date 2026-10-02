@@ -113,9 +113,7 @@ def _validate_laser_plane_geometry(plane: Any, side: str) -> None:
 
 def _sanitize_laser_plane(plane: Any, side: str) -> dict[str, Any]:
     try:
-        _validate_laser_plane_geometry(plane, side)
-        if not isinstance(plane.get("quality"), Mapping):
-            raise CalibrationError(f"{side} laser plane quality is invalid")
+        _validate_laser_plane(plane, side)
     except CalibrationError:
         return {"normal": None, "offset_mm": None, "quality": None}
     return copy.deepcopy(dict(plane))
@@ -1605,138 +1603,16 @@ def transform_from_beam(origin_mm: Any, direction: Any) -> np.ndarray:
     return transform
 
 
-def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
-    """Validate the persisted geometry and its evidence metadata."""
-
+def _validate_laser_plane(plane: Any, side: str) -> None:
     def finite_at_least(value: Any, minimum: float) -> bool:
         try:
             number = float(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return False
         return math.isfinite(number) and number >= minimum
 
-    def matrix(value: Any, shape: tuple[int, int], label: str) -> np.ndarray:
-        result = np.asarray(value, dtype=float)
-        if result.shape != shape or not np.isfinite(result).all():
-            raise CalibrationError(f"{label} must be a finite {shape[0]}x{shape[1]} matrix")
-        if shape[0] == shape[1] and abs(float(np.linalg.det(result))) <= 1e-12:
-            raise CalibrationError(f"{label} is singular")
-        return result
-
-    board = calibration.get("checkerboard", {})
-    if (
-        not isinstance(board, Mapping)
-        or board.get("board_columns") != BOARD_COLUMNS
-        or board.get("board_rows") != BOARD_ROWS
-        or not math.isclose(
-            float(board.get("square_size_mm", math.nan)),
-            BOARD_SQUARE_MM,
-            rel_tol=0,
-            abs_tol=1e-9,
-        )
-    ):
-        raise CalibrationError(
-            "calibration checkerboard must be exactly 11x6 inner corners with 13mm squares"
-        )
-
-    cameras = calibration.get("cameras", {})
-    for name in ("pi", "usb"):
-        camera = cameras.get(name, {})
-        matrix(camera.get("intrinsic_matrix"), (3, 3), f"{name} intrinsic_matrix")
-        transform = matrix(camera.get("camera_to_scanner"), (4, 4), f"{name} camera_to_scanner")
-        if not np.allclose(transform[3], [0, 0, 0, 1], atol=1e-6):
-            raise CalibrationError(f"{name} camera_to_scanner is not homogeneous")
-        rotation = transform[:3, :3]
-        if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6) or not math.isclose(
-            float(np.linalg.det(rotation)), 1.0, rel_tol=0, abs_tol=1e-6
-        ):
-            raise CalibrationError(
-                f"{name} camera_to_scanner rotation must be right-handed and orthonormal"
-            )
-        distortion = np.asarray(camera.get("distortion_coefficients"), dtype=float).reshape(-1)
-        if len(distortion) < 4 or not np.isfinite(distortion).all():
-            raise CalibrationError(f"{name} distortion coefficients are missing")
-        quality = camera.get("quality", {})
-        rms = float(quality.get("rms_px", math.inf))
-        maximum_rms = float(quality.get("maximum_rms_px", math.nan))
-        translation_rms = float(quality.get("extrinsic_translation_rms_mm", math.inf))
-        maximum_translation = float(quality.get("maximum_extrinsic_rms_mm", math.nan))
-        rotation_rms = float(quality.get("extrinsic_rotation_rms_deg", math.inf))
-        maximum_rotation = float(quality.get("maximum_extrinsic_rms_deg", math.nan))
-        if (
-            not quality.get("accepted")
-            or not all(
-                math.isfinite(value)
-                for value in (
-                    rms,
-                    maximum_rms,
-                    translation_rms,
-                    maximum_translation,
-                    rotation_rms,
-                    maximum_rotation,
-                )
-            )
-            or maximum_rms <= 0
-            or maximum_translation <= 0
-            or maximum_rotation <= 0
-            or rms > maximum_rms
-            or translation_rms > maximum_translation
-            or rotation_rms > maximum_rotation
-        ):
-            raise CalibrationError(f"{name} camera quality is not accepted")
-        carriage_axis = camera.get("carriage_axis")
-        if carriage_axis is not None:
-            if carriage_axis not in {"x", "y", "z"}:
-                raise CalibrationError(f"{name} carriage axis is invalid")
-            direction = np.asarray(camera.get("carriage_direction"), dtype=float)
-            if (
-                direction.shape != (3,)
-                or not np.isfinite(direction).all()
-                or np.linalg.norm(direction) <= 1e-9
-            ):
-                raise CalibrationError(f"{name} carriage direction is invalid")
-            try:
-                reference = float(camera.get("reference_axis_position_mm", math.nan))
-            except (TypeError, ValueError):
-                reference = math.nan
-            if not math.isfinite(reference):
-                raise CalibrationError(
-                    f"{name} reference_axis_position_mm is required"
-                )
-            scale = camera.get("carriage_scale_mm_per_commanded_mm")
-            if scale is not None:
-                try:
-                    scale = float(scale)
-                except (TypeError, ValueError):
-                    scale = math.nan
-                if (
-                    not math.isfinite(scale)
-                    or scale <= 0
-                    or not math.isclose(
-                        scale,
-                        float(np.linalg.norm(direction)),
-                        rel_tol=1e-6,
-                        abs_tol=1e-6,
-                    )
-                ):
-                    raise CalibrationError(
-                        f"{name} carriage scale is inconsistent with carriage direction"
-                    )
-
-    laser_planes_payload = calibration.get("laser_planes", {})
-    if not isinstance(laser_planes_payload, Mapping):
-        raise CalibrationError("laser_planes must be an object")
-    if "calibrated_sides" not in laser_planes_payload:
-        # Legacy/full payloads without explicit metadata require both sides,
-        # preserving prior strict behavior.
-        calibrated_sides = list(LASER_SIDES)
-    else:
-        calibrated_sides = normalize_laser_sides(
-            laser_planes_payload["calibrated_sides"], "calibrated_sides"
-        )
-    for side in calibrated_sides:
-        plane = laser_planes_payload.get(side, {})
-        _validate_laser_plane_geometry(plane, side)
+    _validate_laser_plane_geometry(plane, side)
+    try:
         quality = plane.get("quality", {})
         if not isinstance(quality, Mapping):
             raise CalibrationError(f"{side} laser plane quality is invalid")
@@ -2000,6 +1876,134 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
             or not pose_consensus_valid
         ):
             raise CalibrationError(f"{side} laser plane quality is not accepted")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise CalibrationError(f"{side} laser plane quality is invalid") from exc
+
+
+def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
+    """Validate the persisted geometry and its evidence metadata."""
+
+    def matrix(value: Any, shape: tuple[int, int], label: str) -> np.ndarray:
+        result = np.asarray(value, dtype=float)
+        if result.shape != shape or not np.isfinite(result).all():
+            raise CalibrationError(f"{label} must be a finite {shape[0]}x{shape[1]} matrix")
+        if shape[0] == shape[1] and abs(float(np.linalg.det(result))) <= 1e-12:
+            raise CalibrationError(f"{label} is singular")
+        return result
+
+    board = calibration.get("checkerboard", {})
+    if (
+        not isinstance(board, Mapping)
+        or board.get("board_columns") != BOARD_COLUMNS
+        or board.get("board_rows") != BOARD_ROWS
+        or not math.isclose(
+            float(board.get("square_size_mm", math.nan)),
+            BOARD_SQUARE_MM,
+            rel_tol=0,
+            abs_tol=1e-9,
+        )
+    ):
+        raise CalibrationError(
+            "calibration checkerboard must be exactly 11x6 inner corners with 13mm squares"
+        )
+
+    cameras = calibration.get("cameras", {})
+    for name in ("pi", "usb"):
+        camera = cameras.get(name, {})
+        matrix(camera.get("intrinsic_matrix"), (3, 3), f"{name} intrinsic_matrix")
+        transform = matrix(camera.get("camera_to_scanner"), (4, 4), f"{name} camera_to_scanner")
+        if not np.allclose(transform[3], [0, 0, 0, 1], atol=1e-6):
+            raise CalibrationError(f"{name} camera_to_scanner is not homogeneous")
+        rotation = transform[:3, :3]
+        if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6) or not math.isclose(
+            float(np.linalg.det(rotation)), 1.0, rel_tol=0, abs_tol=1e-6
+        ):
+            raise CalibrationError(
+                f"{name} camera_to_scanner rotation must be right-handed and orthonormal"
+            )
+        distortion = np.asarray(camera.get("distortion_coefficients"), dtype=float).reshape(-1)
+        if len(distortion) < 4 or not np.isfinite(distortion).all():
+            raise CalibrationError(f"{name} distortion coefficients are missing")
+        quality = camera.get("quality", {})
+        rms = float(quality.get("rms_px", math.inf))
+        maximum_rms = float(quality.get("maximum_rms_px", math.nan))
+        translation_rms = float(quality.get("extrinsic_translation_rms_mm", math.inf))
+        maximum_translation = float(quality.get("maximum_extrinsic_rms_mm", math.nan))
+        rotation_rms = float(quality.get("extrinsic_rotation_rms_deg", math.inf))
+        maximum_rotation = float(quality.get("maximum_extrinsic_rms_deg", math.nan))
+        if (
+            not quality.get("accepted")
+            or not all(
+                math.isfinite(value)
+                for value in (
+                    rms,
+                    maximum_rms,
+                    translation_rms,
+                    maximum_translation,
+                    rotation_rms,
+                    maximum_rotation,
+                )
+            )
+            or maximum_rms <= 0
+            or maximum_translation <= 0
+            or maximum_rotation <= 0
+            or rms > maximum_rms
+            or translation_rms > maximum_translation
+            or rotation_rms > maximum_rotation
+        ):
+            raise CalibrationError(f"{name} camera quality is not accepted")
+        carriage_axis = camera.get("carriage_axis")
+        if carriage_axis is not None:
+            if carriage_axis not in {"x", "y", "z"}:
+                raise CalibrationError(f"{name} carriage axis is invalid")
+            direction = np.asarray(camera.get("carriage_direction"), dtype=float)
+            if (
+                direction.shape != (3,)
+                or not np.isfinite(direction).all()
+                or np.linalg.norm(direction) <= 1e-9
+            ):
+                raise CalibrationError(f"{name} carriage direction is invalid")
+            try:
+                reference = float(camera.get("reference_axis_position_mm", math.nan))
+            except (TypeError, ValueError):
+                reference = math.nan
+            if not math.isfinite(reference):
+                raise CalibrationError(
+                    f"{name} reference_axis_position_mm is required"
+                )
+            scale = camera.get("carriage_scale_mm_per_commanded_mm")
+            if scale is not None:
+                try:
+                    scale = float(scale)
+                except (TypeError, ValueError):
+                    scale = math.nan
+                if (
+                    not math.isfinite(scale)
+                    or scale <= 0
+                    or not math.isclose(
+                        scale,
+                        float(np.linalg.norm(direction)),
+                        rel_tol=1e-6,
+                        abs_tol=1e-6,
+                    )
+                ):
+                    raise CalibrationError(
+                        f"{name} carriage scale is inconsistent with carriage direction"
+                    )
+
+    laser_planes_payload = calibration.get("laser_planes", {})
+    if not isinstance(laser_planes_payload, Mapping):
+        raise CalibrationError("laser_planes must be an object")
+    if "calibrated_sides" not in laser_planes_payload:
+        # Legacy/full payloads without explicit metadata require both sides,
+        # preserving prior strict behavior.
+        calibrated_sides = list(LASER_SIDES)
+    else:
+        calibrated_sides = normalize_laser_sides(
+            laser_planes_payload["calibrated_sides"], "calibrated_sides"
+        )
+    for side in calibrated_sides:
+        _validate_laser_plane(laser_planes_payload.get(side, {}), side)
 
     turntable = calibration.get("turntable", {})
     circumference = float(turntable.get("mm_per_revolution", math.nan))
@@ -6595,7 +6599,11 @@ class GeometricCalibrationService:
             except CalibrationError as exc:
                 # Only completed I/O failures are safe to retry; a timed-out
                 # hardware thread may still be accessing the same camera.
-                if attempt or not isinstance(exc.__cause__, OSError):
+                if (
+                    attempt
+                    or not isinstance(exc.__cause__, OSError)
+                    or isinstance(exc.__cause__, TimeoutError)
+                ):
                     raise
             else:
                 if (

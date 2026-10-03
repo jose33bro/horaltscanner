@@ -5646,10 +5646,10 @@ class GeometricCalibrationService:
             self._config.get("minimum_laser_plane_spread_ratio", 1e-3)
         )
         ambiguity_angle = float(
-            self._config.get("laser_plane_ambiguity_normal_deg", 3.0)
+            self._config.get("laser_plane_ambiguity_normal_deg", 5.0)
         )
         ambiguity_offset = float(
-            self._config.get("laser_plane_ambiguity_offset_mm", 2.0)
+            self._config.get("laser_plane_ambiguity_offset_mm", 3.0)
         )
         similar_support_fraction = float(
             self._config.get(
@@ -5669,7 +5669,7 @@ class GeometricCalibrationService:
             <= 256
             or not 1e-3 <= minimum_spread_ratio < 1.0
             or not 0 < ambiguity_angle <= 15.0
-            or not 0 < ambiguity_offset <= 2.0
+            or not 0 < ambiguity_offset <= 5.0
             or not 0 <= similar_support_fraction <= 0.25
         ):
             raise CalibrationError("laser pose consensus configuration is unsafe")

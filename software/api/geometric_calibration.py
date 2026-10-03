@@ -1866,7 +1866,7 @@ def _validate_laser_plane(plane: Any, side: str) -> None:
             )
             or minimum_views < 3
             or views < minimum_views
-            or minimum_orientations < 3
+            or minimum_orientations < 2
             or orientations < minimum_orientations
             or minimum_spread_ratio < 1e-3
             or spread_ratio < minimum_spread_ratio
@@ -5385,7 +5385,7 @@ class GeometricCalibrationService:
         )
         minimum_views = int(self._config.get("minimum_laser_views", 3))
         minimum_orientations = int(
-            self._config.get("minimum_laser_board_orientations", 3)
+            self._config.get("minimum_laser_board_orientations", 2)
         )
         for side in active_sides:
             pi_poses = [
@@ -5609,7 +5609,7 @@ class GeometricCalibrationService:
             )
         if (
             minimum_views < 3
-            or minimum_orientations < 3
+            or minimum_orientations < 2
             or not math.isfinite(maximum_rms)
             or not 0 < maximum_rms <= 2.0
         ):

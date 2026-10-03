@@ -6003,14 +6003,17 @@ class GeometricCalibrationService:
                 )
                 ordered = [pooled_candidate] + ordered
             else:
+                # Mirror bqlabs/horus: it has no pairwise ambiguity veto at
+                # all and simply lets the single global robust fit decide.
+                # When pooling the disputed poses does not itself resolve
+                # the disagreement, do not raise here - fall through and let
+                # the normal viable/selected pipeline (with its own
+                # required_retained_poses/orientations/RMS gates below)
+                # judge the best-ranked candidate on its own merits.
                 base_quality.update(
                     ambiguous=True,
                     ambiguity=ambiguity,
-                    per_pose_residuals=ordered[0]["per_pose"],
-                )
-                raise LaserPlaneConsensusError(
-                    "ambiguous competing laser planes have similar pose support",
-                    base_quality,
+                    ambiguity_resolved_by_pooled_fit=False,
                 )
 
         viable = [

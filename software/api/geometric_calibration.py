@@ -1479,16 +1479,22 @@ def extract_laser_line_pixels(
         **gap_diagnostic,
     )
     failures = []
+    soft_warnings = []
     if len(selected) < minimum_rows:
         failures.append(f"rows {len(selected)} < {minimum_rows}")
     if line_span < minimum_span:
         failures.append(f"span {line_span:.1f}px < {minimum_span:.1f}px")
+    # Continuity/gap are informational only (Horus-style): the per-row RANSAC
+    # line fit above already enforces count/span/residual/width quality, so a
+    # partial gap (e.g. from uneven ambient lighting) should not discard an
+    # otherwise good line. Outliers across accepted views are instead removed
+    # downstream by fit_plane_robust's two-pass MAD/SVD rejection.
     if continuity < minimum_continuity:
-        failures.append(
+        soft_warnings.append(
             f"continuity {continuity:.3f} < {minimum_continuity:.3f}"
         )
     if gap_diagnostic["unexplained_max_gap_px"] > strict_gap_limit:
-        failures.append("row continuity gap is too large")
+        soft_warnings.append("row continuity gap is too large")
     if residual_rms > maximum_residual:
         failures.append(
             f"line residual {residual_rms:.2f}px > {maximum_residual:.2f}px"
@@ -1503,6 +1509,7 @@ def extract_laser_line_pixels(
 
     diagnostic["accepted"] = True
     diagnostic["reason"] = None
+    diagnostic["soft_warnings"] = soft_warnings or None
     pixels = selected[np.argsort(selected[:, 1]), :2].tolist()
     return pixels, diagnostic
 

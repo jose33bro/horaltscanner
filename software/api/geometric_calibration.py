@@ -6425,6 +6425,12 @@ class GeometricCalibrationService:
                 "verify the measured origin and direction"
             )
         rms = float(np.sqrt(np.mean(np.asarray(residuals) ** 2)))
+        try:
+            import json as _json
+            with open("/tmp/lidar_readings_debug.json", "w") as _dbg:
+                _json.dump({"readings": [{k: (v if not hasattr(v, 'tolist') else v.tolist()) for k, v in r.items() if k != 'pose'} for r in readings], "rms": rms}, _dbg, indent=2, default=str)
+        except Exception:
+            pass
         maximum = float(self._config.get("maximum_lidar_rms_mm", 20.0))
         if rms > maximum:
             raise CalibrationError(f"TF-Luna geometry RMS {rms:.2f}mm exceeds {maximum:.2f}mm")

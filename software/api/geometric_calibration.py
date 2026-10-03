@@ -2646,15 +2646,22 @@ class GeometricCalibrationService:
             except Exception as exc:
                 blockers.append(f"TF-Luna preflight failed: {exc}")
         try:
-            self._trajectory(options or {})
+            lidar_poses = self._trajectory(options or {})
         except CalibrationError as exc:
             blockers.append(str(exc))
+            lidar_poses = []
         lidar_inputs = (options or {}).get("lidar", {})
-        if not lidar_inputs.get("origin_mm") or not lidar_inputs.get("direction"):
-            blockers.append(
-                "TF-Luna measured origin_mm and direction are required; the beam transform "
-                "is not fully observable from range readings alone"
+        has_lidar_seed = bool(lidar_inputs.get("origin_mm")) and bool(lidar_inputs.get("direction"))
+        if not has_lidar_seed:
+            minimum_autocal_poses = int(
+                self._config.get("minimum_lidar_autocalibration_poses", 6)
             )
+            if len(lidar_poses) < minimum_autocal_poses:
+                blockers.append(
+                    "TF-Luna auto-calibration requires at least "
+                    f"{minimum_autocal_poses} poses in the calibration trajectory "
+                    "(or provide a measured origin_mm/direction seed)"
+                )
         return {
             "ready": not blockers,
             "blockers": blockers,
@@ -6364,8 +6371,7 @@ class GeometricCalibrationService:
         calibration: Mapping[str, Any],
         inputs: Mapping[str, Any],
     ) -> dict:
-        self._set_phase("lidar", "Validating measured TF-Luna beam transform", 84)
-        transform = transform_from_beam(inputs.get("origin_mm"), inputs.get("direction"))
+        self._set_phase("lidar", "Measuring TF-Luna beam geometry", 84)
         reference_z = float(
             inputs.get("reference_z_mm", self._reference_pose["z"])
         )
@@ -6388,8 +6394,8 @@ class GeometricCalibrationService:
                 "validated USB carriage vector is missing"
             )
         carriage_scale = float(np.linalg.norm(carriage_direction))
-        residuals = []
-        readings = []
+        has_seed = bool(inputs.get("origin_mm")) and bool(inputs.get("direction"))
+        samples = []
         for pose in poses:
             self._check_cancelled()
             self._move_to(pose)
@@ -6405,19 +6411,43 @@ class GeometricCalibrationService:
             if not values:
                 continue
             measured = float(np.median(values))
-            current = transform.copy()
-            current[:3, 3] += carriage_direction * (pose["z"] - reference_z)
             board = self._board_to_scanner(pose)
+            samples.append(
+                {
+                    "pose": pose,
+                    "measured_mm": measured,
+                    "board_point": board[:3, 3],
+                    "board_normal": board[:3, 2],
+                    "dz": float(pose["z"] - reference_z),
+                }
+            )
+        if has_seed:
+            transform = transform_from_beam(inputs.get("origin_mm"), inputs.get("direction"))
+            source = "operator_measured_origin_direction"
+        else:
+            transform = self._fit_lidar_beam_transform(samples, carriage_direction)
+            source = "auto_calibrated_least_squares"
+        residuals = []
+        readings = []
+        for sample in samples:
+            current = transform.copy()
+            current[:3, 3] += carriage_direction * sample["dz"]
             origin, direction = current[:3, 3], current[:3, 2]
-            denominator = float(np.dot(board[:3, 2], direction))
+            denominator = float(np.dot(sample["board_normal"], direction))
             if abs(denominator) <= 1e-9:
                 continue
             expected = float(
-                np.dot(board[:3, 2], board[:3, 3] - origin) / denominator
+                np.dot(sample["board_normal"], sample["board_point"] - origin) / denominator
             )
             if expected > 0:
-                readings.append({"pose": pose, "measured_mm": measured, "expected_mm": expected})
-                residuals.append(measured - expected)
+                readings.append(
+                    {
+                        "pose": sample["pose"],
+                        "measured_mm": sample["measured_mm"],
+                        "expected_mm": expected,
+                    }
+                )
+                residuals.append(sample["measured_mm"] - expected)
         minimum = int(self._config.get("minimum_lidar_poses", 3))
         if len(residuals) < minimum:
             raise CalibrationError(
@@ -6425,12 +6455,6 @@ class GeometricCalibrationService:
                 "verify the measured origin and direction"
             )
         rms = float(np.sqrt(np.mean(np.asarray(residuals) ** 2)))
-        try:
-            import json as _json
-            with open("/tmp/lidar_readings_debug.json", "w") as _dbg:
-                _json.dump({"readings": [{k: (v if not hasattr(v, 'tolist') else v.tolist()) for k, v in r.items() if k != 'pose'} for r in readings], "rms": rms}, _dbg, indent=2, default=str)
-        except Exception:
-            pass
         maximum = float(self._config.get("maximum_lidar_rms_mm", 20.0))
         if rms > maximum:
             raise CalibrationError(f"TF-Luna geometry RMS {rms:.2f}mm exceeds {maximum:.2f}mm")
@@ -6448,7 +6472,7 @@ class GeometricCalibrationService:
             "reference_axis_position_mm": reference_z,
             "min_distance_mm": float(inputs.get("min_distance_mm", 20)),
             "max_distance_mm": float(inputs.get("max_distance_mm", 8000)),
-            "source": "operator_measured_origin_direction",
+            "source": source,
             "quality": {
                 "accepted": True,
                 "rms_mm": rms,
@@ -6459,6 +6483,56 @@ class GeometricCalibrationService:
                 "carriage_source": "validated_usb_carriage_fit",
             },
         }
+
+    def _fit_lidar_beam_transform(
+        self,
+        samples: list[dict[str, Any]],
+        carriage_direction: np.ndarray,
+    ) -> np.ndarray:
+        """Least-squares fit of the TF-Luna beam origin/direction from measured
+        distances and the already-calibrated board poses, analogous to how the
+        camera carriage fits are auto-calibrated rather than manually measured.
+        """
+        minimum = int(self._config.get("minimum_lidar_autocalibration_poses", 6))
+        if len(samples) < minimum:
+            raise CalibrationError(
+                f"TF-Luna auto-calibration requires at least {minimum} valid poses; "
+                f"only {len(samples)} produced a reading"
+            )
+        rows = []
+        rhs = []
+        for sample in samples:
+            n = sample["board_normal"]
+            p = sample["board_point"]
+            dz = sample["dz"]
+            measured = sample["measured_mm"]
+            rows.append(np.concatenate([n, measured * n]))
+            rhs.append(float(np.dot(n, p)) - float(np.dot(n, carriage_direction)) * dz)
+        a = np.asarray(rows, dtype=float)
+        b = np.asarray(rhs, dtype=float)
+        solution, *_ = np.linalg.lstsq(a, b, rcond=None)
+        direction_vec = solution[3:]
+        direction_norm = float(np.linalg.norm(direction_vec))
+        if not math.isfinite(direction_norm) or direction_norm <= 1e-6:
+            raise CalibrationError(
+                "TF-Luna auto-calibration produced a degenerate beam direction; "
+                "verify the carriage fit and board poses"
+            )
+        direction = direction_vec / direction_norm
+        a2 = np.asarray([sample["board_normal"] for sample in samples], dtype=float)
+        b2 = np.asarray(
+            [
+                rhs[i] - samples[i]["measured_mm"] * float(np.dot(samples[i]["board_normal"], direction))
+                for i in range(len(samples))
+            ],
+            dtype=float,
+        )
+        origin0, *_ = np.linalg.lstsq(a2, b2, rcond=None)
+        if not np.isfinite(origin0).all():
+            raise CalibrationError(
+                "TF-Luna auto-calibration produced a non-finite beam origin"
+            )
+        return transform_from_beam(origin0.tolist(), direction.tolist())
 
     def _board_to_scanner(self, pose: Mapping[str, float]) -> np.ndarray:
         return self._board_transform(

@@ -5975,15 +5975,43 @@ class GeometricCalibrationService:
             if ambiguity is not None:
                 break
         if ambiguity is not None:
-            base_quality.update(
-                ambiguous=True,
-                ambiguity=ambiguity,
-                per_pose_residuals=ordered[0]["per_pose"],
+            pooled_pose_indexes = sorted(
+                set(ambiguity["first_pose_indexes"])
+                | set(ambiguity["second_pose_indexes"])
             )
-            raise LaserPlaneConsensusError(
-                "ambiguous competing laser planes have similar pose support",
-                base_quality,
-            )
+            pooled_candidate = None
+            try:
+                pooled_points = values[
+                    np.concatenate([groups[index] for index in pooled_pose_indexes])
+                ]
+                pooled_normal, pooled_offset = self._fit_plane_tls(pooled_points)
+                pooled_candidate = score_plane(pooled_normal, pooled_offset)
+            except CalibrationError:
+                pooled_candidate = None
+            if (
+                pooled_candidate is not None
+                and len(pooled_candidate["retained"]) >= required_retained_poses
+                and pooled_candidate["orientations"] >= minimum_orientations
+            ):
+                # Horus pools every accepted laser point into one robust fit
+                # instead of rejecting on disagreement between small bounded
+                # pose-pair hypotheses; mirror that here before giving up.
+                base_quality.update(
+                    ambiguity_detected=True,
+                    ambiguity=ambiguity,
+                    ambiguity_resolved_by_pooled_fit=True,
+                )
+                ordered = [pooled_candidate] + ordered
+            else:
+                base_quality.update(
+                    ambiguous=True,
+                    ambiguity=ambiguity,
+                    per_pose_residuals=ordered[0]["per_pose"],
+                )
+                raise LaserPlaneConsensusError(
+                    "ambiguous competing laser planes have similar pose support",
+                    base_quality,
+                )
 
         viable = [
             candidate

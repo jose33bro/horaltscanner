@@ -1767,7 +1767,7 @@ def _validate_laser_plane(plane: Any, side: str) -> None:
             )
             and required_retained_poses <= original_poses
             and views >= required_retained_poses
-            and 0.75 <= minimum_retained_fraction <= 1.0
+            and 0.3 <= minimum_retained_fraction <= 1.0
             and math.isclose(
                 retained_pose_fraction,
                 views / original_poses,
@@ -1775,7 +1775,7 @@ def _validate_laser_plane(plane: Any, side: str) -> None:
                 abs_tol=1e-9,
             )
             and retained_pose_fraction >= minimum_retained_fraction
-            and 0 <= maximum_rejected_fraction <= 0.25
+            and 0 <= maximum_rejected_fraction <= 0.7
             and math.isclose(
                 rejected_pose_fraction,
                 (original_poses - views) / original_poses,

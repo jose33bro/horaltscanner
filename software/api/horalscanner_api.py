@@ -296,9 +296,13 @@ gpio_driver = (
 lidar_driver = LidarDriver(
     port=serial_config.get("lidar_port", "/dev/ttyUSB0"),
     baud=int(serial_config.get("lidar_baud", 115200)),
+    offset_mm=float(scanner_config.get("lidar_offset_mm", 0.0)),
 )
 pi_camera = PiCamera()
-usb_camera = LogitechCamera(device_id=camera_config.get("usb_device_id", "auto"))
+usb_camera = LogitechCamera(
+    device_id=camera_config.get("usb_device_id", "auto"),
+    photometry=camera_config.get("usb_photometry"),
+)
 _scan_hardware_lock = HardwareReservationLock()
 scan_session = ScanSession(
     simulation=_simulation_enabled(scanner_config),
@@ -982,6 +986,8 @@ def lidar_calibrate():
     offset = lidar_driver.calibrate(known_distance_mm=known_distance_mm)
     if offset is None:
         return _json_error("TF-Luna calibration failed: no measurements", 502)
+    scanner_config["lidar_offset_mm"] = round(offset, 1)
+    config_manager.save(application_config)
     return jsonify({"success": True, "offset_mm": round(offset, 1)})
 
 

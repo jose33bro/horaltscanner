@@ -8,6 +8,8 @@ import glob
 import io
 import logging
 import math
+import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -103,11 +105,27 @@ class LogitechCamera:
     #: in half.
     _last_working_device_id: int | str | None = None
 
-    def __init__(self, device_id: int | str | None = None):
+    #: Frames discarded right after applying manual exposure/gain controls
+    #: so the sensor settles on the new photometry before any caller (e.g.
+    #: geometric calibration's checkerboard detection) captures a photo.
+    PHOTOMETRY_SETTLE_FRAMES = 5
+
+    def __init__(
+        self,
+        device_id: int | str | None = None,
+        photometry: dict | None = None,
+    ):
         self.device_id = self._normalize_device_id(device_id)
         self._cap = None
         self._lock = threading.Lock()
         self.last_error: str | None = None
+        #: Manual V4L2 controls (auto_exposure, exposure_time_absolute, gain,
+        #: white_balance_automatic, ...) applied every time the device is
+        #: (re)opened. ``None``/empty disables this entirely (default
+        #: auto-exposure behaviour), since opening a fresh
+        #: ``cv2.VideoCapture`` resets the UVC driver's controls and
+        #: otherwise silently discards any externally-applied settings.
+        self.photometry = dict(photometry) if photometry else None
 
     @staticmethod
     def _normalize_device_id(device_id: int | str | None) -> int | None:
@@ -125,6 +143,65 @@ class LogitechCamera:
                 )
                 return None
         return int(device_id)
+
+    @staticmethod
+    def _device_path_for_control(idx: int | str) -> str:
+        """Map an opened candidate (``int`` index or ``/dev/v4l/by-id/...``
+        path) to a path ``v4l2-ctl`` can target."""
+        if isinstance(idx, int):
+            return f"/dev/video{idx}"
+        return str(idx)
+
+    def _apply_photometry(self, idx: int | str, cap) -> None:
+        """Lock manual exposure/gain/white-balance on a freshly opened USB
+        camera handle.
+
+        Opening a V4L2 UVC device resets the driver's auto-exposure/gain to
+        their power-on defaults, silently discarding any control previously
+        applied via ``v4l2-ctl``. Left unmanaged, this defaults to an
+        auto-exposure mode that can badly overexpose the sensor (observed:
+        ~29% of pixels clipped to white), which in turn prevents checkerboard
+        corner detection during geometric calibration regardless of what
+        exposure/gain the operator configures beforehand. Re-applying the
+        configured controls here, after ``cap`` is confirmed open, makes
+        them stick for the lifetime of this handle.
+        """
+        if not self.photometry:
+            return
+        executable = shutil.which("v4l2-ctl")
+        if executable is None:
+            logger.warning(
+                "USB camera: v4l2-ctl introuvable; impossible d'appliquer "
+                "l'exposition/gain manuels configures (usb_photometry)"
+            )
+            return
+        device_path = self._device_path_for_control(idx)
+        controls = ",".join(
+            f"{key}={value}" for key, value in self.photometry.items()
+        )
+        try:
+            subprocess.run(
+                [executable, "-d", device_path, f"--set-ctrl={controls}"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning(
+                "USB camera: echec de l'application de la photometrie "
+                "manuelle sur %s (%s): %s",
+                device_path, controls, exc,
+            )
+            return
+        logger.info(
+            "USB camera: photometrie manuelle appliquee sur %s (%s)",
+            device_path, controls,
+        )
+        # The sensor needs a handful of frames to settle on the newly
+        # applied exposure/gain before a caller captures a meaningful photo.
+        for _ in range(self.PHOTOMETRY_SETTLE_FRAMES):
+            cap.read()
 
     def open(self) -> bool:
         if not _CV2_AVAILABLE:
@@ -159,6 +236,7 @@ class LogitechCamera:
                     ok, _frame = cap.read()
 
                 if opened and ok:
+                    self._apply_photometry(idx, cap)
                     self._cap = cap
                     if idx != self.device_id:
                         logger.info(

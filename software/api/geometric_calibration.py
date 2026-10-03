@@ -5631,10 +5631,10 @@ class GeometricCalibrationService:
             self._config.get("minimum_laser_pose_inlier_fraction", 0.75)
         )
         minimum_retained_fraction = float(
-            self._config.get("minimum_laser_pose_consensus_fraction", 0.75)
+            self._config.get("minimum_laser_pose_consensus_fraction", 0.35)
         )
         maximum_rejected_fraction = float(
-            self._config.get("maximum_laser_rejected_pose_fraction", 0.25)
+            self._config.get("maximum_laser_rejected_pose_fraction", 0.65)
         )
         maximum_hypotheses = int(
             self._config.get("maximum_laser_pose_hypotheses", 128)
@@ -5661,8 +5661,8 @@ class GeometricCalibrationService:
             or minimum_points < 30
             or minimum_points_per_view < 10
             or not 0.75 <= minimum_inlier_fraction <= 1.0
-            or not 0.75 <= minimum_retained_fraction <= 1.0
-            or not 0 <= maximum_rejected_fraction <= 0.25
+            or not 0.3 <= minimum_retained_fraction <= 1.0
+            or not 0 <= maximum_rejected_fraction <= 0.7
             or not 1 <= maximum_hypotheses <= 128
             or not minimum_points_per_view
             <= maximum_points_per_pose

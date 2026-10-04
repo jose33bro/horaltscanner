@@ -2762,7 +2762,7 @@ class GeometricCalibrationService:
                     poses, calibration, views, laser_sides=laser_sides
                 )
             )
-            calibration["lidar"] = self._calibrate_lidar(poses, calibration, options["lidar"])
+            calibration["lidar"] = self._calibrate_lidar(poses, calibration, options.get("lidar", {}))
             self._set_phase("validation", "Validating all numeric and residual checks", 92)
             validate_calibration_payload(calibration)
             report = {

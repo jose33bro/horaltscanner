@@ -3535,6 +3535,7 @@ class GeometricCalibrationService:
         *,
         x_scale: float,
         y_scale: float,
+        center_offset: tuple[float, float] = (0.0, 0.0),
     ) -> np.ndarray:
         angle = y_scale * (
             float(pose["y"]) - float(self._reference_pose["y"])
@@ -3543,11 +3544,18 @@ class GeometricCalibrationService:
         transform[:3, :3] = (
             self._rotation_z(angle) @ BOARD_TO_SCANNER_AT_REFERENCE
         )
+        # ``center_offset`` is the (x, y) lever arm between the board's own
+        # origin (pinned to the scanner origin at the reference pose) and the
+        # true physical rotation axis. A board placed exactly on the axis has
+        # a zero lever arm and this term vanishes, reproducing the previous
+        # (axis-at-origin) behaviour exactly. Otherwise the board position
+        # traces a circle of this radius around the axis as it rotates.
+        lever = np.array([center_offset[0], center_offset[1], 0.0])
         transform[:3, 3] = [
             x_scale * (float(pose["x"]) - float(self._reference_pose["x"])),
             0.0,
             0.0,
-        ]
+        ] + (self._rotation_z(angle) @ lever - lever)
         return transform
 
     def _reference_camera_candidates(
@@ -3556,6 +3564,7 @@ class GeometricCalibrationService:
         *,
         x_scale: float,
         y_scale: float,
+        center_offset: tuple[float, float] = (0.0, 0.0),
     ) -> dict[str, list[np.ndarray]]:
         result: dict[str, list[np.ndarray]] = {}
         for name, camera_views in views.items():
@@ -3565,7 +3574,10 @@ class GeometricCalibrationService:
                 if board_to_camera is None:
                     continue
                 candidate = self._board_transform(
-                    view["pose"], x_scale=x_scale, y_scale=y_scale
+                    view["pose"],
+                    x_scale=x_scale,
+                    y_scale=y_scale,
+                    center_offset=center_offset,
                 ) @ np.linalg.inv(np.asarray(board_to_camera, dtype=float))
                 if name == "usb":
                     candidate[:3, 3] -= np.array(
@@ -3586,9 +3598,10 @@ class GeometricCalibrationService:
         *,
         x_scale: float,
         y_scale: float,
+        center_offset: tuple[float, float] = (0.0, 0.0),
     ) -> dict:
         by_camera = self._reference_camera_candidates(
-            views, x_scale=x_scale, y_scale=y_scale
+            views, x_scale=x_scale, y_scale=y_scale, center_offset=center_offset
         )
         residuals: list[float] = []
         per_camera: dict[str, float] = {}
@@ -3663,6 +3676,89 @@ class GeometricCalibrationService:
             ),
         }
         return fitted, candidates
+
+    def _fit_turntable_center_offset(
+        self,
+        views: Mapping[str, list[dict]],
+        *,
+        reference_camera: str,
+        x_scale: float,
+        y_scale: float,
+    ) -> dict:
+        """Fit the (x, y) lever arm between the board origin and the true
+        physical rotation axis from the fixed reference camera's trajectory.
+
+        A board that is not perfectly centered on the turntable traces a
+        circle around the true axis as it rotates; this recovers that
+        circle's center via linear least squares (the same principle Horus
+        and OpenScan use), instead of assuming the axis sits at the origin.
+        """
+        baseline = self._translation_fit_score(
+            views, x_scale=x_scale, y_scale=y_scale, center_offset=(0.0, 0.0)
+        )
+        zero_candidates = self._reference_camera_candidates(
+            views, x_scale=x_scale, y_scale=y_scale, center_offset=(0.0, 0.0)
+        ).get(reference_camera, [])
+        reference_views = [
+            view
+            for view in views.get(reference_camera, [])
+            if view.get("board_to_camera") is not None
+        ]
+        rows: list[list[float]] = []
+        targets: list[float] = []
+        for view, candidate in zip(reference_views, zero_candidates):
+            angle = y_scale * (
+                float(view["pose"]["y"]) - float(self._reference_pose["y"])
+            )
+            cos_a, sin_a = math.cos(angle), math.sin(angle)
+            translation = candidate[:3, 3]
+            rows.append([1.0, 0.0, -cos_a, sin_a])
+            targets.append(float(translation[0]))
+            rows.append([0.0, 1.0, -sin_a, -cos_a])
+            targets.append(float(translation[1]))
+        diameter = float(self._config.get("turntable_diameter_mm", 200.0))
+        maximum_offset = diameter * float(
+            self._config.get("maximum_turntable_center_offset_fraction", 0.6)
+        )
+        if len(rows) < 8:
+            return {
+                "accepted": False,
+                "reason": "insufficient observations for axis-center fit",
+                "lever_offset_mm": [0.0, 0.0],
+                "baseline_translation_rms_mm": baseline["translation_rms_mm"],
+            }
+        design = np.asarray(rows, dtype=float)
+        target = np.asarray(targets, dtype=float)
+        solution, *_ = np.linalg.lstsq(design, target, rcond=None)
+        lever_x, lever_y = float(solution[2]), float(solution[3])
+        magnitude = math.hypot(lever_x, lever_y)
+        fitted = self._translation_fit_score(
+            views,
+            x_scale=x_scale,
+            y_scale=y_scale,
+            center_offset=(lever_x, lever_y),
+        )
+        improvement = baseline["translation_rms_mm"] - fitted["translation_rms_mm"]
+        minimum_improvement = float(
+            self._config.get("minimum_turntable_center_fit_improvement_mm", 0.2)
+        )
+        accepted = (
+            magnitude <= maximum_offset
+            and improvement >= minimum_improvement
+            and math.isfinite(lever_x)
+            and math.isfinite(lever_y)
+        )
+        return {
+            "accepted": accepted,
+            "lever_offset_mm": [lever_x, lever_y],
+            "lever_offset_magnitude_mm": magnitude,
+            "maximum_offset_mm": maximum_offset,
+            "baseline_translation_rms_mm": baseline["translation_rms_mm"],
+            "fitted_translation_rms_mm": fitted["translation_rms_mm"],
+            "improvement_mm": improvement,
+            "minimum_improvement_mm": minimum_improvement,
+            "samples": len(reference_views),
+        }
 
     def _estimate_motion_model(self, views: Mapping[str, list[dict]]) -> dict:
         reference_camera = "pi"
@@ -3769,6 +3865,14 @@ class GeometricCalibrationService:
                 + "; axis candidates "
                 + json.dumps(diagnostics, separators=(",", ":"), sort_keys=True)
             )
+        center_offset = self._fit_turntable_center_offset(
+            sign_views,
+            reference_camera=reference_camera,
+            x_scale=fitted_x,
+            y_scale=y_scale,
+        )
+        with self._lock:
+            self._status["turntable_center_fit"] = copy.deepcopy(center_offset)
         return {
             "accepted": True,
             "reference_pose_mm": {
@@ -3787,6 +3891,12 @@ class GeometricCalibrationService:
             "minimum_direction_score_ratio": minimum_ratio,
             "command_sign_reference_camera": reference_camera,
             "candidate_residuals": diagnostics,
+            "center_offset_mm": (
+                center_offset["lever_offset_mm"]
+                if center_offset["accepted"]
+                else [0.0, 0.0]
+            ),
+            "center_offset_fit": center_offset,
             "frame_convention": (
                 "reference board +X -> scanner +Y, board +Y -> scanner +Z, "
                 "board normal -> scanner +X; signed X and Y command directions "
@@ -5097,8 +5207,13 @@ class GeometricCalibrationService:
     def _turntable_calibration(self) -> dict:
         diameter = float(self._config.get("turntable_diameter_mm", 200.0))
         circumference = math.pi * diameter
+        center_offset = self._motion_model.get("center_offset_mm", [0.0, 0.0])
         return {
-            "center_mm": [0.0, 0.0, 0.0],
+            "center_mm": [
+                float(center_offset[0]),
+                float(center_offset[1]),
+                0.0,
+            ],
             "axis": [0.0, 0.0, 1.0],
             "diameter_mm": diameter,
             "mm_per_revolution": circumference,
@@ -5123,6 +5238,9 @@ class GeometricCalibrationService:
                 ),
                 "candidate_residuals": copy.deepcopy(
                     self._motion_model["candidate_residuals"]["y"]
+                ),
+                "center_offset_fit": copy.deepcopy(
+                    self._motion_model.get("center_offset_fit", {})
                 ),
             },
         }

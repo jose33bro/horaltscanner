@@ -2629,6 +2629,7 @@ class CalibrationServiceTests(unittest.TestCase):
         usb_pnp_adjustment=None,
         usb_carriage_direction=None,
         usb_same_side=False,
+        center_offset=(0.0, 0.0),
     ):
         poses = self.service._trajectory({})
         self.service._reference_pose = dict(poses[0])
@@ -2722,7 +2723,10 @@ class CalibrationServiceTests(unittest.TestCase):
         for name in ("pi", "usb"):
             for index, pose in enumerate(poses):
                 scanner_from_board = self.service._board_transform(
-                    pose, x_scale=x_scale, y_scale=y_scale
+                    pose,
+                    x_scale=x_scale,
+                    y_scale=y_scale,
+                    center_offset=center_offset,
                 )
                 scanner_from_camera = camera_to_scanner[name].copy()
                 if name == "usb":
@@ -2860,6 +2864,26 @@ class CalibrationServiceTests(unittest.TestCase):
                         self.assertEqual(
                             result["quality"]["command_sign_reference_camera"], "pi"
                         )
+
+    def test_axis_model_fits_turntable_center_offset_from_board_lever_arm(self):
+        expected_y = 2.0 / 200.0
+        true_offset = (1.2, -0.8)
+        views, _ = self._synthetic_motion_views(
+            1.0, expected_y, center_offset=true_offset
+        )
+        model = self.service._estimate_motion_model(views)
+        fit = model["center_offset_fit"]
+        self.assertTrue(fit["accepted"])
+        np.testing.assert_allclose(
+            model["center_offset_mm"], list(true_offset), atol=0.15
+        )
+        self.assertLess(fit["fitted_translation_rms_mm"], fit["baseline_translation_rms_mm"])
+
+    def test_axis_model_leaves_center_offset_at_zero_without_lever_arm(self):
+        expected_y = 2.0 / 200.0
+        views, _ = self._synthetic_motion_views(1.0, expected_y)
+        model = self.service._estimate_motion_model(views)
+        self.assertEqual(model["center_offset_mm"], [0.0, 0.0])
 
     def test_fixed_pi_sign_fit_handles_opposed_usb_candidate_split(self):
         expected_x = -0.984607

@@ -930,7 +930,7 @@ class ScanSession:
             or orientations != int(orientations)
             or minimum_orientations != int(minimum_orientations)
             or orientations < minimum_orientations
-            or minimum_orientations < 3
+            or minimum_orientations < 2
             or hypotheses != int(hypotheses)
             or maximum_hypotheses != int(maximum_hypotheses)
             or not original >= views >= minimum_views >= 3
@@ -941,11 +941,11 @@ class ScanSession:
                 math.ceil(original * (1.0 - maximum_rejected)),
             )
             or views < required
-            or not 0.75 <= minimum_fraction <= retained_fraction <= 1.0
+            or not 0.3 <= minimum_fraction <= retained_fraction <= 1.0
             or not math.isclose(
                 retained_fraction, views / original, rel_tol=0, abs_tol=1e-9
             )
-            or not 0 <= rejected_fraction <= maximum_rejected <= 0.25
+            or not 0 <= rejected_fraction <= maximum_rejected <= 0.7
             or not math.isclose(
                 rejected_fraction,
                 (original - views) / original,

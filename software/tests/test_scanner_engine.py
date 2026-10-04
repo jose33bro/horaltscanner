@@ -1087,7 +1087,12 @@ class RealScanSessionTests(unittest.TestCase):
     def test_laser_difference_is_triangulated_with_calibrated_plane(self):
         import cv2
 
-        session = self.make_session()
+        # This trivial synthetic calibration (identity intrinsics/extrinsics)
+        # triangulates to coordinates far outside any realistic turntable
+        # footprint, so the scan-volume filter is disabled here: this test
+        # is about the raw triangulation math, not volume filtering.
+        config = dict(SAFE_CONFIG, scan_volume_filter_enabled=False)
+        session = self.make_session(config=config)
         ambient = np.zeros((8, 8, 3), dtype=np.uint8)
         laser = ambient.copy()
         laser[:, 2, 2] = 255
@@ -1106,6 +1111,58 @@ class RealScanSessionTests(unittest.TestCase):
 
         self.assertGreater(len(points), 0)
         self.assertTrue(all(abs(point[2] - 100.0) < 1e-6 for point in points))
+
+    def test_scan_volume_bounds_default_from_turntable_diameter(self):
+        session = self.make_session()
+
+        max_radius, min_height, max_height = session._scan_volume_bounds()
+
+        self.assertAlmostEqual(max_radius, 110.0)
+        self.assertAlmostEqual(min_height, -15.0)
+        self.assertAlmostEqual(max_height, 350.0)
+
+    def test_within_scan_volume_accepts_object_rejects_plate_and_rig(self):
+        session = self.make_session()
+
+        on_object = np.array([20.0, 10.0, 50.0])
+        beyond_plate_radius = np.array([150.0, 0.0, 50.0])
+        above_plausible_height = np.array([20.0, 10.0, 900.0])
+
+        self.assertTrue(session._within_scan_volume(on_object))
+        self.assertFalse(session._within_scan_volume(beyond_plate_radius))
+        self.assertFalse(session._within_scan_volume(above_plausible_height))
+
+    def test_scan_volume_filter_can_be_disabled_via_config(self):
+        config = dict(SAFE_CONFIG, scan_volume_filter_enabled=False)
+        session = self.make_session(config=config)
+
+        far_point = np.array([5000.0, 0.0, -5000.0])
+
+        self.assertTrue(session._within_scan_volume(far_point))
+
+    def test_extract_points_drops_triangulated_points_outside_scan_volume(self):
+        import cv2
+
+        calibration = copy.deepcopy(VALID_CALIBRATION)
+        calibration["laser_planes"]["left"]["offset_mm"] = -900.0
+        session = self.make_session(calibration=calibration)
+        ambient = np.zeros((8, 8, 3), dtype=np.uint8)
+        laser = ambient.copy()
+        laser[:, 2, 2] = 255
+        ok_ambient, ambient_buffer = cv2.imencode(".jpg", ambient)
+        ok_laser, laser_buffer = cv2.imencode(".jpg", laser)
+        self.assertTrue(ok_ambient and ok_laser)
+
+        points = ScanSession._extract_points(
+            session,
+            "pi",
+            "left",
+            ambient_buffer.tobytes(),
+            laser_buffer.tobytes(),
+            {"x": 0.0, "y": 0.0, "z": 0.0},
+        )
+
+        self.assertEqual(points, [])
 
 
 class _FakeVector3dVector(list):

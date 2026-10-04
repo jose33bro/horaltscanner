@@ -1602,6 +1602,8 @@ class ScanSession:
             point, self._calibration["lidar"], trajectory_origin
         )
         point = self._normalize_turntable_point(point, trajectory_origin)
+        if not self._within_scan_volume(point):
+            return
         with self._lock:
             self._data.add_point(*point.tolist(), 1.0, 0.85, 0.2)
 
@@ -1668,6 +1670,8 @@ class ScanSession:
                 continue
             point = translated_origin + direction * ray_distance
             point = self._normalize_turntable_point(point, trajectory_origin)
+            if not self._within_scan_volume(point):
+                continue
             points.append(point.tolist())
         return points
 
@@ -1757,6 +1761,52 @@ class ScanSession:
         translated = center.copy()
         translated[0] += signed_scale * (x - reference_x)
         return translated
+
+    def _scan_volume_bounds(self) -> tuple[float, float, float]:
+        """Return (max_radius_mm, min_height_mm, max_height_mm) for valid points.
+
+        The turntable plate and the camera/laser support rig sit in the
+        same field of view as the scanned object. Without a volume filter
+        the reconstructed point cloud also contains the plate's edge and
+        the mounting arms, which shows up as a stepped "pedestal" artifact
+        wrapped around the real object. Bounds default to the calibrated
+        turntable footprint (plus a small margin) and a generous height
+        range, and are fully tunable via config for larger objects.
+        """
+        margin = float(self._config.get("scan_volume_radius_margin_mm", 10.0))
+        diameter = None
+        try:
+            diameter = float(self._calibration.get("turntable", {}).get("diameter_mm"))
+        except (TypeError, ValueError):
+            diameter = None
+        if diameter is None or not math.isfinite(diameter) or diameter <= 0:
+            diameter = 200.0
+        default_max_radius = diameter / 2.0 + margin
+        max_radius = float(
+            self._config.get("scan_volume_max_radius_mm", default_max_radius)
+        )
+        min_height = float(self._config.get("scan_volume_min_height_mm", -15.0))
+        max_height = float(self._config.get("scan_volume_max_height_mm", 350.0))
+        return max_radius, min_height, max_height
+
+    def _within_scan_volume(self, point: np.ndarray) -> bool:
+        """Reject points outside the expected turntable/object footprint.
+
+        Scanner-frame Z is the turntable's rotation-invariant axis (height);
+        X-Y is the horizontal rotation plane. Points far outside the
+        calibrated plate radius or a plausible height range are either the
+        plate/rig structure or implausible ray-triangulation outliers
+        (background reflections) and must not reach the final point cloud.
+        """
+        if not self._config_bool("scan_volume_filter_enabled", True):
+            return True
+        max_radius, min_height, max_height = self._scan_volume_bounds()
+        radius = math.hypot(float(point[0]), float(point[1]))
+        height = float(point[2])
+        return radius <= max_radius and min_height <= height <= max_height
+
+    def _config_bool(self, name: str, default: bool) -> bool:
+        return bool(self._config.get(name, default))
 
     def _set_laser(self, side: str, enabled: bool) -> None:
         with self._lock:

@@ -373,7 +373,7 @@ class _SequencingSession(ScanSession):
         laser_jpeg,
         trajectory_origin,
     ):
-        return [[1.0, 2.0, 3.0]]
+        return [[1.0, 2.0, 3.0, 0.4, 0.4, 0.4]]
 
 
 class RealScanSessionTests(unittest.TestCase):
@@ -812,7 +812,7 @@ class RealScanSessionTests(unittest.TestCase):
 
         self.assertGreater(len(points), 0)
         for point in points:
-            np.testing.assert_allclose(point, [10.0, 0.0, 8.0])
+            np.testing.assert_allclose(point[:3], [10.0, 0.0, 8.0])
 
     def test_lidar_point_uses_absolute_calibration_reference_not_scan_origin(self):
         session = self.make_session(saved_pose={"x": 0.0, "y": 0.0, "z": 7.0})
@@ -1111,6 +1111,36 @@ class RealScanSessionTests(unittest.TestCase):
 
         self.assertGreater(len(points), 0)
         self.assertTrue(all(abs(point[2] - 100.0) < 1e-6 for point in points))
+
+    @unittest.skipUnless(_CV2_AVAILABLE, "OpenCV required")
+    def test_extract_points_samples_real_pixel_color_from_ambient_frame(self):
+        import cv2
+
+        config = dict(SAFE_CONFIG, scan_volume_filter_enabled=False)
+        session = self.make_session(config=config)
+        ambient = np.zeros((8, 8, 3), dtype=np.uint8)
+        # Distinct, known BGR color at the column where the laser is detected.
+        ambient[:, 2] = (30, 60, 200)
+        laser = ambient.copy()
+        laser[:, 2, 2] = 255
+        # Lossless encoding so the sampled color matches exactly.
+        ok_ambient, ambient_buffer = cv2.imencode(".png", ambient)
+        ok_laser, laser_buffer = cv2.imencode(".png", laser)
+        self.assertTrue(ok_ambient and ok_laser)
+
+        points = ScanSession._extract_points(
+            session,
+            "pi",
+            "left",
+            ambient_buffer.tobytes(),
+            laser_buffer.tobytes(),
+            {"x": 0.0, "y": 0.0, "z": 0.0},
+        )
+
+        self.assertGreater(len(points), 0)
+        for point in points:
+            _x, _y, _z, r, g, b = point
+            np.testing.assert_allclose([r, g, b], [200 / 255, 60 / 255, 30 / 255])
 
     def test_scan_volume_bounds_default_from_turntable_diameter(self):
         session = self.make_session()

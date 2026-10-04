@@ -1275,10 +1275,10 @@ class ScanSession:
                             )
                             camera_counts[camera_name] += len(points)
                             laser_counts[side] += len(points)
-                            color = (1.0, 0.2, 0.2) if side == "left" else (0.3, 0.6, 1.0)
                             with self._lock:
                                 for point in points:
-                                    self._data.add_point(*point, *color)
+                                    x, y, z, r, g, b = point
+                                    self._data.add_point(x, y, z, r=r, g=g, b=b)
                     finally:
                         self._set_laser(side, False)
 
@@ -1674,8 +1674,25 @@ class ScanSession:
             point = self._normalize_turntable_point(point, trajectory_origin)
             if not self._within_scan_volume(point, volume_center):
                 continue
-            points.append(point.tolist())
+            color = self._sample_photometric_color(ambient, u, v)
+            points.append(point.tolist() + color)
         return points
+
+    @staticmethod
+    def _sample_photometric_color(
+        ambient_bgr: np.ndarray, u: float, v: float
+    ) -> list[float]:
+        """Sample the real pixel color from the ambient (laser-off) frame.
+
+        Returns a normalized [r, g, b] in [0, 1], giving each triangulated
+        point its true photometric color instead of a fixed per-side tint.
+        """
+        row = int(round(v))
+        col = int(round(u))
+        row = min(max(row, 0), ambient_bgr.shape[0] - 1)
+        col = min(max(col, 0), ambient_bgr.shape[1] - 1)
+        b, g, r = ambient_bgr[row, col]
+        return [float(r) / 255.0, float(g) / 255.0, float(b) / 255.0]
 
     def _laser_line_detected(self, laser_jpeg: bytes) -> bool:
         """Reuse the shared alignment analyzer before calibrated triangulation."""

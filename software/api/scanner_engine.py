@@ -100,7 +100,7 @@ class ScanSession:
     _LASER_SIDES = ("left", "right")
     _MAX_ROTATION_STEPS = 72
     _MAX_Z_LEVELS = 20
-    _MAX_AXIS_TRAVEL_MM = 100.0
+    _MAX_AXIS_TRAVEL_MM = 650.0
     _MAX_X_MM = 195.0
 
     def __init__(

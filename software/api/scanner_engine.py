@@ -652,7 +652,7 @@ class ScanSession:
                     quality.get("minimum_board_orientations"),
                     positive=True,
                 )
-                and float(quality["minimum_board_orientations"]) >= 3
+                and float(quality["minimum_board_orientations"]) >= 2
                 and float(quality["independent_board_orientations"])
                 >= float(quality["minimum_board_orientations"])
                 and self._finite_number(

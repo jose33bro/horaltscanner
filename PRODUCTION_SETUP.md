@@ -67,7 +67,7 @@ Avant de déployer via systemd, testez que tout fonctionne:
 cd software
 gunicorn \
   --workers 1 \
-  --worker-class gevent \
+  --worker-class sync \
   --bind 127.0.0.1:5000 \
   api:create_app
 
@@ -87,7 +87,7 @@ Crée le fichier `/etc/systemd/system/horaltscanner.service`:
 ```bash
 sudo tee /etc/systemd/system/horaltscanner.service > /dev/null <<'EOF'
 [Unit]
-Description=HoralScanner 3D Scanner API (Gunicorn + Gevent)
+Description=HoralScanner 3D Scanner API (Gunicorn)
 After=network.target
 Wants=network-online.target
 
@@ -99,9 +99,15 @@ Environment="PATH=/home/pi/horaltscanner_env/bin"
 Environment="PYTHONUNBUFFERED=1"
 
 # Un seul processus doit posseder le GPIO, les ports serie et les cameras.
+# N'utilisez JAMAIS --worker-class gevent: le driver STM32/moteur fait des
+# lectures bloquantes sur un port serie (pyserial), et le monkey-patching de
+# gevent intercepte cette lecture comme s'il s'agissait d'un socket; l'attente
+# cooperative ne se reveille alors plus jamais. Chaque requete qui touche le
+# driver (meme /api/status) reste bloquee indefiniment. Confirme sur le
+# materiel: gevent -> sync a transforme un blocage infini en reponse ~15ms.
 ExecStart=/home/pi/horaltscanner_env/bin/gunicorn \
   --workers 1 \
-  --worker-class gevent \
+  --worker-class sync \
   --bind 0.0.0.0:5000 \
   --access-logfile - \
   --error-logfile - \
@@ -206,7 +212,19 @@ sudo systemctl restart horaltscanner
 ### Reconstruction très lente / API freezes
 - Vérifiez que vous utilisez **Gunicorn** (pas `python api/horalscanner_api.py`)
 - Vérifiez que vous avez **1 worker** configuré; le matériel et l'état du scan ont un propriétaire unique
-- Vérifiez que vous utilisez **gevent** worker class (non-bloquant)
+- Vérifiez que vous utilisez le worker class **sync** (pas `gevent` — voir ci-dessous)
+
+### API `/api/status` ou toute route hang indéfiniment (timeout, aucune réponse)
+- Cause confirmée sur matériel: `--worker-class gevent` casse les lectures
+  bloquantes du driver STM32/moteur sur le port série (`pyserial`). Le
+  monkey-patching de gevent intercepte la lecture TTY comme un socket, et
+  l'attente coopérative ne se réveille jamais — même avec un `timeout_s`
+  configuré côté pyserial.
+- Solution: utilisez `--worker-class sync` (déjà fait dans ce guide). Avec
+  1 seul worker, l'accès au matériel est de toute façon sérialisé par
+  requête, donc gevent n'apporte aucun gain de concurrence ici.
+- Si le service est déjà bloqué: `sudo fuser -k 5000/tcp` puis
+  `sudo systemctl restart horaltscanner`.
 
 ### Open3D import error
 ```bash
@@ -224,10 +242,12 @@ bash software/scripts/install_open3d_pi.sh
 
 1. **1 worker** pour tout déploiement matériel:
    - Ne l'augmentez pas: GPIO, série, caméras et état du scan sont partagés
-   - Utilisez gevent et les tâches d'arrière-plan pour conserver une API réactive
+   - Utilisez le worker class **sync** (pas `gevent`, voir Dépannage) et les
+     tâches d'arrière-plan pour conserver une API réactive
 
-2. **Gevent worker class** élimine le blocage I/O:
-   - Les captures d'image, uploads, et reads API deviennent async
+2. **Worker class `sync`**:
+   - Un seul worker sérialise déjà l'accès au matériel par requête
+   - Les captures d'image, uploads, et reads API passent par des locks explicites
    - Le Poisson reconstruction tourne en background thread
 
 3. **Asynchronous reconstruction** (PR #83):
@@ -295,9 +315,8 @@ Une fois déployé, vérifiez:
   - Pas de logging structuré
   - Pas de gestion des signaux (SIGTERM, etc.)
 
-- **Gunicorn + gevent** résout tout cela:
-  - Multi-worker concurrence
-  - Gevent rend I/O et threads non-bloquants
+- **Gunicorn** résout tout cela:
+  - Worker sync dédié au matériel (1 process, requêtes sérialisées)
   - Graceful shutdown + restart
   - Logging structuré via systemd journal
 

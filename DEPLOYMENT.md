@@ -97,22 +97,27 @@ cannot serve multiple *concurrent* requests, which limits the benefit of
 that async work.
 
 For production/RPi4 deployments, run the API behind
-[Gunicorn](https://gunicorn.org/) with the `gevent` worker class, which
-gives cooperative, non-blocking concurrency well suited to a Raspberry Pi's
-limited CPU cores:
+[Gunicorn](https://gunicorn.org/) with the `sync` worker class:
 
 ```bash
-pip install -r requirements.txt  # installs gunicorn + gevent
+pip install -r requirements.txt  # installs gunicorn
 cd software
-gunicorn --workers 1 --worker-class gevent --bind 0.0.0.0:5000 "api:create_app()"
+gunicorn --workers 1 --worker-class sync --bind 0.0.0.0:5000 "api:create_app()"
 ```
 
 - `--workers 1`: hardware acquisition must have exactly one owning process.
   Multiple worker processes would each create independent GPIO, serial, camera,
   and scan-session state and are unsafe for physical scanning.
-- `--worker-class gevent`: cooperative greenlets inside each worker so
-  blocking I/O (camera reads, file responses) doesn't stall other
-  in-flight requests on that worker.
+- `--worker-class sync` (**not** `gevent`): the STM32/motor driver talks to
+  the MCU over a blocking serial TTY (`pyserial`). gevent's `monkey.patch_all()`
+  intercepts that file descriptor as if it were a socket, and in practice the
+  cooperative read on the serial TTY never wakes back up — every request that
+  touches the driver (including plain `/api/status`) hangs forever even though
+  `pyserial`'s own read timeout is set correctly. With a single sync worker,
+  hardware access is already serialized by request, so there is no concurrency
+  benefit to gevent here, only the risk of this hang. Confirmed on hardware:
+  switching `gevent` → `sync` turned indefinite `/api/status` hangs into ~15ms
+  responses.
 
 ### systemd service using Gunicorn
 
@@ -120,7 +125,7 @@ Update the `ExecStart` line in the service file above to use Gunicorn
 instead of the Flask dev server:
 
 ```ini
-ExecStart=/home/pi/horaltscanner_env/bin/gunicorn --workers 1 --worker-class gevent --bind 0.0.0.0:5000 "api:create_app()"
+ExecStart=/home/pi/horaltscanner_env/bin/gunicorn --workers 1 --worker-class sync --bind 0.0.0.0:5000 "api:create_app()"
 ```
 
 Then reload and restart as usual:

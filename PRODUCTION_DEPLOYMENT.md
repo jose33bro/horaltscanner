@@ -12,7 +12,7 @@
 Horaltscanner 3D Scanner API (Production)
 ├── Port: 5000
 ├── Server: Gunicorn 26.2.0
-├── Workers: 4 × Gevent (async, non-blocking)
+├── Workers: 1 × sync (hardware requires a single owning process)
 ├── Memory: Bounded point cloud (200k max)
 ├── Reconstruction: Async (non-blocking API)
 ├── Auto-restart: ✅ systemd service
@@ -32,7 +32,7 @@ Horaltscanner 3D Scanner API (Production)
 ### PR #83 - Camera Driver & Flask API
 - ✅ Camera driver with placeholder frames
 - ✅ Flask REST API (`/api/health`, `/api/scan`)
-- ✅ Gunicorn + Gevent workers
+- ✅ Gunicorn workers
 - ✅ CORS support enabled
 
 ---
@@ -68,19 +68,28 @@ app = create_app()
 ```bash
 gunicorn \
   --workers 1 \
-  --worker-class gevent \
+  --worker-class sync \
   --bind 0.0.0.0:5000 \
   --access-logfile - \
   --error-logfile - \
   wsgi:app
 ```
 
+> **Do not use `--worker-class gevent`.** The STM32/motor driver reads a
+> blocking serial TTY (`pyserial`); gevent's monkey-patching intercepts that
+> read as if it were a socket and the cooperative wait never wakes back up.
+> Every request touching the driver (even `/api/status`) then hangs forever.
+> A single `sync` worker already serializes hardware access, so there's no
+> concurrency to gain from gevent, only this hang to risk. Confirmed on
+> hardware: switching `gevent` → `sync` turned an indefinite `/api/status`
+> hang into a ~15ms response.
+
 ### 4. systemd Service
 **File**: `/etc/systemd/system/horaltscanner.service`
 
 ```ini
 [Unit]
-Description=HoralScanner 3D Scanner API (Gunicorn + Gevent)
+Description=HoralScanner 3D Scanner API (Gunicorn)
 After=network.target
 
 [Service]
@@ -89,7 +98,7 @@ WorkingDirectory=/home/pi/horaltscanner
 Environment="PATH=/home/pi/horaltscanner_env/bin"
 ExecStart=/home/pi/horaltscanner_env/bin/gunicorn \
   --workers 1 \
-  --worker-class gevent \
+  --worker-class sync \
   --bind 0.0.0.0:5000 \
   --access-logfile - \
   --error-logfile - \
@@ -192,7 +201,7 @@ python -c "from software.api import create_app; app = create_app()"
 
 | Metric | Value |
 |---|---|
-| **Workers** | 4 (Gevent) |
+| **Workers** | 1 (sync) |
 | **Worker Connections** | 1000/worker |
 | **Max Point Cloud** | 200,000 points |
 | **Reconstruction** | Async (non-blocking) |
@@ -250,7 +259,8 @@ python -c "from software.api import create_app; app = create_app()"
 
 - [x] All dependencies installed
 - [x] WSGI app wrapper created
-- [x] Gunicorn running with 1 Gevent worker (required for hardware ownership)
+- [x] Gunicorn running with 1 sync worker (required for hardware ownership;
+      do not use `--worker-class gevent` — it hangs on the serial driver)
 - [x] systemd service enabled & auto-restart working
 - [x] API `/api/health` endpoint responding
 - [x] Port 5000 accessible locally & remotely

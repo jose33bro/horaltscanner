@@ -941,7 +941,7 @@ def analyze_laser_line(jpeg: bytes) -> dict:
         weighted_sum = 0.0
         total_weight = 0.0
         for line in lines:
-            x1, y1, x2, y2 = line[0]
+            x1, y1, x2, y2 = np.asarray(line).reshape(-1)[:4]
             dx = float(x2 - x1)
             dy = float(y2 - y1)
             if dy < 0:  # flip so dy >= 0

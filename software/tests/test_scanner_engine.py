@@ -1123,14 +1123,28 @@ class RealScanSessionTests(unittest.TestCase):
 
     def test_within_scan_volume_accepts_object_rejects_plate_and_rig(self):
         session = self.make_session()
+        center = np.zeros(3)
 
         on_object = np.array([20.0, 10.0, 50.0])
         beyond_plate_radius = np.array([150.0, 0.0, 50.0])
         above_plausible_height = np.array([20.0, 10.0, 900.0])
 
-        self.assertTrue(session._within_scan_volume(on_object))
-        self.assertFalse(session._within_scan_volume(beyond_plate_radius))
-        self.assertFalse(session._within_scan_volume(above_plausible_height))
+        self.assertTrue(session._within_scan_volume(on_object, center))
+        self.assertFalse(session._within_scan_volume(beyond_plate_radius, center))
+        self.assertFalse(session._within_scan_volume(above_plausible_height, center))
+
+    def test_within_scan_volume_measures_radius_relative_to_drifting_center(self):
+        # The calibrated turntable center drifts with the carriage X position
+        # (see _turntable_center_at_x), so a point must be judged relative to
+        # that drifted center, not a fixed (0, 0, 0) origin.
+        session = self.make_session()
+        center = np.array([88.0, 0.0, 0.0])
+
+        near_drifted_center = np.array([90.0, 5.0, 50.0])
+        far_from_drifted_center = np.array([-50.0, 0.0, 50.0])
+
+        self.assertTrue(session._within_scan_volume(near_drifted_center, center))
+        self.assertFalse(session._within_scan_volume(far_from_drifted_center, center))
 
     def test_scan_volume_filter_can_be_disabled_via_config(self):
         config = dict(SAFE_CONFIG, scan_volume_filter_enabled=False)
@@ -1138,7 +1152,7 @@ class RealScanSessionTests(unittest.TestCase):
 
         far_point = np.array([5000.0, 0.0, -5000.0])
 
-        self.assertTrue(session._within_scan_volume(far_point))
+        self.assertTrue(session._within_scan_volume(far_point, np.zeros(3)))
 
     def test_extract_points_drops_triangulated_points_outside_scan_volume(self):
         import cv2

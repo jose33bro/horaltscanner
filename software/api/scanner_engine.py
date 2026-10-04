@@ -1602,7 +1602,8 @@ class ScanSession:
             point, self._calibration["lidar"], trajectory_origin
         )
         point = self._normalize_turntable_point(point, trajectory_origin)
-        if not self._within_scan_volume(point):
+        volume_center = self._turntable_center_at_x(trajectory_origin["x"])
+        if not self._within_scan_volume(point, volume_center):
             return
         with self._lock:
             self._data.add_point(*point.tolist(), 1.0, 0.85, 0.2)
@@ -1646,6 +1647,7 @@ class ScanSession:
         normal = np.asarray(plane["normal"], dtype=float)
         normal /= np.linalg.norm(normal)
         offset = float(plane["offset_mm"])
+        volume_center = self._turntable_center_at_x(trajectory_origin["x"])
         points = []
         for u, v in pixels:
             normalized = cv2.undistortPoints(
@@ -1670,7 +1672,7 @@ class ScanSession:
                 continue
             point = translated_origin + direction * ray_distance
             point = self._normalize_turntable_point(point, trajectory_origin)
-            if not self._within_scan_volume(point):
+            if not self._within_scan_volume(point, volume_center):
                 continue
             points.append(point.tolist())
         return points
@@ -1789,7 +1791,7 @@ class ScanSession:
         max_height = float(self._config.get("scan_volume_max_height_mm", 350.0))
         return max_radius, min_height, max_height
 
-    def _within_scan_volume(self, point: np.ndarray) -> bool:
+    def _within_scan_volume(self, point: np.ndarray, center: np.ndarray) -> bool:
         """Reject points outside the expected turntable/object footprint.
 
         Scanner-frame Z is the turntable's rotation-invariant axis (height);
@@ -1797,12 +1799,19 @@ class ScanSession:
         calibrated plate radius or a plausible height range are either the
         plate/rig structure or implausible ray-triangulation outliers
         (background reflections) and must not reach the final point cloud.
+
+        ``center`` is the turntable's rotation-axis center for this scan's
+        trajectory origin (see ``_turntable_center_at_x``): the calibrated
+        center drifts with the carriage X position, so points must be
+        measured relative to it rather than a fixed (0, 0, 0) origin.
         """
         if not self._config_bool("scan_volume_filter_enabled", True):
             return True
         max_radius, min_height, max_height = self._scan_volume_bounds()
-        radius = math.hypot(float(point[0]), float(point[1]))
-        height = float(point[2])
+        radius = math.hypot(
+            float(point[0] - center[0]), float(point[1] - center[1])
+        )
+        height = float(point[2] - center[2])
         return radius <= max_radius and min_height <= height <= max_height
 
     def _config_bool(self, name: str, default: bool) -> bool:

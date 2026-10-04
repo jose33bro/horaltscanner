@@ -785,7 +785,7 @@ class ScanSession:
         self._validate_carriage_reference("TF-Luna", lidar, blockers)
         lidar_quality = lidar.get("quality", {})
         if (
-            lidar.get("source") != "operator_measured_origin_direction"
+            lidar.get("source") not in ("operator_measured_origin_direction", "auto_calibrated_least_squares")
             or not isinstance(lidar_quality, Mapping)
             or not lidar_quality.get("accepted")
             or not self._finite_number(lidar_quality.get("rms_mm"))

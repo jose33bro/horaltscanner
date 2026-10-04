@@ -2057,7 +2057,7 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
     transform = matrix(lidar.get("lidar_to_scanner"), (4, 4), "TF-Luna lidar_to_scanner")
     if not np.allclose(transform[3], [0, 0, 0, 1], atol=1e-6):
         raise CalibrationError("TF-Luna transform is not homogeneous")
-    if lidar.get("source") != "operator_measured_origin_direction":
+    if lidar.get("source") not in ("operator_measured_origin_direction", "auto_calibrated_least_squares"):
         raise CalibrationError("TF-Luna transform source is not recorded")
     carriage_axis = lidar.get("carriage_axis")
     if carriage_axis is not None:

@@ -1227,6 +1227,21 @@ class ScanSession:
                 self._end_time = time.time()
 
     def _physical_capture_loop(self) -> None:
+        """Acquire a scan in three full passes over the trajectory.
+
+        1. Photometric: ambient (laser-off) frames only, for true pixel
+           color and to keep the laser off while the carriage still has to
+           visit every pose anyway.
+        2. LiDAR: one TF-Luna sample per pose, building both the point
+           cloud's LiDAR points and a coarse (height -> max radius)
+           envelope of the real object silhouette.
+        3. Laser: the existing per-side/per-camera triangulation, reusing
+           the photometric frames captured in pass 1 and validating every
+           triangulated point against the LiDAR envelope from pass 2 -
+           points far outside what LiDAR actually measured at that height
+           are stationary-rig/reflection outliers, not the object, and are
+           dropped before they ever reach the point cloud.
+        """
         laser_counts = {side: 0 for side in self._LASER_SIDES}
         camera_counts = {name: 0 for name in self._REQUIRED_CAMERAS}
         completed = False
@@ -1235,32 +1250,62 @@ class ScanSession:
             start_positions = self._motor_positions()
             trajectory = self._trajectory(start_positions)
             total = len(trajectory)
+            phase_span = max(1, total) * 3
+
+            ambient_frames: dict[int, dict[str, bytes]] = {}
+            with self._lock:
+                self._phase = "photometric"
+            self._lasers_off()
             for index, targets in enumerate(trajectory):
                 self._check_cancelled()
                 with self._lock:
-                    self._phase = "positioning"
-                    self._progress = index / total * 100.0
+                    self._progress = index / phase_span * 100.0
                 self._move_axes(targets)
                 self._sleep_interruptible(self._milliseconds("settle_ms", 200))
-                lidar_distance = self._sample_lidar()
-                self._add_lidar_point(lidar_distance, start_positions)
-
-                with self._lock:
-                    self._phase = "ambient-capture"
-                self._lasers_off()
-                ambient = {
+                ambient_frames[index] = {
                     name: self._capture_camera(name)
                     for name in self._REQUIRED_CAMERAS
                 }
+
+            lidar_envelope: list[tuple[float, float]] = []
+            with self._lock:
+                self._phase = "lidar"
+            for index, targets in enumerate(trajectory):
+                self._check_cancelled()
+                with self._lock:
+                    self._progress = (total + index) / phase_span * 100.0
+                self._move_axes(targets)
+                self._sleep_interruptible(self._milliseconds("settle_ms", 200))
+                lidar_distance = self._sample_lidar()
+                lidar_point = self._add_lidar_point(lidar_distance, start_positions)
+                if lidar_point is not None:
+                    volume_center = self._turntable_center_at_x(start_positions["x"])
+                    radius = math.hypot(
+                        float(lidar_point[0] - volume_center[0]),
+                        float(lidar_point[1] - volume_center[1]),
+                    )
+                    height = float(lidar_point[2] - volume_center[2])
+                    lidar_envelope.append((height, radius))
+
+            with self._lock:
+                self._phase = "laser-capture"
+            for index, targets in enumerate(trajectory):
+                self._check_cancelled()
+                with self._lock:
+                    self._progress = (2 * total + index) / phase_span * 100.0
+                self._move_axes(targets)
+                self._sleep_interruptible(self._milliseconds("settle_ms", 200))
+                ambient = ambient_frames.get(index, {})
                 for side in self._LASER_SIDES:
                     self._check_cancelled()
                     self._set_laser(side, True)
                     try:
                         self._sleep_interruptible(self._milliseconds("laser_settle_ms", 100))
                         with self._lock:
-                            self._phase = "laser-capture"
                             self._laser_side = side
                         for camera_name in self._REQUIRED_CAMERAS:
+                            if camera_name not in ambient:
+                                continue
                             laser_frame = self._capture_camera(camera_name)
                             if not self._laser_line_detected(laser_frame):
                                 continue
@@ -1273,6 +1318,9 @@ class ScanSession:
                                 laser_frame,
                                 start_positions,
                             )
+                            points = self._filter_points_by_lidar_envelope(
+                                points, lidar_envelope, start_positions
+                            )
                             camera_counts[camera_name] += len(points)
                             laser_counts[side] += len(points)
                             with self._lock:
@@ -1284,7 +1332,6 @@ class ScanSession:
 
                 with self._lock:
                     self._samples += 1
-                    self._progress = (index + 1) / total * 100.0
                     self._quality = min(
                         100.0,
                         self._data.point_count()
@@ -1592,7 +1639,7 @@ class ScanSession:
         self,
         distance_mm: float,
         trajectory_origin: Mapping[str, float],
-    ) -> None:
+    ) -> Optional[np.ndarray]:
         transform = np.asarray(self._calibration["lidar"]["lidar_to_scanner"], dtype=float)
         origin = transform[:3, 3]
         direction = transform[:3, :3] @ np.array([0.0, 0.0, 1.0])
@@ -1604,9 +1651,49 @@ class ScanSession:
         point = self._normalize_turntable_point(point, trajectory_origin)
         volume_center = self._turntable_center_at_x(trajectory_origin["x"])
         if not self._within_scan_volume(point, volume_center):
-            return
+            return None
         with self._lock:
             self._data.add_point(*point.tolist(), 1.0, 0.85, 0.2)
+        return point
+
+    def _filter_points_by_lidar_envelope(
+        self,
+        points: list[list[float]],
+        lidar_envelope: list[tuple[float, float]],
+        trajectory_origin: Mapping[str, float],
+    ) -> list[list[float]]:
+        """Drop triangulated points whose radius is implausible given LiDAR.
+
+        The dedicated LiDAR pass (see ``_physical_capture_loop``) measures
+        the real object's silhouette independently of the laser/camera
+        triangulation. A stationary rig element (support pedestal, camera
+        rail) that leaks past the laser-color threshold would otherwise be
+        smeared into a false ring by the per-pose turntable de-rotation;
+        cross-checking every laser point's radius against the LiDAR
+        envelope at a similar height catches and removes that kind of
+        outlier before it reaches the point cloud. Heights with no nearby
+        LiDAR coverage are left unfiltered rather than rejected outright.
+        """
+        if not points or not lidar_envelope:
+            return points
+        margin = self._positive_float("lidar_envelope_margin_mm", 25.0)
+        window = self._positive_float("lidar_envelope_height_window_mm", 30.0)
+        volume_center = self._turntable_center_at_x(trajectory_origin["x"])
+        heights = np.array([h for h, _ in lidar_envelope], dtype=float)
+        radii = np.array([r for _, r in lidar_envelope], dtype=float)
+        kept: list[list[float]] = []
+        for point in points:
+            x, y, z, r, g, b = point
+            height = z - volume_center[2]
+            nearby = radii[np.abs(heights - height) <= window]
+            if nearby.size == 0:
+                kept.append(point)
+                continue
+            limit = float(nearby.max()) + margin
+            radius = math.hypot(x - volume_center[0], y - volume_center[1])
+            if radius <= limit:
+                kept.append(point)
+        return kept
 
     def _extract_points(
         self,

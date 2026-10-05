@@ -2047,6 +2047,68 @@ class ScanSession:
             },
         }
 
+    def _isolate_object_mask(
+        self, points: list[list[float]]
+    ) -> Optional[tuple[list[bool], float]]:
+        """Boolean mask keeping only the object's footprint, plate excluded.
+
+        A full-rotation scan also captures the turntable plate itself: a flat
+        disc near the plate's own z, spanning the whole scan-volume radius
+        (much wider than most objects). Naively keeping every point would
+        include the plate's diameter instead of just the object's. To
+        separate them: points above ``dimensions_base_height_mm`` (default
+        5mm, clear of plate-surface noise) are assumed to belong to the
+        object body; their radius around the rotation axis (axis = midpoint
+        of the full x/y extent, valid because a 360 degree scan is
+        radius-symmetric about it) gives the object's true footprint radius
+        (using a high percentile, not the max, to stay robust to single
+        stray points). Every point - including the object's low base -
+        within that radius is kept, which drops the plate's wider ring while
+        keeping the object whole.
+
+        Returns ``None`` when there are no points clear of the plate surface
+        (isolation isn't possible), otherwise ``(mask, object_radius_mm)``.
+        """
+        if not points:
+            return None
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        center_x = (min(xs) + max(xs)) / 2.0
+        center_y = (min(ys) + max(ys)) / 2.0
+        base_height_mm = self._config.get("dimensions_base_height_mm", 5.0)
+        elevated_radii = [
+            math.hypot(p[0] - center_x, p[1] - center_y)
+            for p in points if p[2] > base_height_mm
+        ]
+        if not elevated_radii:
+            return None
+        radius_percentile = self._config.get("dimensions_radius_percentile", 99.0)
+        object_radius_mm = float(np.percentile(elevated_radii, radius_percentile))
+        mask = [
+            math.hypot(p[0] - center_x, p[1] - center_y) <= object_radius_mm
+            for p in points
+        ]
+        return mask, object_radius_mm
+
+    def get_object_pointcloud(self) -> dict:
+        """Point cloud filtered to the scanned object, plate excluded.
+
+        Used for reconstruction so the mesh isn't a blob merging the object
+        with the turntable plate. Falls back to the full capture when
+        isolation isn't possible, so reconstruction never receives an empty
+        cloud.
+        """
+        with self._lock:
+            points = list(self._data.points)
+            colors = list(self._data.colors)
+        isolated = self._isolate_object_mask(points)
+        if isolated is None:
+            return {"points": points, "colors": colors, "count": len(points)}
+        mask, _radius = isolated
+        filtered_points = [p for p, keep in zip(points, mask) if keep]
+        filtered_colors = [c for c, keep in zip(colors, mask) if keep]
+        return {"points": filtered_points, "colors": filtered_colors, "count": len(filtered_points)}
+
     def get_dimensions(self) -> dict:
         """Real-world dimensions (mm) of the scanned object, plate excluded.
 
@@ -2054,20 +2116,6 @@ class ScanSession:
         frame (laser-triangulation and LIDAR points are fused into the same
         frame via their respective calibrations), x/y spanning the horizontal
         plane (turntable rotation) and z spanning height.
-
-        A full-rotation scan also captures the turntable plate itself: a flat
-        disc near the plate's own z, spanning the whole scan-volume radius
-        (much wider than most objects). Naively bounding every point would
-        report the plate's diameter instead of the object's. To separate
-        them: points above ``dimensions_base_height_mm`` (default 5mm, clear
-        of plate-surface noise) are assumed to belong to the object body;
-        their radius around the rotation axis (axis = midpoint of the full
-        x/y extent, valid because a 360 degree scan is radius-symmetric
-        about it) gives the object's true footprint radius (using a high
-        percentile, not the max, to stay robust to single stray points).
-        Every point - including the object's low base - within that radius
-        is then kept for the final bounding box, which drops the plate's
-        wider ring while keeping the object whole.
         """
         with self._lock:
             points = list(self._data.points)
@@ -2078,11 +2126,8 @@ class ScanSession:
                 "reason": "No points captured yet; run a scan first.",
             }
         full = self._bbox_mm(points)
-        base_height_mm = self._config.get("dimensions_base_height_mm", 5.0)
-        center_x = (full["bounds_mm"]["x"]["min"] + full["bounds_mm"]["x"]["max"]) / 2.0
-        center_y = (full["bounds_mm"]["y"]["min"] + full["bounds_mm"]["y"]["max"]) / 2.0
-        elevated = [p for p in points if p[2] > base_height_mm]
-        if not elevated:
+        isolated = self._isolate_object_mask(points)
+        if isolated is None:
             # No points clear above the plate: can't isolate the object from
             # the plate, fall back to the full capture bounds.
             return {
@@ -2091,13 +2136,8 @@ class ScanSession:
                 **full,
                 "full_bounds_mm": full["bounds_mm"],
             }
-        radius_percentile = self._config.get("dimensions_radius_percentile", 99.0)
-        radii = [math.hypot(p[0] - center_x, p[1] - center_y) for p in elevated]
-        object_radius_mm = float(np.percentile(radii, radius_percentile))
-        footprint = [
-            p for p in points
-            if math.hypot(p[0] - center_x, p[1] - center_y) <= object_radius_mm
-        ]
+        mask, object_radius_mm = isolated
+        footprint = [p for p, keep in zip(points, mask) if keep]
         result = self._bbox_mm(footprint)
         result["available"] = True
         result["object_isolated"] = True
@@ -2148,7 +2188,10 @@ class ReconstructionEngine:
                 return {"ok": True, "in_progress": True, "started": False,
                          "stl_size": 0, "amf_size": 0, "error": "Reconstruction already in progress"}
 
-        pc_dict = self._session.get_pointcloud()
+        # Isolate the object from the turntable plate before meshing; the
+        # unfiltered cloud merges the plate's flat disc with the object into
+        # a single blob where the object itself is barely recognizable.
+        pc_dict = self._session.get_object_pointcloud()
         points = pc_dict.get("points", [])
 
         if len(points) < 100:

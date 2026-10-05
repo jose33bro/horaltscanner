@@ -2281,6 +2281,30 @@ class ReconstructionEngine:
             threshold = np.percentile(densities_arr, 5)
             vertices_to_remove = densities_arr < threshold
             mesh.remove_vertices_by_mask(vertices_to_remove)
+
+            # Poisson reconstruction extrapolates a *closed* surface even
+            # where the input cloud has no data (e.g. the object's hidden
+            # underside once the turntable plate is excluded, or gaps from
+            # incomplete laser coverage). With sparse/open input this often
+            # "hallucinates" extra surface loops ballooning well past the
+            # scanned footprint. Clip any vertex outside the input cloud's
+            # own bounding cylinder (+ margin) to drop those artifacts while
+            # keeping the real object geometry, which is contained within it.
+            margin_mm = 15.0
+            center_x = (pts[:, 0].min() + pts[:, 0].max()) / 2.0
+            center_y = (pts[:, 1].min() + pts[:, 1].max()) / 2.0
+            point_radii = np.hypot(pts[:, 0] - center_x, pts[:, 1] - center_y)
+            max_radius_mm = float(point_radii.max()) + margin_mm
+            z_min = float(pts[:, 2].min()) - margin_mm
+            z_max = float(pts[:, 2].max()) + margin_mm
+            vertices = np.asarray(mesh.vertices)
+            vertex_radii = np.hypot(vertices[:, 0] - center_x, vertices[:, 1] - center_y)
+            out_of_envelope = (
+                (vertex_radii > max_radius_mm)
+                | (vertices[:, 2] < z_min)
+                | (vertices[:, 2] > z_max)
+            )
+            mesh.remove_vertices_by_mask(out_of_envelope)
             mesh.compute_vertex_normals()
 
             # Export STL/AMF directly to memory buffers (no disk I/O)

@@ -286,12 +286,30 @@ const HoralScannerUI = (() => {
     for (let y = 0; y < height; y += 48) {
       context.beginPath(); context.moveTo(0, y); context.lineTo(width, y); context.stroke();
     }
-    const scale = Math.min(width, height) / 150;
+    const visible = points.slice(-12000);
+    // Center the view on the actual point cloud bounding box instead of
+    // assuming the scanner's coordinate origin sits in the middle: the
+    // raw x/y/z axes can be offset (e.g. a linear-slide axis spanning
+    // 0..195mm), which otherwise pushes the cloud off-screen.
+    let centerX = 0, centerY = 0, centerZ = 0, extent = 150;
+    if (visible.length) {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      visible.forEach(([x, y, z]) => {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+        minZ = Math.min(minZ, z || 0); maxZ = Math.max(maxZ, z || 0);
+      });
+      centerX = (minX + maxX) / 2;
+      centerY = (minY + maxY) / 2;
+      centerZ = (minZ + maxZ) / 2;
+      extent = Math.max(30, maxX - minX, maxY - minY);
+    }
+    const scale = Math.min(width, height) / (extent * 1.15);
     context.fillStyle = `rgba(40, 218, 240, ${opacity})`;
-    points.slice(-12000).forEach(([x, y, z]) => {
-      const perspective = 1 + (z || 0) / 300;
-      const px = width / 2 + x * scale * perspective;
-      const py = height / 2 - y * scale * perspective;
+    visible.forEach(([x, y, z]) => {
+      const perspective = 1 + ((z || 0) - centerZ) / 300;
+      const px = width / 2 + (x - centerX) * scale * perspective;
+      const py = height / 2 - (y - centerY) * scale * perspective;
       const size = Math.max(1, 2.2 * perspective);
       context.fillRect(px, py, size, size);
     });

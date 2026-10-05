@@ -10,6 +10,12 @@ import threading
 import time
 from typing import Callable
 
+try:
+    from serial import SerialException
+except ImportError:  # pragma: no cover - pyserial always available on target hardware
+    class SerialException(Exception):
+        """Fallback used only when pyserial is unavailable (e.g. simulation-only tests)."""
+
 logger = logging.getLogger(__name__)
 
 _HARD_X_MAX_MM = 195.0
@@ -156,27 +162,72 @@ class STM32Driver:
         return response.startswith("OK")
 
     def _send_and_read(self, cmd: str) -> str:
-        """Send command and return raw response line."""
+        """Send command and return raw response line.
+
+        Treats a transient SerialException ("device reports readiness to read
+        but returned no data") as an inconclusive response rather than a fatal
+        link failure: on shared/contended USB buses (e.g. a webcam sharing a
+        hub with the CH341 serial adapters) a single read can glitch under
+        load without the link actually being gone. Returning "" lets callers
+        such as _wait_for_motion simply retry on their next poll instead of
+        tearing down the whole connection for a one-off hiccup.
+        """
         if self._port is None:
             return ""
-        with self._io_lock:
-            self._port.write((cmd + "\n").encode())
-            return self._port.readline().decode("ascii", errors="replace").strip()
+        try:
+            with self._io_lock:
+                self._port.write((cmd + "\n").encode())
+                return self._port.readline().decode("ascii", errors="replace").strip()
+        except SerialException:
+            logger.warning("Transient serial read glitch on %r; treating as no response", cmd)
+            return ""
 
     def _send_motion_command(self, cmd: str, generation: int) -> bool:
-        """Order motion against STOP without making STOP wait on a whole move."""
+        """Order motion against STOP without making STOP wait on a whole move.
+
+        The MOVE/HOME acknowledgement is a single write+readline with no
+        built-in retry. On a shared/contended USB bus (webcam + two CH341
+        serial adapters on the same hub) that single read can come back
+        empty, or raise a transient SerialException, even though the
+        command either never reached the MCU or did reach it but its "OK"
+        reply was lost in transit. We retry a bounded number of times on an
+        empty/glitched attempt (safe: the firmware's beginMove/beginHome are
+        no-ops while a motion is already running, so a resend cannot start a
+        second, conflicting move). If a retry comes back with an explicit
+        "ERR" (the firmware definitely processed it and rejected it), we
+        check MOTION_STATUS once: if it reports the motion as RUNNING, the
+        earlier attempt actually did start the move and we treat this as
+        success instead of discarding a motion that is physically underway.
+        """
         if self._simulation:
             if generation != self._stop_generation:
                 return False
             return self._send_command(cmd)
         if self._port is None:
             return False
-        with self._io_lock:
-            if generation != self._stop_generation:
+        attempts = 3
+        for attempt in range(attempts):
+            with self._io_lock:
+                if generation != self._stop_generation:
+                    return False
+                try:
+                    self._port.write((cmd + "\n").encode())
+                    response = self._port.readline().decode("ascii", errors="replace").strip()
+                except SerialException:
+                    logger.warning("Transient serial write/read glitch sending %r (attempt %d/%d)", cmd, attempt + 1, attempts)
+                    response = ""
+            if response.startswith("OK"):
+                return True
+            if response.startswith("ERR"):
+                status = self._send_and_read("MOTION_STATUS")
+                if "RUNNING" in status:
+                    logger.warning("MOVE ack %r lost but MOTION_STATUS shows RUNNING; treating as started", response)
+                    return True
                 return False
-            self._port.write((cmd + "\n").encode())
-            response = self._port.readline().decode("ascii", errors="replace").strip()
-            return response.startswith("OK")
+            if attempt + 1 < attempts:
+                logger.warning("No response to %r (attempt %d/%d); retrying", cmd, attempt + 1, attempts)
+                time.sleep(0.05)
+        return False
 
     def _wait_for_motion(self, timeout_s: float, poll_interval_s: float) -> str:
         deadline = time.monotonic() + timeout_s

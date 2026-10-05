@@ -44,7 +44,11 @@
       "max_triangulation_distance_mm": 2000,
       "target_points": 1000,
       "restore_start_pose": true,
-      "stop_join_timeout_s": 3
+      "stop_join_timeout_s": 3,
+      "scan_volume_max_radius_mm": 60.0,
+      "scan_volume_min_height_mm": -10.0,
+      "scan_volume_max_height_mm": 100.0,
+      "dimensions_radius_percentile": 97.0
     },
     "geometric_calibration": {
       "board_columns": 11,

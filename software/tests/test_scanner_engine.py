@@ -1209,6 +1209,38 @@ class RealScanSessionTests(unittest.TestCase):
         self.assertEqual(points, [])
 
 
+class ScanDimensionsTests(unittest.TestCase):
+    def test_no_points_reports_unavailable(self):
+        session = ScanSession(simulation=True)
+
+        result = session.get_dimensions()
+
+        self.assertFalse(result["available"])
+        self.assertEqual(result["point_count"], 0)
+
+    def test_bounding_box_dimensions_from_points(self):
+        session = ScanSession(simulation=True)
+        for x, y, z in [
+            (-50.0, -30.0, 0.0),
+            (50.0, 30.0, 0.0),
+            (0.0, 0.0, 120.0),
+            (0.0, 0.0, -10.0),
+        ]:
+            session._data.add_point(x, y, z)
+
+        result = session.get_dimensions()
+
+        self.assertTrue(result["available"])
+        self.assertEqual(result["point_count"], 4)
+        self.assertAlmostEqual(result["width_mm"], 100.0)
+        self.assertAlmostEqual(result["depth_mm"], 60.0)
+        self.assertAlmostEqual(result["height_mm"], 130.0)
+        self.assertAlmostEqual(result["bounds_mm"]["x"]["min"], -50.0)
+        self.assertAlmostEqual(result["bounds_mm"]["x"]["max"], 50.0)
+        self.assertAlmostEqual(result["bounds_mm"]["z"]["min"], -10.0)
+        self.assertAlmostEqual(result["bounds_mm"]["z"]["max"], 120.0)
+
+
 class _FakeVector3dVector(list):
     pass
 

@@ -2026,6 +2026,46 @@ class ScanSession:
         with self._lock:
             return self._data.as_dict()
 
+    def get_dimensions(self) -> dict:
+        """Real-world bounding-box dimensions (mm) of the current point cloud.
+
+        Points are already expressed in the turntable's real-world Cartesian
+        frame (laser-triangulation and LIDAR points are fused into the same
+        frame via their respective calibrations), so a simple axis-aligned
+        bounding box directly yields width/depth/height in millimetres.
+        x/y span the horizontal plane (turntable rotation), z is height.
+        """
+        with self._lock:
+            points = list(self._data.points)
+        if not points:
+            return {
+                "available": False,
+                "point_count": 0,
+                "reason": "No points captured yet; run a scan first.",
+            }
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        zs = [p[2] for p in points]
+        bounds = {
+            "x": {"min": min(xs), "max": max(xs)},
+            "y": {"min": min(ys), "max": max(ys)},
+            "z": {"min": min(zs), "max": max(zs)},
+        }
+        width_mm = bounds["x"]["max"] - bounds["x"]["min"]
+        depth_mm = bounds["y"]["max"] - bounds["y"]["min"]
+        height_mm = bounds["z"]["max"] - bounds["z"]["min"]
+        return {
+            "available": True,
+            "point_count": len(points),
+            "width_mm": round(width_mm, 1),
+            "depth_mm": round(depth_mm, 1),
+            "height_mm": round(height_mm, 1),
+            "bounds_mm": {
+                axis: {"min": round(v["min"], 1), "max": round(v["max"], 1)}
+                for axis, v in bounds.items()
+            },
+        }
+
 
 # ---------------------------------------------------------------------------
 # 3D Reconstruction

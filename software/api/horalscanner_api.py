@@ -1596,6 +1596,11 @@ def scan_pointcloud():
     return jsonify({"success": True, **scan_session.get_pointcloud()})
 
 
+@api_bp.route("/api/scan/dimensions", methods=["GET"])
+def scan_dimensions():
+    return jsonify({"success": True, **scan_session.get_dimensions()})
+
+
 @api_bp.route("/api/model/reconstruct", methods=["POST"])
 def model_reconstruct():
     result = reconstruction_engine.reconstruct()

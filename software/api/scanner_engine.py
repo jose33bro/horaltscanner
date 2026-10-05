@@ -2026,14 +2026,48 @@ class ScanSession:
         with self._lock:
             return self._data.as_dict()
 
+    @staticmethod
+    def _bbox_mm(points: list[list[float]]) -> dict:
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        zs = [p[2] for p in points]
+        bounds = {
+            "x": {"min": min(xs), "max": max(xs)},
+            "y": {"min": min(ys), "max": max(ys)},
+            "z": {"min": min(zs), "max": max(zs)},
+        }
+        return {
+            "point_count": len(points),
+            "width_mm": round(bounds["x"]["max"] - bounds["x"]["min"], 1),
+            "depth_mm": round(bounds["y"]["max"] - bounds["y"]["min"], 1),
+            "height_mm": round(bounds["z"]["max"] - bounds["z"]["min"], 1),
+            "bounds_mm": {
+                axis: {"min": round(v["min"], 1), "max": round(v["max"], 1)}
+                for axis, v in bounds.items()
+            },
+        }
+
     def get_dimensions(self) -> dict:
-        """Real-world bounding-box dimensions (mm) of the current point cloud.
+        """Real-world dimensions (mm) of the scanned object, plate excluded.
 
         Points are already expressed in the turntable's real-world Cartesian
         frame (laser-triangulation and LIDAR points are fused into the same
-        frame via their respective calibrations), so a simple axis-aligned
-        bounding box directly yields width/depth/height in millimetres.
-        x/y span the horizontal plane (turntable rotation), z is height.
+        frame via their respective calibrations), x/y spanning the horizontal
+        plane (turntable rotation) and z spanning height.
+
+        A full-rotation scan also captures the turntable plate itself: a flat
+        disc near the plate's own z, spanning the whole scan-volume radius
+        (much wider than most objects). Naively bounding every point would
+        report the plate's diameter instead of the object's. To separate
+        them: points above ``dimensions_base_height_mm`` (default 5mm, clear
+        of plate-surface noise) are assumed to belong to the object body;
+        their radius around the rotation axis (axis = midpoint of the full
+        x/y extent, valid because a 360 degree scan is radius-symmetric
+        about it) gives the object's true footprint radius (using a high
+        percentile, not the max, to stay robust to single stray points).
+        Every point - including the object's low base - within that radius
+        is then kept for the final bounding box, which drops the plate's
+        wider ring while keeping the object whole.
         """
         with self._lock:
             points = list(self._data.points)
@@ -2043,28 +2077,34 @@ class ScanSession:
                 "point_count": 0,
                 "reason": "No points captured yet; run a scan first.",
             }
-        xs = [p[0] for p in points]
-        ys = [p[1] for p in points]
-        zs = [p[2] for p in points]
-        bounds = {
-            "x": {"min": min(xs), "max": max(xs)},
-            "y": {"min": min(ys), "max": max(ys)},
-            "z": {"min": min(zs), "max": max(zs)},
-        }
-        width_mm = bounds["x"]["max"] - bounds["x"]["min"]
-        depth_mm = bounds["y"]["max"] - bounds["y"]["min"]
-        height_mm = bounds["z"]["max"] - bounds["z"]["min"]
-        return {
-            "available": True,
-            "point_count": len(points),
-            "width_mm": round(width_mm, 1),
-            "depth_mm": round(depth_mm, 1),
-            "height_mm": round(height_mm, 1),
-            "bounds_mm": {
-                axis: {"min": round(v["min"], 1), "max": round(v["max"], 1)}
-                for axis, v in bounds.items()
-            },
-        }
+        full = self._bbox_mm(points)
+        base_height_mm = self._config.get("dimensions_base_height_mm", 5.0)
+        center_x = (full["bounds_mm"]["x"]["min"] + full["bounds_mm"]["x"]["max"]) / 2.0
+        center_y = (full["bounds_mm"]["y"]["min"] + full["bounds_mm"]["y"]["max"]) / 2.0
+        elevated = [p for p in points if p[2] > base_height_mm]
+        if not elevated:
+            # No points clear above the plate: can't isolate the object from
+            # the plate, fall back to the full capture bounds.
+            return {
+                "available": True,
+                "object_isolated": False,
+                **full,
+                "full_bounds_mm": full["bounds_mm"],
+            }
+        radius_percentile = self._config.get("dimensions_radius_percentile", 99.0)
+        radii = [math.hypot(p[0] - center_x, p[1] - center_y) for p in elevated]
+        object_radius_mm = float(np.percentile(radii, radius_percentile))
+        footprint = [
+            p for p in points
+            if math.hypot(p[0] - center_x, p[1] - center_y) <= object_radius_mm
+        ]
+        result = self._bbox_mm(footprint)
+        result["available"] = True
+        result["object_isolated"] = True
+        result["object_radius_mm"] = round(object_radius_mm, 1)
+        result["full_bounds_mm"] = full["bounds_mm"]
+        result["full_point_count"] = full["point_count"]
+        return result
 
 
 # ---------------------------------------------------------------------------

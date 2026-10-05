@@ -1218,27 +1218,45 @@ class ScanDimensionsTests(unittest.TestCase):
         self.assertFalse(result["available"])
         self.assertEqual(result["point_count"], 0)
 
-    def test_bounding_box_dimensions_from_points(self):
+    def test_object_dimensions_exclude_the_wider_turntable_plate(self):
         session = ScanSession(simulation=True)
-        for x, y, z in [
-            (-50.0, -30.0, 0.0),
-            (50.0, 30.0, 0.0),
-            (0.0, 0.0, 120.0),
-            (0.0, 0.0, -10.0),
-        ]:
+        # Flat plate ring: far from the rotation axis, at the plate's own z.
+        for x, y in [(100.0, 0.0), (-100.0, 0.0), (0.0, 100.0), (0.0, -100.0)]:
+            session._data.add_point(x, y, 0.0)
+        # Small object sitting on the plate near the axis: a low base point
+        # (touches the plate, easily confused with it) plus elevated points.
+        session._data.add_point(10.0, 0.0, 0.0)
+        session._data.add_point(0.0, 10.0, 50.0)
+        session._data.add_point(0.0, -10.0, 80.0)
+        session._data.add_point(-10.0, 0.0, 30.0)
+
+        result = session.get_dimensions()
+
+        self.assertTrue(result["available"])
+        self.assertTrue(result["object_isolated"])
+        # Object-only footprint: the wide plate ring (radius 100mm) is
+        # excluded, only the object's own radius (~10mm) remains.
+        self.assertAlmostEqual(result["object_radius_mm"], 10.0)
+        self.assertEqual(result["point_count"], 4)
+        self.assertAlmostEqual(result["width_mm"], 20.0)
+        self.assertAlmostEqual(result["depth_mm"], 20.0)
+        self.assertAlmostEqual(result["height_mm"], 80.0)
+        # Full (unfiltered) capture bounds remain available for comparison.
+        self.assertEqual(result["full_point_count"], 8)
+        self.assertAlmostEqual(result["full_bounds_mm"]["x"]["max"], 100.0)
+
+    def test_falls_back_to_full_bounds_when_nothing_is_elevated(self):
+        session = ScanSession(simulation=True)
+        # Every point is at/near plate height: nothing to isolate an object
+        # from, so the full capture bounds are reported unfiltered.
+        for x, y, z in [(-50.0, 0.0, 0.0), (50.0, 0.0, 1.0), (0.0, 30.0, 0.0)]:
             session._data.add_point(x, y, z)
 
         result = session.get_dimensions()
 
         self.assertTrue(result["available"])
-        self.assertEqual(result["point_count"], 4)
+        self.assertFalse(result["object_isolated"])
         self.assertAlmostEqual(result["width_mm"], 100.0)
-        self.assertAlmostEqual(result["depth_mm"], 60.0)
-        self.assertAlmostEqual(result["height_mm"], 130.0)
-        self.assertAlmostEqual(result["bounds_mm"]["x"]["min"], -50.0)
-        self.assertAlmostEqual(result["bounds_mm"]["x"]["max"], 50.0)
-        self.assertAlmostEqual(result["bounds_mm"]["z"]["min"], -10.0)
-        self.assertAlmostEqual(result["bounds_mm"]["z"]["max"], 120.0)
 
 
 class _FakeVector3dVector(list):

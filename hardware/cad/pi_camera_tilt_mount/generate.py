@@ -29,7 +29,6 @@ LOWER_RAIL_OVERLAP = 0.50
 LOWER_RAIL_FRONT_CUT_DEPTH = 3.00
 
 CABLE_PASSAGE_WIDTH = 12.00
-CABLE_PASSAGE_HEIGHT = 5.00
 CABLE_PASSAGE_Y_OFFSET = 8.00
 
 EAR_PROJECTION = 8.70
@@ -44,6 +43,15 @@ CSI_SLOT_WIDTH = 18.00
 CSI_SLOT_HEIGHT = 9.56
 CSI_SLOT_BOTTOM = 5.00
 CSI_SLOT_FRONT_OFFSET = -4.00
+
+# Tilt adjustment boss: a threaded M5 boss on the back of the vertical plate,
+# between the CSI slot (top at z=14.56) and the ears (bottom at z~32.21).
+# The adjustment rod threads in from behind and its ball tip bears on the
+# back of the camera PCB, which pivots on the M3 axle through the ears
+# (pivot_hole) when the wheel crank turns the rod in or out.
+ADJUSTMENT_BOSS_OFFSET_FROM_TOP = 12.00
+ADJUSTMENT_BOSS_DIAMETER = 10.00
+ADJUSTMENT_BOSS_LENGTH = 6.00
 
 ROD_LENGTH = 50.00
 ROD_DIAMETER = 5.00
@@ -94,6 +102,7 @@ def make_mount() -> TopoDS_Shape:
     )
 
     plate_front_y = -(MATERIAL_THICKNESS / 2)
+    plate_back_y = MATERIAL_THICKNESS / 2
     shelf_front_y = plate_front_y - SHELF_PROJECTION
     shelf_back_y = plate_front_y + 1.00
     shelf_depth = shelf_back_y - shelf_front_y
@@ -158,12 +167,16 @@ def make_mount() -> TopoDS_Shape:
         y=shelf_front_y + (LOWER_RAIL_FRONT_CUT_DEPTH / 2),
         z=-LOWER_RAIL_DROP,
     )
+    # Cut clean through the full shelf thickness (with margin on both faces)
+    # so the CSI ribbon passage actually opens to the underside of the shelf
+    # instead of leaving a floor that traps the cable.
+    cable_passage_margin = 1.00
     cable_passage = make_box(
         CABLE_PASSAGE_WIDTH,
         shelf_depth + 2,
-        CABLE_PASSAGE_HEIGHT,
+        MATERIAL_THICKNESS + (2 * cable_passage_margin),
         y=shelf_front_y + CABLE_PASSAGE_Y_OFFSET,
-        z=MATERIAL_THICKNESS / 2,
+        z=-cable_passage_margin,
     )
 
     ear_radius = EAR_HEIGHT / 2
@@ -208,6 +221,16 @@ def make_mount() -> TopoDS_Shape:
         EAR_WIDTH,
     ).Shape()
 
+    adjustment_boss_z = PLATE_HEIGHT - ADJUSTMENT_BOSS_OFFSET_FROM_TOP
+    adjustment_boss = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(0, plate_back_y, adjustment_boss_z),
+            gp_Dir(0, 1, 0),
+        ),
+        ADJUSTMENT_BOSS_DIAMETER / 2,
+        ADJUSTMENT_BOSS_LENGTH,
+    ).Shape()
+
     mount = fuse(
         plate,
         shelf,
@@ -219,6 +242,7 @@ def make_mount() -> TopoDS_Shape:
         right_ear_body,
         left_ear_round,
         right_ear_round,
+        adjustment_boss,
     )
     mount = cut(cut(cut(mount, left_front_cut), right_front_cut), cable_passage)
     left_screw_pilot = BRepPrimAPI_MakeCylinder(
@@ -254,6 +278,25 @@ def make_mount() -> TopoDS_Shape:
         M5_COARSE_TAP_PILOT_DIAMETER / 2,
         MATERIAL_THICKNESS + 2,
     ).Shape()
+    # Through-bore for the adjustment rod: starts past the back of the boss
+    # and breaks through the plate's front face so the rod's ball tip can
+    # reach and bear on the camera PCB.
+    adjustment_bore_margin = 1.00
+    adjustment_bore_length = (
+        ADJUSTMENT_BOSS_LENGTH + MATERIAL_THICKNESS + (2 * adjustment_bore_margin)
+    )
+    adjustment_bore = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(
+                0,
+                plate_back_y + ADJUSTMENT_BOSS_LENGTH + adjustment_bore_margin,
+                adjustment_boss_z,
+            ),
+            gp_Dir(0, -1, 0),
+        ),
+        M5_COARSE_TAP_PILOT_DIAMETER / 2,
+        adjustment_bore_length,
+    ).Shape()
     csi_slot = make_box(
         CSI_SLOT_WIDTH,
         MATERIAL_THICKNESS + 2,
@@ -261,7 +304,9 @@ def make_mount() -> TopoDS_Shape:
         y=CSI_SLOT_FRONT_OFFSET,
         z=CSI_SLOT_BOTTOM + (CSI_SLOT_HEIGHT / 2),
     )
-    return cut(cut(cut(mount, pivot_hole), m5_thread_hole), csi_slot)
+    mount = cut(cut(mount, pivot_hole), m5_thread_hole)
+    mount = cut(mount, adjustment_bore)
+    return cut(mount, csi_slot)
 
 
 def make_adjustment_rod() -> TopoDS_Shape:

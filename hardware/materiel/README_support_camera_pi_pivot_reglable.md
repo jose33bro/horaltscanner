@@ -22,16 +22,24 @@ modèle sont documentées dans
   dépouille de 3,00 mm depuis l'avant pour dégager le passage M3.
 - La plaque verticale porte un trou M5 centré entre les oreilles, à 22,00 mm du
   haut pour la fixation mécanique.
-- La partie tablette de 24,00 mm reçoit un passage central pour la nappe
-  CSI, orienté vers l'avant depuis le centre.
+- La plaque verticale porte aussi un bossage taraudé M5 (Ø 10,00 mm, 6,00 mm
+  de long) à 12,00 mm du haut, au dos : la tige d'ajustement s'y visse et sa
+  bille appuie sur le dos de la caméra pour l'incliner autour de l'axe des
+  oreilles en tournant la roue.
+- La partie tablette de 24,00 mm reçoit un passage central de 12,00 mm de
+  large qui traverse toute l'épaisseur (3,20 mm), pour laisser sortir la
+  nappe CSI par le dessous de la tablette.
 
 ## Assemblage
 
 1. Imprimer d'abord `fit_test_rear_cavity_30.45x38.2.stl` et valider
    l'encombrement.
-2. Installer la caméra entre les oreilles de la base.
-3. Insérer une vis M3 traversante, des rondelles et un écrou.
-4. Régler l'inclinaison et serrer l'écrou.
+2. Installer la caméra entre les oreilles de la base avec l'axe M3 traversant
+   comme pivot, sans serrer à fond.
+3. Visser la tige d'ajustement dans le bossage M5 au dos de la plaque jusqu'à
+   toucher le dos de la caméra, puis clipser la roue sur le carré avec une vis
+   M3.
+4. Tourner la roue pour régler finement l'inclinaison.
 5. Fixer la base horizontalement au support par les deux rails inférieurs avec
    une vis M3 de chaque côté.
 

@@ -31,11 +31,17 @@ STL ci-dessus sont les seuls à utiliser.
   descente, avec un avant-trou horizontal Ø 2,70 mm dans chaque rail et une
   découpe de 3,00 mm depuis l'avant pour dégager le passage M3;
 - passage de nappe du câble CSI dans la partie tablette : ouverture centrale
-  vers l'avant, dans la tablette de 24,00 mm.
+  de 12,00 mm de large, débouchant de part en part (dessus/dessous) de la
+  tablette de 3,20 mm d'épaisseur, pour laisser sortir la nappe par le dessous;
 - oreilles : projection 8,70 mm, largeur 8,50 mm, hauteur 5,99 mm et espace
   central 5,33 mm;
-- trou d'axe traversant : Ø 3,40 mm;
+- trou d'axe traversant : Ø 3,40 mm (pivot de la caméra);
 - trou de fixation M5 sur la plaque verticale, centré entre les oreilles et à 22,00 mm du haut;
+- bossage de réglage d'inclinaison : à 12,00 mm du haut de la plaque, au dos,
+  Ø 10,00 mm sur 6,00 mm de long, percé d'un trou taraudé M5 (Ø 4,20 mm) qui
+  traverse tout le bossage et la plaque jusqu'à la face avant. La tige
+  d'ajustement se visse dedans et sa bille appuie sur le dos de la caméra
+  pour l'incliner autour de l'axe des oreilles quand on tourne la roue;
 - fenêtre CSI dans la plaque verticale : 18,00 × 9,56 mm, centrée en bas et décalée vers l'avant.
 
 ## Génération
@@ -57,9 +63,15 @@ l'export et remplace uniquement les deux STL listés ci-dessus.
 2. Imprimer la base avec le grand dos de la plaque contre le plateau.
 3. Utiliser des supports « Everywhere », angle de surplomb 55°, densité 12 %,
    interface activée (2 couches) et distance Z de 0,22 mm.
-4. Installer la caméra entre les oreilles, puis une vis M3, des rondelles et
-   un écrou pour régler et bloquer l'inclinaison.
-5. Fixer la base par les deux rails inférieurs avec des vis M3.
+4. Installer la caméra entre les oreilles avec l'axe M3 (pivot), sans la
+   bloquer serrée pour qu'elle puisse encore pivoter.
+5. Visser la tige d'ajustement (`adjustment_rod_M5x50_ball6.5_square_m3.stl`)
+   dans le bossage taraudé M5 au dos de la plaque, bille côté caméra, jusqu'à
+   ce qu'elle touche le dos de la caméra.
+6. Clipser la roue (`wheel_crank_50mm_square_m3.stl`) sur le carré de la tige
+   avec une vis M3 et tourner pour régler finement l'inclinaison; la caméra
+   pivote autour de l'axe des oreilles.
+7. Fixer la base par les deux rails inférieurs avec des vis M3.
 
 Le profil d'impression détaillé est documenté dans
 [`../../../materiel/README_support_camera_pi_pivot_reglable.md`](../../../materiel/README_support_camera_pi_pivot_reglable.md).

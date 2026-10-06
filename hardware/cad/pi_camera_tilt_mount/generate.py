@@ -453,11 +453,11 @@ def make_camera_carrier() -> TopoDS_Shape:
     # Shallow ball-socket dimple on the back face, aligned with the base's
     # adjustment boss, so the rod's ball tip seats and self-centers instead
     # of sliding off as the carrier tilts.
-    adjustment_boss_z = PLATE_HEIGHT - ADJUSTMENT_BOSS_OFFSET_FROM_TOP
+    adjustment_boss_z = PLATE_HEIGHT - M5_THREAD_HOLE_OFFSET_FROM_TOP
     ball_socket_radius = (BALL_DIAMETER / 2) + BALL_SOCKET_CLEARANCE
     ball_socket_center_y = carrier_back_y + (ball_socket_radius - BALL_SOCKET_DEPTH)
     ball_socket = BRepPrimAPI_MakeSphere(
-        gp_Pnt(ADJUSTMENT_BOSS_X_OFFSET, ball_socket_center_y, adjustment_boss_z),
+        gp_Pnt(0, ball_socket_center_y, adjustment_boss_z),
         ball_socket_radius,
     ).Shape()
 

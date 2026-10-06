@@ -48,7 +48,9 @@
       "scan_volume_max_radius_mm": 60.0,
       "scan_volume_min_height_mm": -10.0,
       "scan_volume_max_height_mm": 100.0,
-      "dimensions_radius_percentile": 97.0
+      "dimensions_radius_percentile": 97.0,
+      "background_profile_tolerance_mm": 20.0,
+      "background_profile_radius_gate_mm": 65.0
     },
     "geometric_calibration": {
       "board_columns": 11,

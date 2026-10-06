@@ -5,8 +5,10 @@ Uses Open3D when available; falls back to a stub otherwise.
 
 import copy
 import io
+import json
 import logging
 import math
+import os
 import threading
 import time
 from collections import deque
@@ -156,6 +158,7 @@ class ScanSession:
         self._measured_object_height_mm: float | None = None
         self._object_x_mode: str | None = None
         self._dynamic_scan_volume_max_height_mm: float | None = None
+        self._background_profile_cache: tuple[tuple[str, float], Any] | None = None
 
     def configure_hardware(
         self,
@@ -1370,6 +1373,9 @@ class ScanSession:
                             points = self._filter_points_by_lidar_envelope(
                                 points, lidar_envelope, start_positions
                             )
+                            points = self._filter_points_by_background_profile(
+                                points, start_positions
+                            )
                             camera_counts[camera_name] += len(points)
                             laser_counts[side] += len(points)
                             with self._lock:
@@ -1963,6 +1969,98 @@ class ScanSession:
             if radius <= limit:
                 kept.append(point)
         return kept
+
+    def _background_profile_tree(self) -> Any:
+        """Lazily load and cache a KD-tree of known-bad background points.
+
+        A background profile is a one-time reference scan taken with the
+        turntable empty (see ``docs``/operator workflow): every point it
+        captured is, by construction, not part of any real object - it is
+        laser scatter reaching past the small figurine onto the room wall,
+        furniture or the scanner's own rig, triangulated onto an
+        implausible-but-in-volume point by ``_extract_points``. Cross-
+        referencing new points against this reference catches exactly the
+        false "ring" artifact that ``_filter_points_by_lidar_envelope``
+        cannot: LiDAR shares the same blind spot, since it is mounted on
+        the same carriage and sees the same stray reflections.
+
+        Cached per-instance and invalidated whenever the backing file's
+        mtime changes, so re-capturing the background profile takes effect
+        on the next scan without a service restart.
+        """
+        path = self._config.get("background_profile_path")
+        if not path:
+            return None
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            self._background_profile_cache = None
+            return None
+        cached = getattr(self, "_background_profile_cache", None)
+        if cached is not None and cached[0] == (path, mtime):
+            return cached[1]
+        try:
+            from scipy.spatial import cKDTree
+
+            with open(path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            raw_points = payload.get("points", payload) if isinstance(payload, Mapping) else payload
+            points = np.asarray(raw_points, dtype=float)
+            if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] < 3:
+                tree = None
+            else:
+                tree = cKDTree(points[:, :3])
+        except Exception:
+            logger.exception("Failed to load background profile from %s", path)
+            tree = None
+        self._background_profile_cache = ((path, mtime), tree)
+        return tree
+
+    def _filter_points_by_background_profile(
+        self, points: list[list[float]], trajectory_origin: Mapping[str, float]
+    ) -> list[list[float]]:
+        """Drop triangulated points that match a captured background scan.
+
+        See ``_background_profile_tree`` for why this exists. A point is
+        rejected only if it lands within ``background_profile_tolerance_mm``
+        of a point recorded with the turntable empty.
+
+        The background reference is captured once, with the camera/laser
+        rig at whatever X the height probe leaves it at for an *empty*
+        plate (always the "centered" position, since nothing ever measures
+        a positive height). Real small-object scans almost always reposition
+        the rig to the "close" X instead, so the reference's absolute 3D
+        coordinates are systematically offset from where the same rig/wall
+        reflections actually land during a real capture. A tolerance loose
+        enough to absorb that offset would, applied everywhere, also erase
+        genuine object surface detail near the plate centre (it is at least
+        as close to *some* background sample as the stray ring points are).
+        To avoid that collateral damage, the profile is only consulted for
+        points beyond ``background_profile_radius_gate_mm`` of the turntable
+        axis - a radius band that, by construction, never contains real
+        object geometry for the objects this scanner targets - leaving
+        everything closer to the axis untouched regardless of tolerance.
+        """
+        if not points:
+            return points
+        tree = self._background_profile_tree()
+        if tree is None:
+            return points
+        tolerance = self._positive_float("background_profile_tolerance_mm", 3.0)
+        radius_gate = self._positive_float("background_profile_radius_gate_mm", 65.0)
+        center = self._turntable_center_at_x(trajectory_origin["x"])
+        coords = np.asarray([[p[0], p[1], p[2]] for p in points], dtype=float)
+        radii = np.hypot(coords[:, 0] - center[0], coords[:, 1] - center[1])
+        gated = radii > radius_gate
+        if not np.any(gated):
+            return points
+        distances = np.full(len(points), np.inf, dtype=float)
+        distances[gated], _ = tree.query(coords[gated], k=1)
+        return [
+            point
+            for point, distance in zip(points, distances)
+            if distance > tolerance
+        ]
 
     def _extract_points(
         self,

@@ -60,6 +60,18 @@ def _default_calibration_state_path() -> str:
 CALIBRATION_STATE_PATH = _default_calibration_state_path()
 
 
+def _default_background_profile_path() -> str:
+    configured = os.environ.get("HORALSCANNER_BACKGROUND_PROFILE")
+    if configured:
+        return configured
+    # Store it next to calibration.json in the same state directory so it
+    # survives reboots/deploys and follows the same permission model.
+    return str(Path(CALIBRATION_STATE_PATH).with_name("background_profile.json"))
+
+
+BACKGROUND_PROFILE_PATH = _default_background_profile_path()
+
+
 def _load_json_config(path: str) -> dict:
     """Load a JSON file from disk and return an empty mapping on failure."""
     try:

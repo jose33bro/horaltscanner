@@ -304,13 +304,17 @@ usb_camera = LogitechCamera(
     photometry=camera_config.get("usb_photometry"),
 )
 _scan_hardware_lock = HardwareReservationLock()
+_acquisition_config = dict(scanner_config.get("acquisition", {}))
+_acquisition_config.setdefault(
+    "background_profile_path", config_manager.BACKGROUND_PROFILE_PATH
+)
 scan_session = ScanSession(
     simulation=_simulation_enabled(scanner_config),
     motor_driver=stm32_driver,
     gpio_driver=gpio_driver,
     cameras={"pi": pi_camera, "usb": usb_camera},
     lidar_driver=lidar_driver,
-    config=scanner_config.get("acquisition", {}),
+    config=_acquisition_config,
     calibration=hardware_config.get("scan_calibration", {}),
     saved_poses_provider=get_all_saved_poses,
     laser_line_analyzer=analyze_laser_line,

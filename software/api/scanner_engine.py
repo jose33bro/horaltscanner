@@ -2258,7 +2258,16 @@ class ScanSession:
         max_radius = float(
             self._config.get("scan_volume_max_radius_mm", default_max_radius)
         )
-        min_height = float(self._config.get("scan_volume_min_height_mm", -15.0))
+        # Horus (the open-source scanner this project started from, see
+        # bqlabs/horus's ``point_cloud_roi.py``) hard-floors its ROI cylinder
+        # at the platform surface (``z >= 0``) rather than allowing a
+        # negative margin: any laser hit at or below plate height is either
+        # the plate itself or a multipath reflection off it, never real
+        # object surface. The default here mirrors that floor (0.0) instead
+        # of the previous -15.0, which let a dense band of plate-level noise
+        # (~16% of points in testing) into the cloud and inflated the
+        # reported object height.
+        min_height = float(self._config.get("scan_volume_min_height_mm", 0.0))
         max_height = float(self._config.get("scan_volume_max_height_mm", 350.0))
         # The pre-scan height probe (see ``_run_height_probe_and_adjust_x``)
         # measures the real piece height for this specific scan. Whenever

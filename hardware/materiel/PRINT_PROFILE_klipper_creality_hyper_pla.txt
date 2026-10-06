@@ -34,17 +34,21 @@ Z distance support: 0.22 mm
 X/Y distance support: 0.6 mm
 
 [ORIENTATION DES PIECES]
-1) pi_camera_tilt_base.stl
+1) fit_test_rear_cavity_30.45x38.2.stl
+   - À imprimer en premier pour valider l'encombrement arrière
+   - À plat, support NON
+
+2) pi_camera_tilt_base.stl
    - Mettre le grand dos de la plaque contre le plateau (à plat)
    - Support OUI (réglages ci-dessus)
 
-2) ball_screw_M5x40_ball5_square_flat.stl
-   - Déjà orientée à plat
+3) adjustment_rod_M5x50_ball6.5_square_m3.stl
+   - Déjà orientée à plat (axe de la tige horizontal sur le plateau)
    - Support NON (ou touching buildplate only si besoin)
    - Brim 8 mm
 
-3) knurled_wheel_D100_T15_pitch5_flattooth.stl
-   - Grande face à plat
+4) wheel_crank_50mm_square_m3.stl
+   - Grande face (disque Ø 50 mm) à plat contre le plateau
    - Support NON
    - Brim 3-5 mm (optionnel)
 

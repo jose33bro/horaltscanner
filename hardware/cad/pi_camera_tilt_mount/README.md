@@ -15,8 +15,12 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
 - `stl/wheel_crank_50mm_square_m3.stl` : roue/crank de 50 mm de diamètre avec
   carré de montage et trou M3 central pour serrage sur plaque de 3 mm.
 
-Les autres fichiers STL éventuellement présents dans ce répertoire ne sont pas
-générés par `generate.py`.
+Les STL de l'ancienne conception « vis à bille + socle à pétales »
+(`ball_screw_M5x40_ball6.5.stl`, `camera_support_plate_28.05x7x1.stl`) ainsi
+que l'ancien test d'encombrement racine (`fit_test_27.6x7.3.stl`) ont été
+retirés : ils correspondaient à une itération antérieure, incompatible avec
+la base actuelle (fixation par tige d'ajustement + roue/crank). Les quatre
+STL ci-dessus sont les seuls à utiliser.
 
 ## Cotes fonctionnelles de la base
 

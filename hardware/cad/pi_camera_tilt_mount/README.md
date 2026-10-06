@@ -13,7 +13,11 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
   sur 50 mm, bille Ø 6,5 mm côté caméra et carré côté roue/plateau, avec trou
   M3 central dans le carré;
 - `stl/wheel_crank_50mm_square_m3.stl` : roue/crank de 50 mm de diamètre avec
-  carré de montage et trou M3 central pour serrage sur plaque de 3 mm.
+  carré de montage et trou M3 central pour serrage sur plaque de 3 mm;
+- `stl/camera_carrier_v3_25x24_tab4.8.stl` : berceau qui porte la carte Pi
+  Camera Module 3 (noir/NoIR, 25 × 24 mm, 4 trous Ø2,5 mm en carré 21 mm) et
+  se clipse entre les oreilles de la base sur l'axe M3 (tenon Ø 3,40 mm), avec
+  une fossette au dos où vient se loger la bille de la tige d'ajustement.
 
 Les STL de l'ancienne conception « vis à bille + socle à pétales »
 (`ball_screw_M5x40_ball6.5.stl`, `camera_support_plate_28.05x7x1.stl`) ainsi
@@ -49,6 +53,20 @@ STL ci-dessus sont les seuls à utiliser.
   la roue;
 - fenêtre CSI dans la plaque verticale : 18,00 × 9,56 mm, centrée en bas et décalée vers l'avant.
 
+## Cotes du berceau caméra (`camera_carrier_v3_25x24_tab4.8.stl`)
+
+- plaque porte-caméra : 25,00 × ~29,00 × 2,00 mm (hauteur ajustée pour
+  rejoindre le bas des oreilles), espacée de 1,00 mm derrière la face avant
+  de la plaque principale (jeu pour la tige d'ajustement);
+- 4 trous de fixation M2/M2,5 Ø 2,50 mm en carré de 21,00 mm, cotes
+  officielles du Camera Module 3 (25 × 24 mm, standard ou NoIR);
+- tenon de charnière : largeur 4,80 mm (jeu dans l'espace de 5,33 mm entre
+  les oreilles), même profil arrondi que les oreilles, trou d'axe Ø 3,40 mm
+  aligné avec celui de la base;
+- fossette de bille au dos : alignée avec le bossage de réglage de la base,
+  profondeur 1,00 mm, pour que la bille de la tige se loge et ne glisse pas
+  pendant le réglage.
+
 ## Génération
 
 Le générateur paramétrique `generate.py` dépend des bindings OpenCascade
@@ -60,7 +78,7 @@ python3 hardware/cad/pi_camera_tilt_mount/generate.py
 ```
 
 Exécuter la commande depuis la racine du dépôt. Elle vérifie les solides avant
-l'export et remplace uniquement les deux STL listés ci-dessus.
+l'export et remplace les cinq STL listés ci-dessus.
 
 ## Impression et montage
 
@@ -68,15 +86,17 @@ l'export et remplace uniquement les deux STL listés ci-dessus.
 2. Imprimer la base avec le grand dos de la plaque contre le plateau.
 3. Utiliser des supports « Everywhere », angle de surplomb 55°, densité 12 %,
    interface activée (2 couches) et distance Z de 0,22 mm.
-4. Installer la caméra entre les oreilles avec l'axe M3 (pivot), sans la
-   bloquer serrée pour qu'elle puisse encore pivoter.
-5. Visser la tige d'ajustement (`adjustment_rod_M5x50_ball6.5_square_m3.stl`)
+4. Visser la carte Pi Camera Module 3 sur le berceau
+   (`camera_carrier_v3_25x24_tab4.8.stl`) avec 4 vis M2/M2,5 et écrous.
+5. Installer le berceau entre les oreilles de la base avec l'axe M3 (pivot),
+   sans le bloquer serré pour qu'il puisse encore pivoter.
+6. Visser la tige d'ajustement (`adjustment_rod_M5x50_ball6.5_square_m3.stl`)
    dans le bossage taraudé M5 au dos de la plaque, bille côté caméra, jusqu'à
-   ce qu'elle touche le dos de la caméra.
-6. Clipser la roue (`wheel_crank_50mm_square_m3.stl`) sur le carré de la tige
-   avec une vis M3 et tourner pour régler finement l'inclinaison; la caméra
+   ce qu'elle se loge dans la fossette au dos du berceau.
+7. Clipser la roue (`wheel_crank_50mm_square_m3.stl`) sur le carré de la tige
+   avec une vis M3 et tourner pour régler finement l'inclinaison; le berceau
    pivote autour de l'axe des oreilles.
-7. Fixer la base par les deux rails inférieurs avec des vis M3.
+8. Fixer la base par les deux rails inférieurs avec des vis M3.
 
 Le profil d'impression détaillé est documenté dans
 [`../../../materiel/README_support_camera_pi_pivot_reglable.md`](../../../materiel/README_support_camera_pi_pivot_reglable.md).

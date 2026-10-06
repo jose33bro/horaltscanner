@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
@@ -73,6 +74,25 @@ WHEEL_HUB_WIDTH = 8.00
 WHEEL_HUB_LENGTH = 10.00
 WHEEL_HUB_M3_CLEARANCE_DIAMETER = 3.20
 
+# Camera carrier: holds the Pi Camera Module 3 (standard or NoIR, same PCB)
+# and provides the hinge tab that slots between the base's ears on the M3
+# pivot axle. Hole spacing/diameter match the official Camera Module 3
+# mechanical drawing (25 x 24mm PCB, 21mm square hole pattern, Ø2.5mm holes).
+CAM_PCB_WIDTH = 25.00
+CAM_PCB_HEIGHT = 24.00
+CAM_MOUNT_HOLE_SPACING = 21.00
+CAM_MOUNT_HOLE_DIAMETER = 2.50
+CARRIER_THICKNESS = 2.00
+# Gap left between the carrier's back face and the main plate's front face,
+# so the adjustment rod's ball tip has room to push the carrier and tilt it.
+CARRIER_STANDOFF_GAP = 1.00
+# Tab width must fit inside EAR_GAP (5.33mm) with clearance to pivot freely.
+CARRIER_TAB_WIDTH = 4.80
+# Shallow dimple on the back of the carrier so the rod's ball tip seats and
+# self-centers instead of sliding off as the carrier tilts.
+BALL_SOCKET_CLEARANCE = 0.30
+BALL_SOCKET_DEPTH = 1.00
+
 
 def make_box(
     width: float,
@@ -99,6 +119,45 @@ def fuse(*shapes: TopoDS_Shape) -> TopoDS_Shape:
 
 def cut(shape: TopoDS_Shape, tool: TopoDS_Shape) -> TopoDS_Shape:
     return BRepAlgoAPI_Cut(shape, tool).Shape()
+
+
+@dataclass
+class EarGeometry:
+    plate_front_y: float
+    ear_radius: float
+    ear_tip_y: float
+    ear_anchor_y: float
+    ear_box_depth: float
+    ear_body_y: float
+    ear_x: float
+    ear_z: float
+    ear_center_z: float
+
+
+def ear_geometry() -> EarGeometry:
+    """Shared ear/pivot layout, used by both the base and the camera carrier
+    so their hinge tab and ear holes always line up."""
+    plate_front_y = -(MATERIAL_THICKNESS / 2)
+    ear_radius = EAR_HEIGHT / 2
+    ear_center_distance = EAR_PROJECTION - ear_radius
+    ear_tip_y = plate_front_y - ear_center_distance
+    ear_anchor_y = plate_front_y + 1.00
+    ear_box_depth = ear_anchor_y - ear_tip_y + 0.20
+    ear_body_y = (ear_anchor_y + ear_tip_y - 0.20) / 2
+    ear_x = (EAR_GAP + EAR_WIDTH) / 2
+    ear_z = PLATE_HEIGHT - EAR_HEIGHT
+    ear_center_z = PLATE_HEIGHT - ear_radius
+    return EarGeometry(
+        plate_front_y=plate_front_y,
+        ear_radius=ear_radius,
+        ear_tip_y=ear_tip_y,
+        ear_anchor_y=ear_anchor_y,
+        ear_box_depth=ear_box_depth,
+        ear_body_y=ear_body_y,
+        ear_x=ear_x,
+        ear_z=ear_z,
+        ear_center_z=ear_center_z,
+    )
 
 
 def make_mount() -> TopoDS_Shape:
@@ -186,15 +245,15 @@ def make_mount() -> TopoDS_Shape:
         z=-cable_passage_margin,
     )
 
-    ear_radius = EAR_HEIGHT / 2
-    ear_center_distance = EAR_PROJECTION - ear_radius
-    ear_tip_y = plate_front_y - ear_center_distance
-    ear_anchor_y = plate_front_y + 1.00
-    ear_box_depth = ear_anchor_y - ear_tip_y + 0.20
-    ear_body_y = (ear_anchor_y + ear_tip_y - 0.20) / 2
-    ear_x = (EAR_GAP + EAR_WIDTH) / 2
-    ear_z = PLATE_HEIGHT - EAR_HEIGHT
-    ear_center_z = PLATE_HEIGHT - ear_radius
+    ear = ear_geometry()
+    ear_radius = ear.ear_radius
+    ear_tip_y = ear.ear_tip_y
+    ear_anchor_y = ear.ear_anchor_y
+    ear_box_depth = ear.ear_box_depth
+    ear_body_y = ear.ear_body_y
+    ear_x = ear.ear_x
+    ear_z = ear.ear_z
+    ear_center_z = ear.ear_center_z
     left_ear_body = make_box(
         EAR_WIDTH,
         ear_box_depth,
@@ -316,6 +375,107 @@ def make_mount() -> TopoDS_Shape:
     return cut(mount, csi_slot)
 
 
+def make_camera_carrier() -> TopoDS_Shape:
+    """Carries the Pi Camera Module 3 PCB (25 x 24mm, 21mm square hole
+    pattern) and provides the hinge tab that slots between the base's ears
+    on the M3 pivot axle, plus a dimple on the back where the adjustment
+    rod's ball tip seats to tilt it."""
+    ear = ear_geometry()
+
+    carrier_back_y = ear.plate_front_y - CARRIER_STANDOFF_GAP
+    carrier_center_y = carrier_back_y - (CARRIER_THICKNESS / 2)
+    carrier_height = ear.ear_z - MATERIAL_THICKNESS
+    board_plate = make_box(
+        CAM_PCB_WIDTH,
+        CARRIER_THICKNESS,
+        carrier_height,
+        y=carrier_center_y,
+        z=MATERIAL_THICKNESS,
+    )
+
+    # Hinge tab: same rounded-tip profile as the base's ears, centered and
+    # narrow enough to slot into EAR_GAP, stacked directly on top of the
+    # board plate so it reaches the ears' pivot axis.
+    tab_body = make_box(
+        CARRIER_TAB_WIDTH,
+        ear.ear_box_depth,
+        EAR_HEIGHT,
+        y=ear.ear_body_y,
+        z=ear.ear_z,
+    )
+    tab_round = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(-(CARRIER_TAB_WIDTH / 2), ear.ear_tip_y, ear.ear_center_z),
+            gp_Dir(1, 0, 0),
+        ),
+        ear.ear_radius,
+        CARRIER_TAB_WIDTH,
+    ).Shape()
+
+    carrier = fuse(board_plate, tab_body, tab_round)
+
+    pivot_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(-(CARRIER_TAB_WIDTH / 2) - 1, ear.ear_tip_y, ear.ear_center_z),
+            gp_Dir(1, 0, 0),
+        ),
+        PIVOT_CLEARANCE_DIAMETER / 2,
+        CARRIER_TAB_WIDTH + 2,
+    ).Shape()
+
+    hole_top_z = ear.ear_z - 1.50
+    hole_bottom_z = hole_top_z - CAM_MOUNT_HOLE_SPACING
+    mount_hole_x = CAM_MOUNT_HOLE_SPACING / 2
+    top_left_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(-mount_hole_x, carrier_center_y - (CARRIER_THICKNESS / 2) - 1, hole_top_z),
+            gp_Dir(0, 1, 0),
+        ),
+        CAM_MOUNT_HOLE_DIAMETER / 2,
+        CARRIER_THICKNESS + 2,
+    ).Shape()
+    top_right_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(mount_hole_x, carrier_center_y - (CARRIER_THICKNESS / 2) - 1, hole_top_z),
+            gp_Dir(0, 1, 0),
+        ),
+        CAM_MOUNT_HOLE_DIAMETER / 2,
+        CARRIER_THICKNESS + 2,
+    ).Shape()
+    bottom_left_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(-mount_hole_x, carrier_center_y - (CARRIER_THICKNESS / 2) - 1, hole_bottom_z),
+            gp_Dir(0, 1, 0),
+        ),
+        CAM_MOUNT_HOLE_DIAMETER / 2,
+        CARRIER_THICKNESS + 2,
+    ).Shape()
+    bottom_right_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(mount_hole_x, carrier_center_y - (CARRIER_THICKNESS / 2) - 1, hole_bottom_z),
+            gp_Dir(0, 1, 0),
+        ),
+        CAM_MOUNT_HOLE_DIAMETER / 2,
+        CARRIER_THICKNESS + 2,
+    ).Shape()
+
+    # Shallow ball-socket dimple on the back face, aligned with the base's
+    # adjustment boss, so the rod's ball tip seats and self-centers instead
+    # of sliding off as the carrier tilts.
+    adjustment_boss_z = PLATE_HEIGHT - ADJUSTMENT_BOSS_OFFSET_FROM_TOP
+    ball_socket_radius = (BALL_DIAMETER / 2) + BALL_SOCKET_CLEARANCE
+    ball_socket_center_y = carrier_back_y + (ball_socket_radius - BALL_SOCKET_DEPTH)
+    ball_socket = BRepPrimAPI_MakeSphere(
+        gp_Pnt(ADJUSTMENT_BOSS_X_OFFSET, ball_socket_center_y, adjustment_boss_z),
+        ball_socket_radius,
+    ).Shape()
+
+    carrier = cut(carrier, pivot_hole)
+    carrier = cut(cut(carrier, top_left_hole), top_right_hole)
+    carrier = cut(cut(carrier, bottom_left_hole), bottom_right_hole)
+    return cut(carrier, ball_socket)
+
+
 def make_adjustment_rod() -> TopoDS_Shape:
     rod_radius = ROD_DIAMETER / 2
     rod = BRepPrimAPI_MakeCylinder(
@@ -391,3 +551,4 @@ if __name__ == "__main__":
     export_model(make_fit_test(), "fit_test_rear_cavity_30.45x38.2.stl")
     export_model(make_adjustment_rod(), "adjustment_rod_M5x50_ball6.5_square_m3.stl")
     export_model(make_wheel_crank(), "wheel_crank_50mm_square_m3.stl")
+    export_model(make_camera_carrier(), "camera_carrier_v3_25x24_tab4.8.stl")

@@ -4,7 +4,12 @@ from pathlib import Path
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeSphere
+from OCP.BRepPrimAPI import (
+    BRepPrimAPI_MakeBox,
+    BRepPrimAPI_MakeCone,
+    BRepPrimAPI_MakeCylinder,
+    BRepPrimAPI_MakeSphere,
+)
 from OCP.StlAPI import StlAPI_Writer
 from OCP.TopoDS import TopoDS_Shape
 from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
@@ -78,6 +83,22 @@ CARRIER_TAB_WIDTH = 4.80
 BALL_SOCKET_CLEARANCE = 0.30
 BALL_SOCKET_DEPTH = 1.00
 
+# Front cache (lens-side cover): clips onto the camera through the same 4
+# mounting holes instead of screws/nuts. Four printed pins push through the
+# PCB holes and into the carrier's holes (friction/press fit); a central
+# opening clears the lens.
+CAM_PCB_THICKNESS = 1.20
+COVER_THICKNESS = 1.60
+LENS_HOLE_DIAMETER = 11.00
+# Slightly undersized vs. CAM_MOUNT_HOLE_DIAMETER (2.50mm) for a snug push
+# fit directly against the PCB's rigid holes.
+CLIP_PIN_DIAMETER = 2.30
+CLIP_PIN_TIP_DIAMETER = 1.20
+CLIP_PIN_TIP_LENGTH = 0.80
+# How far short of the carrier's back face the pins stop, so they never
+# reach into the 1mm gap in front of the main plate (ball-socket area).
+CLIP_PIN_BACK_MARGIN = 0.30
+
 
 def make_box(
     width: float,
@@ -142,6 +163,27 @@ def ear_geometry() -> EarGeometry:
         ear_x=ear_x,
         ear_z=ear_z,
         ear_center_z=ear_center_z,
+    )
+
+
+@dataclass
+class CameraHoleLayout:
+    mount_hole_x: float
+    hole_top_z: float
+    hole_bottom_z: float
+    hole_center_z: float
+
+
+def camera_hole_layout(ear: EarGeometry) -> CameraHoleLayout:
+    """Shared Pi Camera V3 mounting-hole positions (21mm square pattern),
+    used by both the carrier and the front cache so pins/screws line up."""
+    hole_top_z = ear.ear_z - 1.50
+    hole_bottom_z = hole_top_z - CAM_MOUNT_HOLE_SPACING
+    return CameraHoleLayout(
+        mount_hole_x=CAM_MOUNT_HOLE_SPACING / 2,
+        hole_top_z=hole_top_z,
+        hole_bottom_z=hole_bottom_z,
+        hole_center_z=(hole_top_z + hole_bottom_z) / 2,
     )
 
 
@@ -371,9 +413,10 @@ def make_camera_carrier() -> TopoDS_Shape:
         CARRIER_TAB_WIDTH + 2,
     ).Shape()
 
-    hole_top_z = ear.ear_z - 1.50
-    hole_bottom_z = hole_top_z - CAM_MOUNT_HOLE_SPACING
-    mount_hole_x = CAM_MOUNT_HOLE_SPACING / 2
+    holes = camera_hole_layout(ear)
+    hole_top_z = holes.hole_top_z
+    hole_bottom_z = holes.hole_bottom_z
+    mount_hole_x = holes.mount_hole_x
     top_left_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
             gp_Pnt(-mount_hole_x, carrier_center_y - (CARRIER_THICKNESS / 2) - 1, hole_top_z),
@@ -422,6 +465,70 @@ def make_camera_carrier() -> TopoDS_Shape:
     carrier = cut(cut(carrier, top_left_hole), top_right_hole)
     carrier = cut(cut(carrier, bottom_left_hole), bottom_right_hole)
     return cut(carrier, ball_socket)
+
+
+def make_camera_front_cover() -> TopoDS_Shape:
+    """Lens-side cache that clips onto the Pi Camera V3 through the same 4
+    mounting holes used by the carrier, instead of screws/nuts. Four pins
+    push through the PCB's holes and into the carrier's holes (press/
+    friction fit); a central opening clears the lens."""
+    ear = ear_geometry()
+    holes = camera_hole_layout(ear)
+
+    carrier_back_y = ear.plate_front_y - CARRIER_STANDOFF_GAP
+    carrier_front_y = carrier_back_y - CARRIER_THICKNESS
+    pcb_front_y = carrier_front_y - CAM_PCB_THICKNESS
+    cover_back_y = pcb_front_y
+    cover_center_y = cover_back_y - (COVER_THICKNESS / 2)
+    cover_bottom_z = ear.ear_z - CAM_PCB_HEIGHT
+
+    cover_plate = make_box(
+        CAM_PCB_WIDTH,
+        COVER_THICKNESS,
+        CAM_PCB_HEIGHT,
+        y=cover_center_y,
+        z=cover_bottom_z,
+    )
+
+    lens_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(0, cover_back_y - 1, holes.hole_center_z),
+            gp_Dir(0, 1, 0),
+        ),
+        LENS_HOLE_DIAMETER / 2,
+        COVER_THICKNESS + 2,
+    ).Shape()
+
+    # Pins span the PCB thickness plus most of the carrier thickness,
+    # stopping short of the carrier's back face (ball-socket side).
+    engagement_length = (
+        CAM_PCB_THICKNESS + CARRIER_THICKNESS - CLIP_PIN_BACK_MARGIN
+    )
+    shaft_length = engagement_length - CLIP_PIN_TIP_LENGTH
+
+    def clip_pin(x: float, z: float) -> TopoDS_Shape:
+        shaft = BRepPrimAPI_MakeCylinder(
+            gp_Ax2(gp_Pnt(x, cover_back_y, z), gp_Dir(0, 1, 0)),
+            CLIP_PIN_DIAMETER / 2,
+            shaft_length,
+        ).Shape()
+        tip = BRepPrimAPI_MakeCone(
+            gp_Ax2(gp_Pnt(x, cover_back_y + shaft_length, z), gp_Dir(0, 1, 0)),
+            CLIP_PIN_DIAMETER / 2,
+            CLIP_PIN_TIP_DIAMETER / 2,
+            CLIP_PIN_TIP_LENGTH,
+        ).Shape()
+        return fuse(shaft, tip)
+
+    pins = [
+        clip_pin(-holes.mount_hole_x, holes.hole_top_z),
+        clip_pin(holes.mount_hole_x, holes.hole_top_z),
+        clip_pin(-holes.mount_hole_x, holes.hole_bottom_z),
+        clip_pin(holes.mount_hole_x, holes.hole_bottom_z),
+    ]
+
+    cover = fuse(cover_plate, *pins)
+    return cut(cover, lens_hole)
 
 
 def make_adjustment_rod() -> TopoDS_Shape:
@@ -500,3 +607,4 @@ if __name__ == "__main__":
     export_model(make_adjustment_rod(), "adjustment_rod_M5x50_ball6.5_square_m3.stl")
     export_model(make_wheel_crank(), "wheel_crank_50mm_square_m3.stl")
     export_model(make_camera_carrier(), "camera_carrier_v3_25x24_tab4.8.stl")
+    export_model(make_camera_front_cover(), "camera_front_cover_v3_clip.stl")

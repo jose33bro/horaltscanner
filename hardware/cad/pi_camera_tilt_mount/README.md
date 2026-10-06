@@ -31,17 +31,22 @@ STL ci-dessus sont les seuls à utiliser.
   descente, avec un avant-trou horizontal Ø 2,70 mm dans chaque rail et une
   découpe de 3,00 mm depuis l'avant pour dégager le passage M3;
 - passage de nappe du câble CSI dans la partie tablette : ouverture centrale
-  de 12,00 mm de large, débouchant de part en part (dessus/dessous) de la
-  tablette de 3,20 mm d'épaisseur, pour laisser sortir la nappe par le dessous;
+  de 18,00 mm de large (même largeur que la fenêtre CSI de la plaque, pour
+  que la nappe garde un passage libre et constant, sans se faire pincer),
+  débouchant de part en part (dessus/dessous) de la tablette de 3,20 mm
+  d'épaisseur, pour laisser sortir la nappe par le dessous;
 - oreilles : projection 8,70 mm, largeur 8,50 mm, hauteur 5,99 mm et espace
   central 5,33 mm;
 - trou d'axe traversant : Ø 3,40 mm (pivot de la caméra);
 - trou de fixation M5 sur la plaque verticale, centré entre les oreilles et à 22,00 mm du haut;
-- bossage de réglage d'inclinaison : à 12,00 mm du haut de la plaque, au dos,
-  Ø 10,00 mm sur 6,00 mm de long, percé d'un trou taraudé M5 (Ø 4,20 mm) qui
-  traverse tout le bossage et la plaque jusqu'à la face avant. La tige
-  d'ajustement se visse dedans et sa bille appuie sur le dos de la caméra
-  pour l'incliner autour de l'axe des oreilles quand on tourne la roue;
+- bossage de réglage d'inclinaison : à 16,20 mm du haut de la plaque (donc
+  plus bas, proche de la fenêtre CSI, pour un meilleur bras de levier), décalé
+  de 8,00 mm sur le côté pour ne pas croiser le trou de fixation M5 central,
+  au dos de la plaque, Ø 10,00 mm sur 6,00 mm de long, percé d'un trou taraudé
+  M5 (Ø 4,20 mm) qui traverse tout le bossage et la plaque jusqu'à la face
+  avant. La tige d'ajustement se visse dedans et sa bille appuie sur le dos
+  de la caméra pour l'incliner autour de l'axe des oreilles quand on tourne
+  la roue;
 - fenêtre CSI dans la plaque verticale : 18,00 × 9,56 mm, centrée en bas et décalée vers l'avant.
 
 ## Génération

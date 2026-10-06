@@ -28,7 +28,9 @@ LOWER_RAIL_DROP = 5.00
 LOWER_RAIL_OVERLAP = 0.50
 LOWER_RAIL_FRONT_CUT_DEPTH = 3.00
 
-CABLE_PASSAGE_WIDTH = 12.00
+CABLE_PASSAGE_WIDTH = 18.00  # matches CSI_SLOT_WIDTH so the ribbon has a
+                              # constant-width, unpinched path all the way
+                              # from the plate window to the shelf underside.
 CABLE_PASSAGE_Y_OFFSET = 8.00
 
 EAR_PROJECTION = 8.70
@@ -49,7 +51,12 @@ CSI_SLOT_FRONT_OFFSET = -4.00
 # The adjustment rod threads in from behind and its ball tip bears on the
 # back of the camera PCB, which pivots on the M3 axle through the ears
 # (pivot_hole) when the wheel crank turns the rod in or out.
-ADJUSTMENT_BOSS_OFFSET_FROM_TOP = 12.00
+# Placed as low as possible (close to the CSI slot) for a longer lever arm
+# from the ear pivot, which needs more leverage to tilt the camera; offset
+# sideways in X so it clears the existing central M5 frame-mount hole
+# (m5_thread_hole, at z~16.2) instead of competing with it on the same axis.
+ADJUSTMENT_BOSS_OFFSET_FROM_TOP = 16.20
+ADJUSTMENT_BOSS_X_OFFSET = 8.00
 ADJUSTMENT_BOSS_DIAMETER = 10.00
 ADJUSTMENT_BOSS_LENGTH = 6.00
 
@@ -224,7 +231,7 @@ def make_mount() -> TopoDS_Shape:
     adjustment_boss_z = PLATE_HEIGHT - ADJUSTMENT_BOSS_OFFSET_FROM_TOP
     adjustment_boss = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(0, plate_back_y, adjustment_boss_z),
+            gp_Pnt(ADJUSTMENT_BOSS_X_OFFSET, plate_back_y, adjustment_boss_z),
             gp_Dir(0, 1, 0),
         ),
         ADJUSTMENT_BOSS_DIAMETER / 2,
@@ -288,7 +295,7 @@ def make_mount() -> TopoDS_Shape:
     adjustment_bore = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
             gp_Pnt(
-                0,
+                ADJUSTMENT_BOSS_X_OFFSET,
                 plate_back_y + ADJUSTMENT_BOSS_LENGTH + adjustment_bore_margin,
                 adjustment_boss_z,
             ),

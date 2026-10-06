@@ -23,12 +23,14 @@ modèle sont documentées dans
 - La plaque verticale porte un trou M5 centré entre les oreilles, à 22,00 mm du
   haut pour la fixation mécanique.
 - La plaque verticale porte aussi un bossage taraudé M5 (Ø 10,00 mm, 6,00 mm
-  de long) à 12,00 mm du haut, au dos : la tige d'ajustement s'y visse et sa
-  bille appuie sur le dos de la caméra pour l'incliner autour de l'axe des
-  oreilles en tournant la roue.
-- La partie tablette de 24,00 mm reçoit un passage central de 12,00 mm de
-  large qui traverse toute l'épaisseur (3,20 mm), pour laisser sortir la
-  nappe CSI par le dessous de la tablette.
+  de long) à 16,20 mm du haut, décalé de 8,00 mm sur le côté, au dos : la
+  tige d'ajustement s'y visse et sa bille appuie sur le dos de la caméra pour
+  l'incliner autour de l'axe des oreilles en tournant la roue. Position basse
+  (proche de la fenêtre CSI) pour un meilleur bras de levier.
+- La partie tablette de 24,00 mm reçoit un passage central de 18,00 mm de
+  large (même largeur que la fenêtre CSI, pour que la nappe reste libre sans
+  se faire pincer) qui traverse toute l'épaisseur (3,20 mm), pour laisser
+  sortir la nappe CSI par le dessous de la tablette.
 
 ## Assemblage
 

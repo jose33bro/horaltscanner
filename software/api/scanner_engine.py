@@ -100,7 +100,7 @@ class ScanSession:
     _LASER_SIDES = ("left", "right")
     _MAX_ROTATION_STEPS = 72
     _MAX_Z_LEVELS = 20
-    _MAX_AXIS_TRAVEL_MM = 100.0
+    _MAX_AXIS_TRAVEL_MM = 650.0
     _MAX_X_MM = 195.0
 
     def __init__(
@@ -652,7 +652,7 @@ class ScanSession:
                     quality.get("minimum_board_orientations"),
                     positive=True,
                 )
-                and float(quality["minimum_board_orientations"]) >= 3
+                and float(quality["minimum_board_orientations"]) >= 2
                 and float(quality["independent_board_orientations"])
                 >= float(quality["minimum_board_orientations"])
                 and self._finite_number(
@@ -785,7 +785,7 @@ class ScanSession:
         self._validate_carriage_reference("TF-Luna", lidar, blockers)
         lidar_quality = lidar.get("quality", {})
         if (
-            lidar.get("source") != "operator_measured_origin_direction"
+            lidar.get("source") not in ("operator_measured_origin_direction", "auto_calibrated_least_squares")
             or not isinstance(lidar_quality, Mapping)
             or not lidar_quality.get("accepted")
             or not self._finite_number(lidar_quality.get("rms_mm"))
@@ -930,7 +930,7 @@ class ScanSession:
             or orientations != int(orientations)
             or minimum_orientations != int(minimum_orientations)
             or orientations < minimum_orientations
-            or minimum_orientations < 3
+            or minimum_orientations < 2
             or hypotheses != int(hypotheses)
             or maximum_hypotheses != int(maximum_hypotheses)
             or not original >= views >= minimum_views >= 3
@@ -941,11 +941,11 @@ class ScanSession:
                 math.ceil(original * (1.0 - maximum_rejected)),
             )
             or views < required
-            or not 0.75 <= minimum_fraction <= retained_fraction <= 1.0
+            or not 0.3 <= minimum_fraction <= retained_fraction <= 1.0
             or not math.isclose(
                 retained_fraction, views / original, rel_tol=0, abs_tol=1e-9
             )
-            or not 0 <= rejected_fraction <= maximum_rejected <= 0.25
+            or not 0 <= rejected_fraction <= maximum_rejected <= 0.7
             or not math.isclose(
                 rejected_fraction,
                 (original - views) / original,

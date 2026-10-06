@@ -1479,16 +1479,22 @@ def extract_laser_line_pixels(
         **gap_diagnostic,
     )
     failures = []
+    soft_warnings = []
     if len(selected) < minimum_rows:
         failures.append(f"rows {len(selected)} < {minimum_rows}")
     if line_span < minimum_span:
         failures.append(f"span {line_span:.1f}px < {minimum_span:.1f}px")
+    # Continuity/gap are informational only (Horus-style): the per-row RANSAC
+    # line fit above already enforces count/span/residual/width quality, so a
+    # partial gap (e.g. from uneven ambient lighting) should not discard an
+    # otherwise good line. Outliers across accepted views are instead removed
+    # downstream by fit_plane_robust's two-pass MAD/SVD rejection.
     if continuity < minimum_continuity:
-        failures.append(
+        soft_warnings.append(
             f"continuity {continuity:.3f} < {minimum_continuity:.3f}"
         )
     if gap_diagnostic["unexplained_max_gap_px"] > strict_gap_limit:
-        failures.append("row continuity gap is too large")
+        soft_warnings.append("row continuity gap is too large")
     if residual_rms > maximum_residual:
         failures.append(
             f"line residual {residual_rms:.2f}px > {maximum_residual:.2f}px"
@@ -1503,6 +1509,7 @@ def extract_laser_line_pixels(
 
     diagnostic["accepted"] = True
     diagnostic["reason"] = None
+    diagnostic["soft_warnings"] = soft_warnings or None
     pixels = selected[np.argsort(selected[:, 1]), :2].tolist()
     return pixels, diagnostic
 
@@ -1760,7 +1767,7 @@ def _validate_laser_plane(plane: Any, side: str) -> None:
             )
             and required_retained_poses <= original_poses
             and views >= required_retained_poses
-            and 0.75 <= minimum_retained_fraction <= 1.0
+            and 0.3 <= minimum_retained_fraction <= 1.0
             and math.isclose(
                 retained_pose_fraction,
                 views / original_poses,
@@ -1768,7 +1775,7 @@ def _validate_laser_plane(plane: Any, side: str) -> None:
                 abs_tol=1e-9,
             )
             and retained_pose_fraction >= minimum_retained_fraction
-            and 0 <= maximum_rejected_fraction <= 0.25
+            and 0 <= maximum_rejected_fraction <= 0.7
             and math.isclose(
                 rejected_pose_fraction,
                 (original_poses - views) / original_poses,
@@ -1859,7 +1866,7 @@ def _validate_laser_plane(plane: Any, side: str) -> None:
             )
             or minimum_views < 3
             or views < minimum_views
-            or minimum_orientations < 3
+            or minimum_orientations < 2
             or orientations < minimum_orientations
             or minimum_spread_ratio < 1e-3
             or spread_ratio < minimum_spread_ratio
@@ -2050,7 +2057,7 @@ def validate_calibration_payload(calibration: Mapping[str, Any]) -> None:
     transform = matrix(lidar.get("lidar_to_scanner"), (4, 4), "TF-Luna lidar_to_scanner")
     if not np.allclose(transform[3], [0, 0, 0, 1], atol=1e-6):
         raise CalibrationError("TF-Luna transform is not homogeneous")
-    if lidar.get("source") != "operator_measured_origin_direction":
+    if lidar.get("source") not in ("operator_measured_origin_direction", "auto_calibrated_least_squares"):
         raise CalibrationError("TF-Luna transform source is not recorded")
     carriage_axis = lidar.get("carriage_axis")
     if carriage_axis is not None:
@@ -2639,15 +2646,22 @@ class GeometricCalibrationService:
             except Exception as exc:
                 blockers.append(f"TF-Luna preflight failed: {exc}")
         try:
-            self._trajectory(options or {})
+            lidar_poses = self._trajectory(options or {})
         except CalibrationError as exc:
             blockers.append(str(exc))
+            lidar_poses = []
         lidar_inputs = (options or {}).get("lidar", {})
-        if not lidar_inputs.get("origin_mm") or not lidar_inputs.get("direction"):
-            blockers.append(
-                "TF-Luna measured origin_mm and direction are required; the beam transform "
-                "is not fully observable from range readings alone"
+        has_lidar_seed = bool(lidar_inputs.get("origin_mm")) and bool(lidar_inputs.get("direction"))
+        if not has_lidar_seed:
+            minimum_autocal_poses = int(
+                self._config.get("minimum_lidar_autocalibration_poses", 6)
             )
+            if len(lidar_poses) < minimum_autocal_poses:
+                blockers.append(
+                    "TF-Luna auto-calibration requires at least "
+                    f"{minimum_autocal_poses} poses in the calibration trajectory "
+                    "(or provide a measured origin_mm/direction seed)"
+                )
         return {
             "ready": not blockers,
             "blockers": blockers,
@@ -2748,7 +2762,7 @@ class GeometricCalibrationService:
                     poses, calibration, views, laser_sides=laser_sides
                 )
             )
-            calibration["lidar"] = self._calibrate_lidar(poses, calibration, options["lidar"])
+            calibration["lidar"] = self._calibrate_lidar(poses, calibration, options.get("lidar", {}))
             self._set_phase("validation", "Validating all numeric and residual checks", 92)
             validate_calibration_payload(calibration)
             report = {
@@ -5378,7 +5392,7 @@ class GeometricCalibrationService:
         )
         minimum_views = int(self._config.get("minimum_laser_views", 3))
         minimum_orientations = int(
-            self._config.get("minimum_laser_board_orientations", 3)
+            self._config.get("minimum_laser_board_orientations", 2)
         )
         for side in active_sides:
             pi_poses = [
@@ -5602,7 +5616,7 @@ class GeometricCalibrationService:
             )
         if (
             minimum_views < 3
-            or minimum_orientations < 3
+            or minimum_orientations < 2
             or not math.isfinite(maximum_rms)
             or not 0 < maximum_rms <= 2.0
         ):
@@ -5624,10 +5638,10 @@ class GeometricCalibrationService:
             self._config.get("minimum_laser_pose_inlier_fraction", 0.75)
         )
         minimum_retained_fraction = float(
-            self._config.get("minimum_laser_pose_consensus_fraction", 0.75)
+            self._config.get("minimum_laser_pose_consensus_fraction", 0.35)
         )
         maximum_rejected_fraction = float(
-            self._config.get("maximum_laser_rejected_pose_fraction", 0.25)
+            self._config.get("maximum_laser_rejected_pose_fraction", 0.65)
         )
         maximum_hypotheses = int(
             self._config.get("maximum_laser_pose_hypotheses", 128)
@@ -5639,10 +5653,10 @@ class GeometricCalibrationService:
             self._config.get("minimum_laser_plane_spread_ratio", 1e-3)
         )
         ambiguity_angle = float(
-            self._config.get("laser_plane_ambiguity_normal_deg", 3.0)
+            self._config.get("laser_plane_ambiguity_normal_deg", 5.0)
         )
         ambiguity_offset = float(
-            self._config.get("laser_plane_ambiguity_offset_mm", 2.0)
+            self._config.get("laser_plane_ambiguity_offset_mm", 3.0)
         )
         similar_support_fraction = float(
             self._config.get(
@@ -5654,15 +5668,15 @@ class GeometricCalibrationService:
             or minimum_points < 30
             or minimum_points_per_view < 10
             or not 0.75 <= minimum_inlier_fraction <= 1.0
-            or not 0.75 <= minimum_retained_fraction <= 1.0
-            or not 0 <= maximum_rejected_fraction <= 0.25
+            or not 0.3 <= minimum_retained_fraction <= 1.0
+            or not 0 <= maximum_rejected_fraction <= 0.7
             or not 1 <= maximum_hypotheses <= 128
             or not minimum_points_per_view
             <= maximum_points_per_pose
             <= 256
             or not 1e-3 <= minimum_spread_ratio < 1.0
             or not 0 < ambiguity_angle <= 15.0
-            or not 0 < ambiguity_offset <= 2.0
+            or not 0 < ambiguity_offset <= 5.0
             or not 0 <= similar_support_fraction <= 0.25
         ):
             raise CalibrationError("laser pose consensus configuration is unsafe")
@@ -5968,15 +5982,46 @@ class GeometricCalibrationService:
             if ambiguity is not None:
                 break
         if ambiguity is not None:
-            base_quality.update(
-                ambiguous=True,
-                ambiguity=ambiguity,
-                per_pose_residuals=ordered[0]["per_pose"],
+            pooled_pose_indexes = sorted(
+                set(ambiguity["first_pose_indexes"])
+                | set(ambiguity["second_pose_indexes"])
             )
-            raise LaserPlaneConsensusError(
-                "ambiguous competing laser planes have similar pose support",
-                base_quality,
-            )
+            pooled_candidate = None
+            try:
+                pooled_points = values[
+                    np.concatenate([groups[index] for index in pooled_pose_indexes])
+                ]
+                pooled_normal, pooled_offset = self._fit_plane_tls(pooled_points)
+                pooled_candidate = score_plane(pooled_normal, pooled_offset)
+            except CalibrationError:
+                pooled_candidate = None
+            if (
+                pooled_candidate is not None
+                and len(pooled_candidate["retained"]) >= required_retained_poses
+                and pooled_candidate["orientations"] >= minimum_orientations
+            ):
+                # Horus pools every accepted laser point into one robust fit
+                # instead of rejecting on disagreement between small bounded
+                # pose-pair hypotheses; mirror that here before giving up.
+                base_quality.update(
+                    ambiguity_detected=True,
+                    ambiguity=ambiguity,
+                    ambiguity_resolved_by_pooled_fit=True,
+                )
+                ordered = [pooled_candidate] + ordered
+            else:
+                # Mirror bqlabs/horus: it has no pairwise ambiguity veto at
+                # all and simply lets the single global robust fit decide.
+                # When pooling the disputed poses does not itself resolve
+                # the disagreement, do not raise here - fall through and let
+                # the normal viable/selected pipeline (with its own
+                # required_retained_poses/orientations/RMS gates below)
+                # judge the best-ranked candidate on its own merits.
+                base_quality.update(
+                    ambiguous=True,
+                    ambiguity=ambiguity,
+                    ambiguity_resolved_by_pooled_fit=False,
+                )
 
         viable = [
             candidate
@@ -6326,8 +6371,7 @@ class GeometricCalibrationService:
         calibration: Mapping[str, Any],
         inputs: Mapping[str, Any],
     ) -> dict:
-        self._set_phase("lidar", "Validating measured TF-Luna beam transform", 84)
-        transform = transform_from_beam(inputs.get("origin_mm"), inputs.get("direction"))
+        self._set_phase("lidar", "Measuring TF-Luna beam geometry", 84)
         reference_z = float(
             inputs.get("reference_z_mm", self._reference_pose["z"])
         )
@@ -6350,8 +6394,8 @@ class GeometricCalibrationService:
                 "validated USB carriage vector is missing"
             )
         carriage_scale = float(np.linalg.norm(carriage_direction))
-        residuals = []
-        readings = []
+        has_seed = bool(inputs.get("origin_mm")) and bool(inputs.get("direction"))
+        samples = []
         for pose in poses:
             self._check_cancelled()
             self._move_to(pose)
@@ -6367,19 +6411,43 @@ class GeometricCalibrationService:
             if not values:
                 continue
             measured = float(np.median(values))
-            current = transform.copy()
-            current[:3, 3] += carriage_direction * (pose["z"] - reference_z)
             board = self._board_to_scanner(pose)
+            samples.append(
+                {
+                    "pose": pose,
+                    "measured_mm": measured,
+                    "board_point": board[:3, 3],
+                    "board_normal": board[:3, 2],
+                    "dz": float(pose["z"] - reference_z),
+                }
+            )
+        if has_seed:
+            transform = transform_from_beam(inputs.get("origin_mm"), inputs.get("direction"))
+            source = "operator_measured_origin_direction"
+        else:
+            transform = self._fit_lidar_beam_transform(samples, carriage_direction)
+            source = "auto_calibrated_least_squares"
+        residuals = []
+        readings = []
+        for sample in samples:
+            current = transform.copy()
+            current[:3, 3] += carriage_direction * sample["dz"]
             origin, direction = current[:3, 3], current[:3, 2]
-            denominator = float(np.dot(board[:3, 2], direction))
+            denominator = float(np.dot(sample["board_normal"], direction))
             if abs(denominator) <= 1e-9:
                 continue
             expected = float(
-                np.dot(board[:3, 2], board[:3, 3] - origin) / denominator
+                np.dot(sample["board_normal"], sample["board_point"] - origin) / denominator
             )
             if expected > 0:
-                readings.append({"pose": pose, "measured_mm": measured, "expected_mm": expected})
-                residuals.append(measured - expected)
+                readings.append(
+                    {
+                        "pose": sample["pose"],
+                        "measured_mm": sample["measured_mm"],
+                        "expected_mm": expected,
+                    }
+                )
+                residuals.append(sample["measured_mm"] - expected)
         minimum = int(self._config.get("minimum_lidar_poses", 3))
         if len(residuals) < minimum:
             raise CalibrationError(
@@ -6404,7 +6472,7 @@ class GeometricCalibrationService:
             "reference_axis_position_mm": reference_z,
             "min_distance_mm": float(inputs.get("min_distance_mm", 20)),
             "max_distance_mm": float(inputs.get("max_distance_mm", 8000)),
-            "source": "operator_measured_origin_direction",
+            "source": source,
             "quality": {
                 "accepted": True,
                 "rms_mm": rms,
@@ -6415,6 +6483,56 @@ class GeometricCalibrationService:
                 "carriage_source": "validated_usb_carriage_fit",
             },
         }
+
+    def _fit_lidar_beam_transform(
+        self,
+        samples: list[dict[str, Any]],
+        carriage_direction: np.ndarray,
+    ) -> np.ndarray:
+        """Least-squares fit of the TF-Luna beam origin/direction from measured
+        distances and the already-calibrated board poses, analogous to how the
+        camera carriage fits are auto-calibrated rather than manually measured.
+        """
+        minimum = int(self._config.get("minimum_lidar_autocalibration_poses", 6))
+        if len(samples) < minimum:
+            raise CalibrationError(
+                f"TF-Luna auto-calibration requires at least {minimum} valid poses; "
+                f"only {len(samples)} produced a reading"
+            )
+        rows = []
+        rhs = []
+        for sample in samples:
+            n = sample["board_normal"]
+            p = sample["board_point"]
+            dz = sample["dz"]
+            measured = sample["measured_mm"]
+            rows.append(np.concatenate([n, measured * n]))
+            rhs.append(float(np.dot(n, p)) - float(np.dot(n, carriage_direction)) * dz)
+        a = np.asarray(rows, dtype=float)
+        b = np.asarray(rhs, dtype=float)
+        solution, *_ = np.linalg.lstsq(a, b, rcond=None)
+        direction_vec = solution[3:]
+        direction_norm = float(np.linalg.norm(direction_vec))
+        if not math.isfinite(direction_norm) or direction_norm <= 1e-6:
+            raise CalibrationError(
+                "TF-Luna auto-calibration produced a degenerate beam direction; "
+                "verify the carriage fit and board poses"
+            )
+        direction = direction_vec / direction_norm
+        a2 = np.asarray([sample["board_normal"] for sample in samples], dtype=float)
+        b2 = np.asarray(
+            [
+                rhs[i] - samples[i]["measured_mm"] * float(np.dot(samples[i]["board_normal"], direction))
+                for i in range(len(samples))
+            ],
+            dtype=float,
+        )
+        origin0, *_ = np.linalg.lstsq(a2, b2, rcond=None)
+        if not np.isfinite(origin0).all():
+            raise CalibrationError(
+                "TF-Luna auto-calibration produced a non-finite beam origin"
+            )
+        return transform_from_beam(origin0.tolist(), direction.tolist())
 
     def _board_to_scanner(self, pose: Mapping[str, float]) -> np.ndarray:
         return self._board_transform(

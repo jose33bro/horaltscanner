@@ -153,6 +153,9 @@ class ScanSession:
         self._axis_position = {"x": 0.0, "y": 0.0, "z": 0.0}
         self._motor_preparation: dict[str, float | bool] | None = None
         self._motion_fault: str | None = None
+        self._measured_object_height_mm: float | None = None
+        self._object_x_mode: str | None = None
+        self._dynamic_scan_volume_max_height_mm: float | None = None
 
     def configure_hardware(
         self,
@@ -1138,6 +1141,9 @@ class ScanSession:
                 self._lidar_samples = 0
                 self._laser_detections = {side: 0 for side in self._LASER_SIDES}
                 self._error = None
+                self._measured_object_height_mm = None
+                self._object_x_mode = None
+                self._dynamic_scan_volume_max_height_mm = None
                 target = (
                     self._simulation_capture_loop
                     if self._simulation
@@ -1227,8 +1233,13 @@ class ScanSession:
                 self._end_time = time.time()
 
     def _physical_capture_loop(self) -> None:
-        """Acquire a scan in three full passes over the trajectory.
+        """Acquire a scan in four stages.
 
+        0. Height probe: a quick LiDAR-only Z sweep (see
+           ``_run_height_probe_and_adjust_x``) measures the piece's real
+           height and repositions axis X accordingly - closer to the
+           cameras for a small piece, centered for a large one - before
+           any of the real acquisition passes below run.
         1. Photometric: ambient (laser-off) frames only, for true pixel
            color and to keep the laser off while the carriage still has to
            visit every pose anyway.
@@ -1247,10 +1258,13 @@ class ScanSession:
         completed = False
         try:
             self._move_to_saved_pose()
+            self._run_height_probe_and_adjust_x()
             start_positions = self._motor_positions()
             trajectory = self._trajectory(start_positions)
+            lidar_trajectory = self._lidar_trajectory(start_positions)
             total = len(trajectory)
-            phase_span = max(1, total) * 3
+            lidar_total = len(lidar_trajectory)
+            phase_span = max(1, total * 2 + lidar_total)
 
             ambient_frames: dict[int, dict[str, bytes]] = {}
             with self._lock:
@@ -1270,13 +1284,48 @@ class ScanSession:
             lidar_envelope: list[tuple[float, float]] = []
             with self._lock:
                 self._phase = "lidar"
-            for index, targets in enumerate(trajectory):
+            current_z_index: int | None = None
+            z_level_had_valid_point = False
+            consecutive_obstructed_levels = 0
+            # Require two whole levels in a row with nothing but the
+            # obstruction distance before giving up on climbing further.
+            # A single bad level is far more likely to be an off-angle
+            # rotation sample that simply missed the object/plate edge
+            # (legitimate background beyond the turntable can occasionally
+            # read past the cutoff too) than the fixed 540mm support
+            # bracket - only two consecutive levels reliably mean "we are
+            # now above the real object everywhere".
+            stop_after_consecutive_obstructed_levels = 2
+            for index, targets in enumerate(lidar_trajectory):
                 self._check_cancelled()
+                z_index = targets.get("_z_index")
+                if z_index != current_z_index:
+                    if current_z_index is not None:
+                        if z_level_had_valid_point:
+                            consecutive_obstructed_levels = 0
+                        else:
+                            consecutive_obstructed_levels += 1
+                        if (
+                            current_z_index > 0
+                            and consecutive_obstructed_levels
+                            >= stop_after_consecutive_obstructed_levels
+                        ):
+                            break
+                    current_z_index = z_index
+                    z_level_had_valid_point = False
                 with self._lock:
                     self._progress = (total + index) / phase_span * 100.0
                 self._move_axes(targets)
                 self._sleep_interruptible(self._milliseconds("settle_ms", 200))
                 lidar_distance = self._sample_lidar()
+                if lidar_distance > self._lidar_self_obstruction_distance_mm():
+                    # Beyond this raw sensor distance there is nothing but
+                    # the scanner's own red support bracket (holding the Pi4
+                    # camera and lasers) - a known, fixed obstruction, never
+                    # the turntable or the object. Skip it outright instead
+                    # of letting it become a false background point.
+                    continue
+                z_level_had_valid_point = True
                 lidar_point = self._add_lidar_point(lidar_distance, start_positions)
                 if lidar_point is not None:
                     volume_center = self._turntable_center_at_x(start_positions["x"])
@@ -1292,7 +1341,7 @@ class ScanSession:
             for index, targets in enumerate(trajectory):
                 self._check_cancelled()
                 with self._lock:
-                    self._progress = (2 * total + index) / phase_span * 100.0
+                    self._progress = (total + lidar_total + index) / phase_span * 100.0
                 self._move_axes(targets)
                 self._sleep_interruptible(self._milliseconds("settle_ms", 200))
                 ambient = ambient_frames.get(index, {})
@@ -1395,6 +1444,45 @@ class ScanSession:
                 target = dict(origin)
                 target[rotation_axis] = origin[rotation_axis] + rotation_index * rotation_step
                 target[z_axis] = origin[z_axis] + z_index * z_step
+                positions.append(target)
+        return positions
+
+    def _lidar_trajectory(self, origin: Mapping[str, float]) -> list[dict[str, float]]:
+        """Build a dedicated, taller Z sweep for the LiDAR envelope pass.
+
+        The main ``_trajectory`` only moves the carriage across
+        ``z_levels`` (2 by default, a few mm apart) because the laser
+        camera gets its full vertical range from per-row triangulation
+        within a single frame. A single-point LiDAR has no such trick: one
+        sample per pose only sees whatever height the carriage is
+        physically sitting at, so reusing the laser trajectory left the
+        LiDAR envelope covering a sliver of the object's real height and
+        unable to validate laser points anywhere else (the actual root
+        cause of the ring surviving the first photometric/LiDAR/laser
+        pass split). This sweeps ``lidar_z_levels`` positions spaced
+        ``lidar_z_step_mm`` apart, covering the whole piece on the plate.
+        """
+        rotation_axis = str(self._config.get("rotation_axis", "y")).lower()
+        z_axis = str(self._config.get("z_axis", "z")).lower()
+        rotation_steps = self._positive_int("rotation_steps", 3)
+        z_levels = self._positive_int("lidar_z_levels", 6)
+        rotation_step = self._positive_float("rotation_step_mm", 5.0)
+        z_step = self._positive_float("lidar_z_step_mm", 12.0)
+        positions = []
+        for z_index in range(z_levels):
+            rotation_indexes = range(rotation_steps)
+            if z_index % 2:
+                rotation_indexes = reversed(range(rotation_steps))
+            for rotation_index in rotation_indexes:
+                target = dict(origin)
+                target[rotation_axis] = origin[rotation_axis] + rotation_index * rotation_step
+                target[z_axis] = origin[z_axis] + z_index * z_step
+                # Not an axis - consumed by the lidar capture loop below to
+                # detect level boundaries and stop climbing early once a
+                # whole level sees nothing but the self-obstruction
+                # distance (the rig's own support bracket). ``_move_axes``
+                # only reads "x"/"y"/"z" so this extra key is harmless.
+                target["_z_index"] = z_index
                 positions.append(target)
         return positions
 
@@ -1628,6 +1716,15 @@ class ScanSession:
         low, high = self._lidar_limits()
         return math.isfinite(distance) and low <= distance <= high
 
+    def _lidar_self_obstruction_distance_mm(self) -> float:
+        # Measured on the physical rig: the red support bracket holding the
+        # Pi4 camera and the lasers sits at roughly 540 mm from the TF-Luna.
+        # Any legitimate target (turntable plate or scanned object) is much
+        # closer than that, so a generous-but-safe cutoff well below it
+        # (360 mm) reliably separates real targets from this fixed
+        # self-obstruction without needing the turntable-frame geometry.
+        return self._positive_float("lidar_self_obstruction_distance_mm", 360.0)
+
     def _read_lidar_sample(self) -> float | None:
         return self._invoke_with_timeout(
             self._lidar.read_distance_mm,
@@ -1635,11 +1732,19 @@ class ScanSession:
             "TF-Luna preflight sample",
         )
 
-    def _add_lidar_point(
+    def _lidar_point_raw(
         self,
         distance_mm: float,
         trajectory_origin: Mapping[str, float],
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray:
+        """Compute a LiDAR hit's 3D position without the scan-volume filter.
+
+        Used both by ``_add_lidar_point`` (which does apply the filter
+        before adding to the point cloud) and by ``_run_height_probe``
+        which deliberately needs the *unfiltered* height, since the whole
+        point of the probe is to measure a piece that may be taller than
+        the currently configured ``scan_volume_max_height_mm``.
+        """
         transform = np.asarray(self._calibration["lidar"]["lidar_to_scanner"], dtype=float)
         origin = transform[:3, 3]
         direction = transform[:3, :3] @ np.array([0.0, 0.0, 1.0])
@@ -1648,13 +1753,177 @@ class ScanSession:
         point = self._apply_carriage_translation(
             point, self._calibration["lidar"], trajectory_origin
         )
-        point = self._normalize_turntable_point(point, trajectory_origin)
+        return self._normalize_turntable_point(point, trajectory_origin)
+
+    def _add_lidar_point(
+        self,
+        distance_mm: float,
+        trajectory_origin: Mapping[str, float],
+    ) -> Optional[np.ndarray]:
+        point = self._lidar_point_raw(distance_mm, trajectory_origin)
         volume_center = self._turntable_center_at_x(trajectory_origin["x"])
         if not self._within_scan_volume(point, volume_center):
             return None
         with self._lock:
             self._data.add_point(*point.tolist(), 1.0, 0.85, 0.2)
         return point
+
+    def _run_height_probe_and_adjust_x(self) -> None:
+        """Measure the piece's total height, then pick the camera distance.
+
+        A quick LiDAR-only Z sweep (0 up to ``height_probe_z_max_mm``,
+        260 mm is safe on this rig) across a handful of rotation angles
+        measures the real height of whatever is on the plate, independent
+        of the (possibly too-tight) scan-volume height filter. A short
+        piece is then brought closer to the cameras (higher commanded X -
+        the X calibration's negative command_direction means larger X
+        values shrink the camera-to-turntable distance) for more detail; a
+        tall piece is left at the standard centered distance so it stays
+        fully inside the field of view.
+        """
+        if not bool(self._config.get("height_probe_enabled", True)):
+            return
+        with self._lock:
+            self._phase = "height-probe"
+        origin = self._motor_positions()
+        z_axis = str(self._config.get("z_axis", "z")).lower()
+        rotation_axis = str(self._config.get("rotation_axis", "y")).lower()
+        rotation_step = self._positive_float("rotation_step_mm", 5.0)
+        rotation_steps = self._positive_int("rotation_steps", 72)
+
+        axis_limits = self._config.get("axis_limits_mm", {})
+        z_limit = axis_limits.get(z_axis, {}) if isinstance(axis_limits, Mapping) else {}
+        z_hard_max = 260.0
+        if isinstance(z_limit, Mapping) and "max" in z_limit:
+            try:
+                z_hard_max = float(z_limit["max"])
+            except (TypeError, ValueError):
+                pass
+        # Keep a safety margin below the mechanical limit (configured
+        # axis_limits_mm.z.max) - the probe must never approach it, let
+        # alone reach it, regardless of how height_probe_z_max_mm is set.
+        z_safety_margin = self._positive_float("height_probe_z_safety_margin_mm", 25.0)
+        z_hard_max = max(0.0, z_hard_max - z_safety_margin)
+        z_max = min(self._positive_float("height_probe_z_max_mm", 200.0), z_hard_max)
+        z_step = self._positive_float("height_probe_z_step_mm", 10.0)
+        z_count = max(2, int(z_max / z_step) + 1)
+
+        # Denser azimuthal coverage than the original 6-sample default: the
+        # object's tallest feature (an ear, a head, ...) is often localized
+        # to one narrow azimuth, so too few angles reliably under-measures
+        # the real height. The retry/bailout logic above already makes the
+        # probe tolerant of the extra moves this costs.
+        angle_samples = max(
+            1, min(rotation_steps, self._positive_int("height_probe_rotation_samples", 12))
+        )
+        angle_stride = max(1, rotation_steps // angle_samples)
+        angle_indexes = list(range(0, rotation_steps, angle_stride))
+
+        probe_radius_limit = self._positive_float(
+            "height_probe_max_radius_mm", self._scan_volume_bounds()[0]
+        )
+        volume_center = self._turntable_center_at_x(origin["x"])
+
+        measured_height = 0.0
+        consecutive_failures = 0
+        max_consecutive_failures = self._positive_int("height_probe_max_consecutive_failures", 3)
+        for z_index in range(z_count):
+            z_value = min(z_max, z_index * z_step)
+            indexes = angle_indexes if z_index % 2 == 0 else list(reversed(angle_indexes))
+            for angle_index in indexes:
+                self._check_cancelled()
+                targets = dict(origin)
+                targets[z_axis] = z_value
+                targets[rotation_axis] = origin[rotation_axis] + angle_index * rotation_step
+                try:
+                    self._move_axes(targets)
+                except ScanCancelled:
+                    raise
+                except RuntimeError:
+                    # A single flaky motor timeout shouldn't abort the whole
+                    # scan - this probe is a best-effort pre-measurement.
+                    # Retry once after a short pause; if several samples in a
+                    # row fail, bail out of the probe early and fall back to
+                    # the centered default, letting the real capture phases
+                    # (which have their own retry history) take over.
+                    self._sleep_interruptible(1.0)
+                    try:
+                        self._move_axes(targets)
+                    except ScanCancelled:
+                        raise
+                    except RuntimeError:
+                        consecutive_failures += 1
+                        if consecutive_failures >= max_consecutive_failures:
+                            self._finish_height_probe(measured_height, origin)
+                            return
+                        continue
+                consecutive_failures = 0
+                self._sleep_interruptible(self._milliseconds("settle_ms", 200))
+                distance = self._sample_lidar()
+                if distance > self._lidar_self_obstruction_distance_mm():
+                    # Same fixed rig obstruction as in the main lidar phase -
+                    # never treat it as part of the object's height.
+                    continue
+                point = self._lidar_point_raw(distance, origin)
+                radius = math.hypot(
+                    float(point[0] - volume_center[0]), float(point[1] - volume_center[1])
+                )
+                if radius > probe_radius_limit:
+                    continue
+                height = float(point[2] - volume_center[2])
+                if height > measured_height:
+                    measured_height = height
+
+        self._finish_height_probe(measured_height, origin)
+
+    def _finish_height_probe(
+        self, measured_height: float, origin: Mapping[str, float]
+    ) -> None:
+        # The sweep leaves Z (and the rotation axis) wherever the last probe
+        # sample was taken - potentially near the 260 mm ceiling. Restore
+        # both to their pre-probe baseline first, so the real capture
+        # phases that follow build their trajectories from the normal
+        # starting pose instead of stacking their own offsets on top of
+        # the probe's end position (which would blow past axis limits).
+        try:
+            rotation_axis = str(self._config.get("rotation_axis", "y")).lower()
+            self._move_axes({"z": origin["z"], rotation_axis: origin[rotation_axis]})
+        except RuntimeError:
+            pass
+        threshold = self._positive_float("small_object_height_threshold_mm", 120.0)
+        is_small = 0.0 < measured_height < threshold
+        dynamic_max_height = None
+        if measured_height > 0.0:
+            # Cap the real capture's accepted height just above whatever the
+            # probe actually measured, so the background/rig - which never
+            # shows up at a *plausible* height for this specific object -
+            # cannot leak into the point cloud as a false ring. The probe is
+            # a coarse, best-effort sweep, so a generous margin (not a tight
+            # one) absorbs any measurement error without clipping the real
+            # top of the object.
+            margin = self._positive_float("height_probe_height_margin_mm", 50.0)
+            dynamic_max_height = measured_height + margin
+        with self._lock:
+            self._measured_object_height_mm = round(measured_height, 1)
+            self._object_x_mode = "close" if is_small else "centered"
+            self._dynamic_scan_volume_max_height_mm = dynamic_max_height
+        if is_small:
+            details = self._x_center_details()
+            # Empirically verified with the laser lines on: at 0.85 (and even
+            # 0.70-0.80) the laser plane no longer sweeps through the
+            # turntable's rotation axis, so a rotating object never crosses
+            # it and the laser capture silently fails. 0.60 was the closest
+            # fraction that still kept the laser centered on the plate.
+            fraction = min(1.0, max(0.0, self._positive_float("close_object_x_fraction", 0.60)))
+            close_target = details["position_min_mm"] + fraction * (
+                details["position_max_mm"] - details["position_min_mm"]
+            )
+            try:
+                self._move_axes({"x": close_target})
+            except RuntimeError:
+                # Keep whatever X position is already set rather than
+                # failing the whole scan over a cosmetic repositioning move.
+                pass
 
     def _filter_points_by_lidar_envelope(
         self,
@@ -1893,6 +2162,17 @@ class ScanSession:
         )
         min_height = float(self._config.get("scan_volume_min_height_mm", -15.0))
         max_height = float(self._config.get("scan_volume_max_height_mm", 350.0))
+        # The pre-scan height probe (see ``_run_height_probe_and_adjust_x``)
+        # measures the real piece height for this specific scan. Whenever
+        # that measurement is available it only ever *tightens* the static
+        # config ceiling - never loosens it - because anything the LiDAR or
+        # laser triangulation reports above the measured top of the object
+        # is necessarily the background/rig (which doesn't rotate with the
+        # turntable and therefore shows up as a "ring" once every sample is
+        # de-rotated into the object frame), not real surface detail.
+        dynamic_max_height = getattr(self, "_dynamic_scan_volume_max_height_mm", None)
+        if dynamic_max_height is not None:
+            max_height = min(max_height, float(dynamic_max_height))
         return max_radius, min_height, max_height
 
     def _within_scan_volume(self, point: np.ndarray, center: np.ndarray) -> bool:
@@ -2107,6 +2387,8 @@ class ScanSession:
                 "elapsed_s": round(elapsed, 1),
                 "quality": round(self._quality, 1),
                 "error": self._error,
+                "measured_object_height_mm": self._measured_object_height_mm,
+                "object_x_mode": self._object_x_mode,
             }
 
     def get_pointcloud(self) -> dict:

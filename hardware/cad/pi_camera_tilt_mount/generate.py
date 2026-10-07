@@ -321,12 +321,18 @@ def make_mount() -> TopoDS_Shape:
         y=shelf_front_y + (LOWER_RAIL_FRONT_CUT_DEPTH / 2),
         z=-LOWER_RAIL_DROP,
     )
+    # z starts at 0 (the shelf's own bottom face), not MATERIAL_THICKNESS/2:
+    # starting mid-thickness left a solid 1.6mm floor under the ribbon,
+    # turning this into a shallow top-side groove instead of an actual
+    # through-slot. Starting at the shelf's bottom guarantees a clean cut
+    # through its full MATERIAL_THICKNESS, flush with the carrier's own
+    # through-slot which starts right above at z=MATERIAL_THICKNESS.
     cable_passage = make_box(
         CABLE_PASSAGE_WIDTH,
         shelf_depth + 2,
         CABLE_PASSAGE_HEIGHT,
         y=shelf_front_y + CABLE_PASSAGE_Y_OFFSET,
-        z=MATERIAL_THICKNESS / 2,
+        z=0,
     )
 
     ear = ear_geometry()

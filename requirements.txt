@@ -37,7 +37,7 @@ pytest-cov>=3.0.0
 python-dateutil>=2.8.0
 
 # JSON/YAML
-pyyaml>=5.4.0
+pyyaml>=6.0.3
 
 # Web API
 flask>=3.1.3

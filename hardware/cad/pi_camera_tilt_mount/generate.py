@@ -98,6 +98,25 @@ CAM_PCB_HEIGHT = 24.00
 CAM_MOUNT_HOLE_SPACING = 21.00
 CAM_MOUNT_HOLE_DIAMETER = 2.50
 CARRIER_THICKNESS = 2.00
+# Official Camera Module 3 mechanical drawing: the CSI FPC connector is on
+# the PCB's back face (the side that sits flush against the carrier's board
+# plate), centered in X, with its centerline 2.10mm from the PCB's bottom
+# edge. With nothing removed there, the carrier's board plate is solid right
+# behind the connector, so the flat ribbon has no room to lie flush and
+# route down toward the base -- it would be pinched between the PCB and the
+# carrier. CARRIER_CABLE_CHANNEL below is a shallow groove in the carrier's
+# front face (PCB side only, well clear of the ball-socket pocket cut into
+# the opposite/back face) sized to let the ribbon lie flat from the
+# connector down to the carrier's bottom edge, where it continues into the
+# shelf's CABLE_PASSAGE below.
+FPC_CONNECTOR_OFFSET_FROM_PCB_BOTTOM = 2.10
+CARRIER_CABLE_CHANNEL_WIDTH = 16.00
+CARRIER_CABLE_CHANNEL_DEPTH = 0.60
+CARRIER_CABLE_CHANNEL_MARGIN_ABOVE_CONNECTOR = 3.00
+# How far below the ball-socket pocket's lower edge the full through-slot
+# (see CARRIER_CABLE_CHANNEL_* below) must stop, leaving solid wall so the
+# socket's flat contact pad is never pierced.
+CARRIER_CABLE_CHANNEL_CLEAR_MARGIN = 1.00
 # Gap left between the carrier's back face and the main plate's front face,
 # so the adjustment rod's ball tip has room to push the carrier and tilt it.
 # Sized (not just an arbitrary assembly clearance) so the carrier's bottom
@@ -482,6 +501,7 @@ def make_camera_carrier() -> TopoDS_Shape:
     ear = ear_geometry()
 
     carrier_back_y = ear.plate_front_y - CARRIER_STANDOFF_GAP
+    carrier_front_y = carrier_back_y - CARRIER_THICKNESS
     carrier_center_y = carrier_back_y - (CARRIER_THICKNESS / 2)
     carrier_height = ear.ear_z - MATERIAL_THICKNESS
     board_plate = make_box(
@@ -595,10 +615,42 @@ def make_camera_carrier() -> TopoDS_Shape:
         BALL_SOCKET_DEPTH,
     ).Shape()
 
+    # CSI ribbon clearance opening, shaped like an "L" in side view:
+    #   - a full through-slot for the lower leg, from the carrier's bottom
+    #     edge (flush with the shelf top, where it continues into the
+    #     shelf's CABLE_PASSAGE) up to just below the ball-socket pocket, so
+    #     the ribbon's path is an actual visible opening, not just a shallow
+    #     cosmetic recess;
+    #   - a shallow groove for the short upper leg, cut only into the board
+    #     plate's front face (PCB side) from there up past the FPC
+    #     connector's height, kept on the opposite face from ball_socket so
+    #     the two pockets never meet even where their Z ranges overlap.
+    pcb_bottom_z = hole_bottom_z - ((CAM_PCB_HEIGHT - CAM_MOUNT_HOLE_SPACING) / 2)
+    connector_center_z = pcb_bottom_z + FPC_CONNECTOR_OFFSET_FROM_PCB_BOTTOM
+    channel_top_z = connector_center_z + CARRIER_CABLE_CHANNEL_MARGIN_ABOVE_CONNECTOR
+    ball_socket_bottom_z = adjustment_boss_z - BALL_SOCKET_PAD_RADIUS
+    channel_through_top_z = ball_socket_bottom_z - CARRIER_CABLE_CHANNEL_CLEAR_MARGIN
+    cable_channel_through = make_box(
+        CARRIER_CABLE_CHANNEL_WIDTH,
+        CARRIER_THICKNESS + 2,
+        channel_through_top_z - MATERIAL_THICKNESS,
+        y=carrier_center_y,
+        z=MATERIAL_THICKNESS,
+    )
+    cable_channel_groove = make_box(
+        CARRIER_CABLE_CHANNEL_WIDTH,
+        CARRIER_CABLE_CHANNEL_DEPTH,
+        channel_top_z - channel_through_top_z,
+        y=carrier_front_y + (CARRIER_CABLE_CHANNEL_DEPTH / 2),
+        z=channel_through_top_z,
+    )
+
     carrier = cut(carrier, pivot_hole)
     carrier = cut(cut(carrier, top_left_hole), top_right_hole)
     carrier = cut(cut(carrier, bottom_left_hole), bottom_right_hole)
-    return cut(carrier, ball_socket)
+    carrier = cut(carrier, ball_socket)
+    carrier = cut(carrier, cable_channel_through)
+    return cut(carrier, cable_channel_groove)
 
 
 def make_camera_front_cover() -> TopoDS_Shape:

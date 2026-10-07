@@ -490,9 +490,10 @@ def make_camera_front_cover() -> TopoDS_Shape:
         z=cover_bottom_z,
     )
 
+    cover_front_y = cover_back_y - COVER_THICKNESS
     lens_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(0, cover_back_y - 1, holes.hole_center_z),
+            gp_Pnt(0, cover_front_y - 1, holes.hole_center_z),
             gp_Dir(0, 1, 0),
         ),
         LENS_HOLE_DIAMETER / 2,

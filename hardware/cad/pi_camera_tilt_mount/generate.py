@@ -1,18 +1,29 @@
 from dataclasses import dataclass
 from pathlib import Path
+import math
 
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
+from OCP.BRepBuilderAPI import (
+    BRepBuilderAPI_MakeEdge,
+    BRepBuilderAPI_MakePolygon,
+    BRepBuilderAPI_MakeWire,
+    BRepBuilderAPI_TransitionMode,
+)
 from OCP.BRepCheck import BRepCheck_Analyzer
+from OCP.BRepLib import BRepLib
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
+from OCP.BRepOffsetAPI import BRepOffsetAPI_MakePipeShell
 from OCP.BRepPrimAPI import (
     BRepPrimAPI_MakeBox,
     BRepPrimAPI_MakeCone,
     BRepPrimAPI_MakeCylinder,
     BRepPrimAPI_MakeSphere,
 )
+from OCP.Geom import Geom_CylindricalSurface
+from OCP.Geom2d import Geom2d_Line
 from OCP.StlAPI import StlAPI_Writer
 from OCP.TopoDS import TopoDS_Shape
-from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+from OCP.gp import gp_Ax2, gp_Ax3, gp_Dir, gp_Dir2d, gp_Lin2d, gp_Pnt, gp_Pnt2d
 
 
 OUTPUT_DIR = Path(__file__).parent / "stl"
@@ -43,7 +54,17 @@ EAR_WIDTH = 8.50
 EAR_GAP = 5.33
 EAR_HEIGHT = 5.99
 PIVOT_CLEARANCE_DIAMETER = 3.40
-M5_COARSE_TAP_PILOT_DIAMETER = 4.20
+# Printed external thread on the adjustment rod (see THREAD_* below) cuts its
+# own mating groove as it is screwed in. The pilot is sized between the
+# minor and major diameter so only part of the thread height compresses
+# into the plastic on each turn (full major-to-minor interference would be
+# too aggressive and risk cracking the boss in brittle FDM plastic).
+THREAD_MAJOR_DIAMETER = 6.00
+THREAD_PITCH = 2.00
+THREAD_DEPTH = 0.75  # radial height of the triangular thread profile
+THREAD_MINOR_DIAMETER = THREAD_MAJOR_DIAMETER - (2 * THREAD_DEPTH)
+THREAD_LENGTH = 16.00
+M5_COARSE_TAP_PILOT_DIAMETER = THREAD_MAJOR_DIAMETER - 1.00
 M5_THREAD_HOLE_OFFSET_FROM_TOP = 22.00
 
 CSI_SLOT_WIDTH = 18.00
@@ -52,7 +73,7 @@ CSI_SLOT_BOTTOM = 5.00
 CSI_SLOT_FRONT_OFFSET = -4.00
 
 ROD_LENGTH = 50.00
-ROD_DIAMETER = 5.00
+ROD_DIAMETER = THREAD_MINOR_DIAMETER
 BALL_DIAMETER = 6.50
 # How far the ball sphere is sunk into the rod so the fuse creates a real
 # overlapping solid neck instead of a single tangent point (which boolean
@@ -536,6 +557,47 @@ def make_camera_front_cover() -> TopoDS_Shape:
     return cut(cover, lens_hole)
 
 
+def make_external_thread(
+    root_radius: float,
+    pitch: float,
+    depth: float,
+    length: float,
+    start_z: float,
+) -> TopoDS_Shape:
+    """Sweep a triangular V-profile along a helix to cut a real printable
+    external thread on a rod, starting at z=start_z and running +Z for
+    `length` along a cylinder of the given root (minor) radius."""
+    n_turns = length / pitch
+    axis = gp_Ax3(gp_Pnt(0, 0, start_z), gp_Dir(0, 0, 1))
+    cylinder = Geom_CylindricalSurface(axis, root_radius)
+    # Cylindrical surface param space is (u=angle radians, v=height). The 2D
+    # line's direction must be (angle_per_turn, height_per_turn) = (2*pi,
+    # pitch) so one full turn (u += 2*pi) advances height by exactly one
+    # pitch. gp_Dir2d normalizes the direction, so the edge's own parameter
+    # "t" is arc-length, not u directly: solve for t_end so u(t_end) hits
+    # the desired total angle.
+    norm = math.hypot(2 * math.pi, pitch)
+    t_end = n_turns * norm
+    line2d = Geom2d_Line(gp_Lin2d(gp_Pnt2d(0.0, 0.0), gp_Dir2d(2 * math.pi, pitch)))
+    helix_edge = BRepBuilderAPI_MakeEdge(line2d, cylinder, 0, t_end).Edge()
+    BRepLib.BuildCurves3d_s(helix_edge)
+    helix_wire = BRepBuilderAPI_MakeWire(helix_edge).Wire()
+
+    half_width = (pitch / 2) - 0.05
+    profile = BRepBuilderAPI_MakePolygon()
+    profile.Add(gp_Pnt(root_radius, 0, start_z - half_width))
+    profile.Add(gp_Pnt(root_radius + depth, 0, start_z))
+    profile.Add(gp_Pnt(root_radius, 0, start_z + half_width))
+    profile.Close()
+
+    pipe = BRepOffsetAPI_MakePipeShell(helix_wire)
+    pipe.Add(profile.Wire(), True, True)
+    pipe.SetTransitionMode(BRepBuilderAPI_TransitionMode.BRepBuilderAPI_Transformed)
+    pipe.Build()
+    pipe.MakeSolid()
+    return pipe.Shape()
+
+
 def make_adjustment_rod() -> TopoDS_Shape:
     rod_radius = ROD_DIAMETER / 2
     rod = BRepPrimAPI_MakeCylinder(
@@ -546,6 +608,19 @@ def make_adjustment_rod() -> TopoDS_Shape:
         rod_radius,
         ROD_LENGTH,
     ).Shape()
+    # Thread sits in the front part of the shaft (toward the ball/camera
+    # end), spanning the plate's tapped hole across the adjustment travel
+    # range; the rest of the shaft toward the drive-square stays a plain
+    # shank that only needs clearance, not engagement.
+    thread_start_z = (ROD_LENGTH / 2) - THREAD_LENGTH
+    thread = make_external_thread(
+        rod_radius,
+        THREAD_PITCH,
+        THREAD_DEPTH,
+        THREAD_LENGTH,
+        thread_start_z,
+    )
+    rod = fuse(rod, thread)
     ball = BRepPrimAPI_MakeSphere(
         gp_Pnt(0, 0, (ROD_LENGTH / 2) + (BALL_DIAMETER / 2) - BALL_OVERLAP),
         BALL_DIAMETER / 2,
@@ -601,7 +676,9 @@ def export_model(model: TopoDS_Shape, filename: str) -> None:
     if not BRepCheck_Analyzer(model).IsValid():
         raise ValueError(f"Invalid solid: {filename}")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    BRepMesh_IncrementalMesh(model, 0.05, False, 0.1, True)
+    # Fine linear deflection (was 0.05) avoids tessellation gaps on swept
+    # helical thread geometry that otherwise show up as non-watertight STL.
+    BRepMesh_IncrementalMesh(model, 0.01, False, 0.1, True)
     writer = StlAPI_Writer()
     writer.Write(model, str(OUTPUT_DIR / filename))
 

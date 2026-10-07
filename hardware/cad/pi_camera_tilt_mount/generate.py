@@ -54,6 +54,10 @@ CSI_SLOT_FRONT_OFFSET = -4.00
 ROD_LENGTH = 50.00
 ROD_DIAMETER = 5.00
 BALL_DIAMETER = 6.50
+# How far the ball sphere is sunk into the rod so the fuse creates a real
+# overlapping solid neck instead of a single tangent point (which boolean
+# fuse cannot merge into one watertight body).
+BALL_OVERLAP = 1.00
 # Ball end is for the camera side; the square end is for the wheel/plate mount.
 DRIVE_SQUARE_WIDTH = 5.00
 DRIVE_SQUARE_LENGTH = 10.00
@@ -543,7 +547,7 @@ def make_adjustment_rod() -> TopoDS_Shape:
         ROD_LENGTH,
     ).Shape()
     ball = BRepPrimAPI_MakeSphere(
-        gp_Pnt(0, 0, (ROD_LENGTH / 2) + (BALL_DIAMETER / 2)),
+        gp_Pnt(0, 0, (ROD_LENGTH / 2) + (BALL_DIAMETER / 2) - BALL_OVERLAP),
         BALL_DIAMETER / 2,
     ).Shape()
     drive_square = make_box(

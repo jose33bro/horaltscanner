@@ -100,13 +100,27 @@ CAM_MOUNT_HOLE_DIAMETER = 2.50
 CARRIER_THICKNESS = 2.00
 # Gap left between the carrier's back face and the main plate's front face,
 # so the adjustment rod's ball tip has room to push the carrier and tilt it.
-CARRIER_STANDOFF_GAP = 1.00
+# Sized (not just an arbitrary assembly clearance) so the carrier's bottom
+# edge -- the point farthest from the M3 pivot axle, so it sweeps the widest
+# arc -- clears the plate's front face across the full +/-15deg working tilt
+# range with margin, instead of jamming into the plate after a fraction of
+# a degree like the old 1.00mm gap did.
+CARRIER_STANDOFF_GAP = 9.00
+# Target working tilt range (both directions from the rest/0deg position)
+# used to size the shelf relief pocket below and to validate rod travel.
+CARRIER_TILT_RANGE_DEG = 15.00
 # Tab width must fit inside EAR_GAP (5.33mm) with clearance to pivot freely.
 CARRIER_TAB_WIDTH = 4.80
-# Shallow dimple on the back of the carrier so the rod's ball tip seats and
-# self-centers instead of sliding off as the carrier tilts.
-BALL_SOCKET_CLEARANCE = 0.30
-BALL_SOCKET_DEPTH = 1.00
+# Radial clearance between the shelf's side walls and the carrier's PCB
+# width (25.00mm) so the carrier can sit/pivot without rubbing the walls;
+# see CARRIER_WALL_CLEARANCE note near make_mount()'s wall notch.
+CARRIER_WALL_CLEARANCE = 0.30
+# Shallow flat-bottomed pocket on the back of the carrier where the rod's
+# ball tip bears. Radius sized so the contact point's lateral travel across
+# the real tilt range (see BALL_SOCKET_PAD_RADIUS derivation note near
+# make_camera_carrier) stays on the pad instead of riding onto the rim.
+BALL_SOCKET_PAD_RADIUS = 6.00
+BALL_SOCKET_DEPTH = 0.60
 
 # Front cache (lens-side cover): clips onto the camera through the same 4
 # mounting holes instead of screws/nuts. Four printed pins push through the
@@ -347,6 +361,76 @@ def make_mount() -> TopoDS_Shape:
         right_ear_round,
     )
     mount = cut(cut(cut(mount, left_front_cut), right_front_cut), cable_passage)
+
+    # Relief notch on each wall's inner face where it would otherwise clash
+    # with the camera carrier's PCB (25.00mm wide): the walls' clear inner
+    # gap (PLATE_WIDTH - 2*SIDE_WALL_THICKNESS = 24.05mm) is narrower than
+    # the carrier board, so without this the carrier's bottom edge jams
+    # against the wall tops even at zero tilt.
+    wall_inner_x = wall_x - (SIDE_WALL_THICKNESS / 2)
+    notch_outer_x = (CAM_PCB_WIDTH / 2) + CARRIER_WALL_CLEARANCE
+    if notch_outer_x > wall_inner_x:
+        notch_width = notch_outer_x - wall_inner_x
+        notch_center_x = (notch_outer_x + wall_inner_x) / 2
+        left_wall_notch = make_box(
+            notch_width,
+            shelf_depth,
+            SIDE_WALL_HEIGHT,
+            x=-notch_center_x,
+            y=shelf_y,
+            z=MATERIAL_THICKNESS,
+        )
+        right_wall_notch = make_box(
+            notch_width,
+            shelf_depth,
+            SIDE_WALL_HEIGHT,
+            x=notch_center_x,
+            y=shelf_y,
+            z=MATERIAL_THICKNESS,
+        )
+        mount = cut(cut(mount, left_wall_notch), right_wall_notch)
+
+    # Relief pocket in the shelf's top face under the carrier's bottom edge
+    # sweep. At rest (0deg) the carrier's board plate sits flush on the
+    # shelf (z = MATERIAL_THICKNESS). Because the M3 pivot axle sits ~32mm
+    # above that edge, rotating the carrier in either direction swings it
+    # along a circular arc whose chord dips below the z=0deg endpoints
+    # before rising clear again -- without relief, the carrier's bottom
+    # edge jams into the shelf after a fraction of a degree in the
+    # direction that isn't simply lifting straight up off the shelf.
+    # Depth/extent are derived from the same pivot geometry used to place
+    # the carrier, scanned over the full CARRIER_TILT_RANGE_DEG so the
+    # pocket is only as deep/wide as the real sweep needs.
+    carrier_back_y = ear.plate_front_y - CARRIER_STANDOFF_GAP
+    carrier_front_y = carrier_back_y - CARRIER_THICKNESS
+    dz0 = MATERIAL_THICKNESS - ear_center_z
+    relief_dip = 0.0
+    relief_y_min = min(carrier_front_y, carrier_back_y)
+    relief_y_max = max(carrier_front_y, carrier_back_y)
+    sweep_steps = 60
+    for edge_y in (carrier_front_y, carrier_back_y):
+        dy = edge_y - ear_tip_y
+        for i in range(-sweep_steps, sweep_steps + 1):
+            theta = math.radians(CARRIER_TILT_RANGE_DEG) * i / sweep_steps
+            s, c = math.sin(theta), math.cos(theta)
+            nz = ear_center_z + dy * s + dz0 * c
+            ny = ear_tip_y + dy * c - dz0 * s
+            relief_dip = max(relief_dip, MATERIAL_THICKNESS - nz)
+            relief_y_min = min(relief_y_min, ny)
+            relief_y_max = max(relief_y_max, ny)
+    relief_margin = 0.30
+    relief_depth = relief_dip + relief_margin
+    relief_y_center = (relief_y_min + relief_y_max) / 2
+    relief_y_span = (relief_y_max - relief_y_min) + 1.00
+    shelf_relief = make_box(
+        CAM_PCB_WIDTH,
+        relief_y_span,
+        relief_depth,
+        y=relief_y_center,
+        z=MATERIAL_THICKNESS - relief_depth,
+    )
+    mount = cut(mount, shelf_relief)
+
     left_screw_pilot = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
             gp_Pnt(-(PLATE_WIDTH / 2) - 1, rail_y, -(LOWER_RAIL_DROP / 2)),
@@ -411,11 +495,23 @@ def make_camera_carrier() -> TopoDS_Shape:
     # Hinge tab: same rounded-tip profile as the base's ears, centered and
     # narrow enough to slot into EAR_GAP, stacked directly on top of the
     # board plate so it reaches the ears' pivot axis.
+    #
+    # Depth must NOT reuse ear.ear_box_depth/ear.ear_body_y: those size the
+    # base's ears to anchor (overlap) deep into the main plate for a
+    # permanent fuse, since the ears are part of the same printed piece as
+    # the plate. The carrier is a separate, free-pivoting part, so its tab
+    # must stop well short of the plate instead, overlapping only into the
+    # carrier's own board plate for its fuse. Anchoring at the board plate's
+    # mid-thickness gives a solid 1mm fuse overlap while leaving a clear
+    # ~2mm gap before the main plate's front face at any mount tilt angle.
+    tab_anchor_y = carrier_center_y
+    tab_box_depth = tab_anchor_y - ear.ear_tip_y + 0.20
+    tab_body_y = (tab_anchor_y + ear.ear_tip_y - 0.20) / 2
     tab_body = make_box(
         CARRIER_TAB_WIDTH,
-        ear.ear_box_depth,
+        tab_box_depth,
         EAR_HEIGHT,
-        y=ear.ear_body_y,
+        y=tab_body_y,
         z=ear.ear_z,
     )
     tab_round = BRepPrimAPI_MakeCylinder(
@@ -475,15 +571,28 @@ def make_camera_carrier() -> TopoDS_Shape:
         CARRIER_THICKNESS + 2,
     ).Shape()
 
-    # Shallow ball-socket dimple on the back face, aligned with the base's
-    # adjustment boss, so the rod's ball tip seats and self-centers instead
-    # of sliding off as the carrier tilts.
+    # Shallow flat-bottomed pocket on the back face, aligned with the base's
+    # adjustment boss, where the rod's ball tip bears.
+    #
+    # A deep socket shaped to closely match the ball's own radius (as a
+    # mating sphere) only keeps contact for a tiny fraction of a degree of
+    # tilt: as the carrier pivots about the ears' M3 axle, the pocket swings
+    # through an arc and its height (Z) relative to the ball axis (which only
+    # translates straight along Y, fixed at the base's hole height) drifts
+    # away fast relative to the old BALL_SOCKET_CLEARANCE=0.30mm match-up.
+    # A flat pad instead keeps a valid single-point contact at any carrier
+    # angle (a sphere touching a plane always has a solution), so the pocket
+    # only needs to be wide enough that the contact point's lateral travel
+    # across the real working tilt range stays on the pad instead of running
+    # off the rim into the surrounding full-thickness wall.
     adjustment_boss_z = PLATE_HEIGHT - M5_THREAD_HOLE_OFFSET_FROM_TOP
-    ball_socket_radius = (BALL_DIAMETER / 2) + BALL_SOCKET_CLEARANCE
-    ball_socket_center_y = carrier_back_y + (ball_socket_radius - BALL_SOCKET_DEPTH)
-    ball_socket = BRepPrimAPI_MakeSphere(
-        gp_Pnt(0, ball_socket_center_y, adjustment_boss_z),
-        ball_socket_radius,
+    ball_socket = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(
+            gp_Pnt(0, carrier_back_y, adjustment_boss_z),
+            gp_Dir(0, -1, 0),
+        ),
+        BALL_SOCKET_PAD_RADIUS,
+        BALL_SOCKET_DEPTH,
     ).Shape()
 
     carrier = cut(carrier, pivot_hole)

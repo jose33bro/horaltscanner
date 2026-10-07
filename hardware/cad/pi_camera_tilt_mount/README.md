@@ -17,7 +17,7 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
 - `stl/camera_carrier_v3_25x24_tab4.8.stl` : berceau qui porte la carte Pi
   Camera Module 3 (noir/NoIR, 25 × 24 mm, 4 trous Ø2,5 mm en carré 21 mm) et
   se clipse entre les oreilles de la base sur l'axe M3 (tenon Ø 3,40 mm), avec
-  une fossette au dos où vient se loger la bille de la tige d'ajustement;
+  un patin plat au dos où vient appuyer la bille de la tige d'ajustement;
 - `stl/camera_front_cover_v3_clip.stl` : cache avant (côté objectif) qui
   tient la caméra sur le berceau sans vis — 4 pions se clipsent par
   pression dans les mêmes 4 trous Ø2,5 mm, en traversant la carte et le
@@ -40,21 +40,50 @@ générés par `generate.py`.
   central 5,33 mm;
 - trou d'axe traversant : Ø 3,40 mm;
 - trou de fixation M5 sur la plaque verticale, centré entre les oreilles et à 22,00 mm du haut;
-- fenêtre CSI dans la plaque verticale : 18,00 × 9,56 mm, centrée en bas et décalée vers l'avant.
+- fenêtre CSI dans la plaque verticale : 18,00 × 9,56 mm, centrée en bas et décalée vers l'avant;
+- encoches de dégagement dans les parois latérales de la tablette (côté
+  intérieur) là où la carte caméra (25,00 mm de large) est plus large que
+  l'écart utile entre parois (24,05 mm);
+- poche de dégagement dans la face supérieure de la tablette, sous la zone
+  balayée par le bord bas du berceau pendant le pivotement (voir plage de
+  réglage ci-dessous) : sans elle, le berceau coince contre la tablette dès
+  une fraction de degré dans un des deux sens de rotation.
+
+## Plage de réglage de l'inclinaison
+
+Le berceau pivote autour de l'axe M3 des oreilles; au repos (0°) il touche
+la tablette, qui sert de butée naturelle d'un côté. La plage utile réelle,
+vérifiée géométriquement (volumes de recouvrement nuls entre solides), est
+**-15° à +9°** par rapport au repos :
+
+- jusqu'à -15° : dégagement complet, aucun contact parasite;
+- au-delà de +9° : le berceau commence à empiéter dans la fenêtre CSI de la
+  plaque verticale (pas un contact matière, mais un risque de pincer la
+  nappe du câble CSI qui passe par cette fenêtre).
+
+Cette plage asymétrique convient à l'usage prévu : la caméra est déjà
+orientée vers le bas (vers le plateau tournant) au repos, donc le sens
+disponible le plus large (-15°, qui l'incline encore plus vers le bas) est
+celui qui compte le plus.
 
 ## Cotes du berceau caméra (`camera_carrier_v3_25x24_tab4.8.stl`)
 
 - plaque porte-caméra : 25,00 × ~29,00 × 2,00 mm (hauteur ajustée pour
-  rejoindre le bas des oreilles), espacée de 1,00 mm derrière la face avant
-  de la plaque principale (jeu pour la tige d'ajustement);
+  rejoindre le bas des oreilles), espacée de 9,00 mm derrière la face avant
+  de la plaque principale (jeu pour la tige d'ajustement et pour que le
+  bord bas du berceau dégage la plaque sur toute la plage de réglage);
 - 4 trous de fixation M2/M2,5 Ø 2,50 mm en carré de 21,00 mm, cotes
   officielles du Camera Module 3 (25 × 24 mm, standard ou NoIR);
 - tenon de charnière : largeur 4,80 mm (jeu dans l'espace de 5,33 mm entre
   les oreilles), même profil arrondi que les oreilles, trou d'axe Ø 3,40 mm
-  aligné avec celui de la base;
-- fossette de bille au dos : alignée avec le bossage de réglage de la base,
-  profondeur 1,00 mm, pour que la bille de la tige se loge et ne glisse pas
-  pendant le réglage.
+  aligné avec celui de la base; profondeur dimensionnée pour ne chevaucher
+  que la propre plaque du berceau (fusion solide), sans jamais pénétrer
+  dans la plaque principale;
+- patin plat au dos (remplace l'ancienne fossette sphérique) : rayon
+  6,00 mm, profondeur 0,60 mm, où vient appuyer la bille de la tige. Une
+  sphère contre un plan garde un contact valide à n'importe quel angle,
+  contrairement à une fossette sphérique de même rayon que la bille, dont
+  la plage utile ne dépassait que ±2,4° avant perte de contact.
 
 ## Cotes du cache avant (`camera_front_cover_v3_clip.stl`)
 
@@ -97,10 +126,11 @@ l'export et remplace les six STL listés ci-dessus.
    l'axe M3 (pivot), sans le bloquer serré pour qu'il puisse encore pivoter.
 7. Visser la tige d'ajustement (`adjustment_rod_M5x50_ball6.5_square_m3.stl`)
    dans le bossage taraudé M5 au dos de la plaque, bille côté caméra, jusqu'à
-   ce qu'elle se loge dans la fossette au dos du berceau.
+   ce qu'elle appuie contre le patin plat au dos du berceau.
 8. Clipser la roue (`wheel_crank_50mm_square_m3.stl`) sur le carré de la tige
-   avec une vis M3 et tourner pour régler finement l'inclinaison; le berceau
-   pivote autour de l'axe des oreilles.
+   avec une vis M3 et tourner pour régler finement l'inclinaison (plage
+   utile -15°/+9°, voir « Plage de réglage de l'inclinaison » plus haut); le
+   berceau pivote autour de l'axe des oreilles.
 9. Fixer la base par les deux rails inférieurs avec des vis M3.
 
 Le profil d'impression détaillé est documenté dans

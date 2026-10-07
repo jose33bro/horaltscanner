@@ -349,7 +349,7 @@ def make_mount() -> TopoDS_Shape:
     ).Shape()
     m5_thread_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(0, 0, PLATE_HEIGHT - M5_THREAD_HOLE_OFFSET_FROM_TOP),
+            gp_Pnt(0, plate_front_y - 1, PLATE_HEIGHT - M5_THREAD_HOLE_OFFSET_FROM_TOP),
             gp_Dir(0, 1, 0),
         ),
         M5_COARSE_TAP_PILOT_DIAMETER / 2,

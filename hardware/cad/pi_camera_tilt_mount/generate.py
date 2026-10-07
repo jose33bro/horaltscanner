@@ -45,7 +45,11 @@ LOWER_RAIL_DROP = 5.00
 LOWER_RAIL_OVERLAP = 0.50
 LOWER_RAIL_FRONT_CUT_DEPTH = 3.00
 
-CABLE_PASSAGE_WIDTH = 12.00
+# Must be >= CARRIER_CABLE_CHANNEL_WIDTH (defined below, in the carrier's
+# constants) so the CSI ribbon continues straight down through the shelf at
+# its full width right under the carrier's through-slot, instead of necking
+# down to a narrower opening and getting pinched/bent off-axis.
+CABLE_PASSAGE_WIDTH = 16.00
 CABLE_PASSAGE_HEIGHT = 5.00
 CABLE_PASSAGE_Y_OFFSET = 8.00
 

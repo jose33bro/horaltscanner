@@ -12,6 +12,7 @@ from OCP.BRepBuilderAPI import (
     BRepBuilderAPI_MakeEdge,
     BRepBuilderAPI_MakePolygon,
     BRepBuilderAPI_MakeWire,
+    BRepBuilderAPI_Transform,
     BRepBuilderAPI_TransitionMode,
 )
 from OCP.BRepCheck import BRepCheck_Analyzer
@@ -28,7 +29,18 @@ from OCP.Geom import Geom_CylindricalSurface
 from OCP.Geom2d import Geom2d_Line
 from OCP.StlAPI import StlAPI_Writer
 from OCP.TopoDS import TopoDS_Shape
-from OCP.gp import gp_Ax2, gp_Ax3, gp_Dir, gp_Dir2d, gp_Lin2d, gp_Pnt, gp_Pnt2d
+from OCP.gp import (
+    gp_Ax1,
+    gp_Ax2,
+    gp_Ax3,
+    gp_Dir,
+    gp_Dir2d,
+    gp_Lin2d,
+    gp_Pnt,
+    gp_Pnt2d,
+    gp_Trsf,
+    gp_Vec,
+)
 
 
 OUTPUT_DIR = Path(__file__).parent / "stl"
@@ -63,17 +75,19 @@ EAR_WIDTH = 8.50
 EAR_GAP = 5.33
 EAR_HEIGHT = 5.99
 PIVOT_CLEARANCE_DIAMETER = 3.40
-# Printed external thread on the adjustment rod (see THREAD_* below) cuts its
-# own mating groove as it is screwed in. The pilot is sized between the
-# minor and major diameter so only part of the thread height compresses
-# into the plastic on each turn (full major-to-minor interference would be
-# too aggressive and risk cracking the boss in brittle FDM plastic).
-THREAD_MAJOR_DIAMETER = 6.00
-THREAD_PITCH = 2.00
-THREAD_DEPTH = 0.75  # radial height of the triangular thread profile
+# Adjustment rod and base hole: true ISO M5 x 0.8 (same thread as the ball
+# screw). The base carries a modelled internal thread; the printed hole is
+# sized for FDM: minor diameter 4.20 (nominal 4.13), bored to a 5.50 major
+# diameter so the rod's 5.00 crest has 0.25 mm radial clearance.
+THREAD_MAJOR_DIAMETER = 5.00
+THREAD_PITCH = 0.80
+THREAD_DEPTH = 0.50  # radial height of the triangular thread profile
 THREAD_MINOR_DIAMETER = THREAD_MAJOR_DIAMETER - (2 * THREAD_DEPTH)
-THREAD_LENGTH = 16.00
-M5_COARSE_TAP_PILOT_DIAMETER = THREAD_MAJOR_DIAMETER - 1.00
+THREAD_LENGTH = 20.00
+M5_HOLE_MINOR_DIAMETER = 4.20
+M5_HOLE_MAJOR_DIAMETER = 5.50
+M5_HOLE_RIDGE_DEPTH = 0.65  # ridge tip radius 2.75 - 0.65 = 2.10
+M3_TAP_PILOT_DIAMETER = 2.70  # self-tapping M3 pilot in PLA
 M5_THREAD_HOLE_OFFSET_FROM_TOP = 22.00
 
 CSI_SLOT_WIDTH = 18.00
@@ -103,7 +117,7 @@ WHEEL_HUB_M3_CLEARANCE_DIAMETER = 3.20
 # Camera carrier: holds the Pi Camera Module 3 (standard or NoIR, same PCB)
 # and provides the hinge tab that slots between the base's ears on the M3
 # pivot axle. Hole spacing/diameter match the official Camera Module 3
-# mechanical drawing (25 x 24mm PCB, 21mm square hole pattern, Ø2.5mm holes).
+# mechanical drawing (25 x 24mm PCB, 21mm square hole pattern, Ã˜2.5mm holes).
 CAM_PCB_WIDTH = 25.00
 CAM_PCB_HEIGHT = 24.00
 CAM_MOUNT_HOLE_SPACING = 21.00
@@ -531,9 +545,29 @@ def make_mount() -> TopoDS_Shape:
             gp_Pnt(0, plate_front_y - 1, PLATE_HEIGHT - M5_THREAD_HOLE_OFFSET_FROM_TOP),
             gp_Dir(0, 1, 0),
         ),
-        M5_COARSE_TAP_PILOT_DIAMETER / 2,
+        M5_HOLE_MAJOR_DIAMETER / 2,
         MATERIAL_THICKNESS + 2,
     ).Shape()
+    # Internal M5 x 0.8 thread: the hole is bored to the major diameter and a
+    # helical ridge (same helix as the rod's external thread, pointing
+    # inward) is fused back into the wall. A swept solid used as a cutting
+    # tool made the OCC boolean return an unchanged plate, so it is added.
+    ridge = make_external_thread(
+        M5_HOLE_MAJOR_DIAMETER / 2,
+        THREAD_PITCH,
+        M5_HOLE_RIDGE_DEPTH,
+        MATERIAL_THICKNESS,
+        0.0,
+        inward=True,
+    )
+    to_hole = gp_Trsf()
+    to_hole.SetRotation(gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(1, 0, 0)), -math.pi / 2)
+    ridge = BRepBuilderAPI_Transform(ridge, to_hole, True).Shape()
+    move = gp_Trsf()
+    move.SetTranslation(
+        gp_Vec(0, plate_front_y, PLATE_HEIGHT - M5_THREAD_HOLE_OFFSET_FROM_TOP)
+    )
+    m5_thread_ridge = BRepBuilderAPI_Transform(ridge, move, True).Shape()
     csi_slot = make_box(
         CSI_SLOT_WIDTH,
         MATERIAL_THICKNESS + 2,
@@ -541,7 +575,7 @@ def make_mount() -> TopoDS_Shape:
         y=CSI_SLOT_FRONT_OFFSET,
         z=CSI_SLOT_BOTTOM + (CSI_SLOT_HEIGHT / 2),
     )
-    return cut(cut(cut(mount, pivot_hole), m5_thread_hole), csi_slot)
+    return fuse(cut(cut(cut(mount, pivot_hole), m5_thread_hole), csi_slot), m5_thread_ridge)
 
 
 def make_camera_carrier() -> TopoDS_Shape:
@@ -797,14 +831,23 @@ def make_external_thread(
     depth: float,
     length: float,
     start_z: float,
+    inward: bool = False,
 ) -> TopoDS_Shape:
-    """Sweep a triangular V-profile along a helix to cut a real printable
-    external thread on a rod, starting at z=start_z and running +Z for
-    `length` along a cylinder of the given root (minor) radius."""
+    """Sweep a triangular V-profile along a helix to make a printable
+    thread ridge, starting at z=start_z and running +Z for `length` on a
+    cylinder of the given root radius. Outward (rod) ridges point away from
+    the axis; with inward=True (internal thread) they point toward it."""
+    sgn = -1.0 if inward else 1.0
     # Keep the whole swept profile inside [start_z, start_z + length]: the
     # flanks overhanging the rod ends used to leave sliver faces (degenerate
     # triangles / non-manifold edges) where the sweep met the end caps.
     half_width = (pitch / 2) - 0.05
+    # Sink the flank base 0.05 mm into the body so the helical sweep crosses
+    # the cylinder transversally instead of lying exactly on it (that
+    # coincidence left sliver triangles in the STL); tip radius unchanged.
+    sink = 0.05
+    root_radius -= sgn * sink
+    depth += sink
     start_z += half_width
     length -= 2 * half_width
     n_turns = length / pitch
@@ -827,15 +870,19 @@ def make_external_thread(
     # a tangent/coincident cylinder surface.
     embed = 0.2
     profile = BRepBuilderAPI_MakePolygon()
-    profile.Add(gp_Pnt(root_radius - embed, 0, start_z - half_width))
+    # First vertex sits exactly on the root radius: MakePipeShell with
+    # contact moves the profile so its first vertex touches the spine, so
+    # starting inside the core would shift the whole flank outward by
+    # `embed` (measured: crest diameter +0.4 mm too large before this fix).
     profile.Add(gp_Pnt(root_radius, 0, start_z - half_width))
-    profile.Add(gp_Pnt(root_radius + depth, 0, start_z))
+    profile.Add(gp_Pnt(root_radius + sgn * depth, 0, start_z))
     profile.Add(gp_Pnt(root_radius, 0, start_z + half_width))
-    profile.Add(gp_Pnt(root_radius - embed, 0, start_z + half_width))
+    profile.Add(gp_Pnt(root_radius - sgn * embed, 0, start_z + half_width))
+    profile.Add(gp_Pnt(root_radius - sgn * embed, 0, start_z - half_width))
     profile.Close()
 
     pipe = BRepOffsetAPI_MakePipeShell(helix_wire)
-    pipe.Add(profile.Wire(), True, True)
+    pipe.Add(profile.Wire(), False, False)
     pipe.SetTransitionMode(BRepBuilderAPI_TransitionMode.BRepBuilderAPI_Transformed)
     pipe.Build()
     pipe.MakeSolid()
@@ -856,7 +903,7 @@ def make_adjustment_rod() -> TopoDS_Shape:
     # end), spanning the plate's tapped hole across the adjustment travel
     # range; the rest of the shaft toward the drive-square stays a plain
     # shank that only needs clearance, not engagement.
-    thread_start_z = (ROD_LENGTH / 2) - THREAD_LENGTH
+    thread_start_z = (ROD_LENGTH / 2) - THREAD_LENGTH - 1.0
     thread = make_external_thread(
         rod_radius,
         THREAD_PITCH,
@@ -864,7 +911,6 @@ def make_adjustment_rod() -> TopoDS_Shape:
         THREAD_LENGTH,
         thread_start_z,
     )
-    rod = fuse(rod, thread)
     ball = make_ball(
         gp_Pnt(0, 0, (ROD_LENGTH / 2) + (BALL_DIAMETER / 2) - BALL_OVERLAP),
         BALL_DIAMETER / 2,
@@ -877,13 +923,15 @@ def make_adjustment_rod() -> TopoDS_Shape:
     )
     drive_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(0, 0, -(ROD_LENGTH / 2) - (DRIVE_SQUARE_LENGTH / 2)),
+            gp_Pnt(0, 0, -(ROD_LENGTH / 2) - (DRIVE_SQUARE_LENGTH / 2) - 1),
             gp_Dir(0, 0, 1),
         ),
-        M3_CLEARANCE_DIAMETER / 2,
-        DRIVE_SQUARE_LENGTH + 2,
+        M3_TAP_PILOT_DIAMETER / 2,
+        DRIVE_SQUARE_LENGTH / 2 + 1 + 4,
     ).Shape()
-    return cut(fuse(rod, ball, drive_square), drive_hole)
+    rod = fuse(rod, ball)
+    rod = fuse(rod, thread)
+    return cut(fuse(rod, drive_square), drive_hole)
 
 
 def make_wheel_crank() -> TopoDS_Shape:

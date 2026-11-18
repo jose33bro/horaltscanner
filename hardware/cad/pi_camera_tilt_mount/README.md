@@ -1,4 +1,4 @@
-# Support orientable pour Pi Camera V3
+﻿# Support orientable pour Pi Camera V3
 
 Ce répertoire contient la base du support orientable de Pi Camera V3 et son
 test d'encombrement. La plaque verticale et la tablette inférieure forment un
@@ -25,6 +25,26 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
 
 Les autres fichiers STL éventuellement présents dans ce répertoire ne sont pas
 générés par `generate.py`.
+
+Trois pièces annexes sont aussi générées par `generate.py` :
+
+- `stl/ball_screw_M5x40_ball6.5.stl` : vis M5 × 0,8 (ISO pas normal), 40 mm,
+  tête sphérique Ø 6,5 mm, fente de tournevis 0,8 × 5 × 1,5 mm. L'ancien STL ne
+  contenait que la bille (tige absente) ;
+- `stl/camera_support_plate_28.05x7x1.stl` : plaque 28,05 × 7 × 1 mm, deux
+  trous M3 Ø 3,2 mm sur entraxe 14 mm (cote de `hardware/mechanical_specs.md`;
+  l'ancien STL utilisait 16 mm), douille Ø 6,9 mm à 4 pétales (fentes 0,8 mm,
+  lèvre Ø 6,0 mm qui verrouille la bille de 6,5 mm) et passage de tige Ø 5,3 mm;
+- `stl/fit_test_plate_slot_28.45x7.4.stl` (ex `fit_test_27.6x7.3.stl`, bloc
+  33,6 × 13,3 × 8 mm) : gabarit à poche 28,45 × 7,40 mm = plaque + 0,2 mm par
+  côté. L'ancienne poche de 27,6 mm était plus courte que la plaque (28,05 mm).
+
+Chaque STL est vérifié à l'export (maillage fermé, sans triangle dégénéré) et
+`verify_stl.py` contrôle en plus l'encombrement attendu :
+
+```bash
+python3 hardware/cad/pi_camera_tilt_mount/verify_stl.py
+```
 
 ## Cotes fonctionnelles de la base
 
@@ -104,7 +124,7 @@ Le générateur paramétrique `generate.py` dépend des bindings OpenCascade
 fournis par le paquet `cadquery-ocp`. Dans un environnement Python dédié :
 
 ```bash
-python3 -m pip install cadquery-ocp
+python3 -m pip install cadquery-ocp numpy
 python3 hardware/cad/pi_camera_tilt_mount/generate.py
 ```
 

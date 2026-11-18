@@ -91,8 +91,29 @@ def analyse(tris: np.ndarray) -> dict:
     }
 
 
+def check_header(path: Path) -> list[str]:
+    """Binary STL header must carry the material and not look like ASCII."""
+    data = path.read_bytes()
+    if len(data) < 84:
+        return ["file too short"]
+    header = data[:80]
+    errors = []
+    if header.lstrip().lower().startswith(b"solid"):
+        errors.append("header starts with 'solid' (ambiguous with ASCII STL)")
+    if b"Creality Hyper PLA blanc" not in header:
+        errors.append("header lacks material 'Creality Hyper PLA blanc'")
+    if 84 + 50 * struct.unpack("<I", data[80:84])[0] != len(data):
+        errors.append("not a valid binary STL")
+    return errors
+
+
 def main() -> int:
     failed = False
+    for path in sorted((HERE / "stl").glob("*.stl")):
+        errors = check_header(path)
+        print(f"{'FAIL' if errors else 'OK  '} header {path.name}"
+              + (f"  <- {'; '.join(errors)}" if errors else ""))
+        failed |= bool(errors)
     for path, expected in EXPECTED_EXTENTS.items():
         if not path.exists():
             print(f"MISSING  {path.name}")

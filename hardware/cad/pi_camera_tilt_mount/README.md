@@ -154,6 +154,24 @@ python3 hardware/cad/pi_camera_tilt_mount/generate.py
 Exécuter la commande depuis la racine du dépôt. Elle vérifie les solides avant
 l'export et remplace les six STL listés ci-dessus.
 
+## Réglages d'impression (matériau : Creality Hyper PLA blanc)
+
+Imprimante : Creality Ender-3 S1 (Klipper). Un STL ne porte pas de réglages de
+tranchage : ils sont donc (1) écrits dans l'en-tête binaire de 80 octets de
+chaque STL (visible avec `head -c 80 fichier.stl`), par exemple
+`Creality Hyper PLA blanc;N0.4 L0.2 I25% W4 T215/B60 V60;dos a plat;sup 55deg`
+(buse, hauteur de couche, remplissage, parois, buse/lit °C, vitesse mm/s,
+orientation, supports), et (2) détaillés pièce par pièce dans
+[`print_settings.json`](print_settings.json) (source de vérité : orientation,
+supports, tolérances de filetage M5 et d'emboîtement).
+
+Valeurs communes : buse 0,4 mm, 215 °C (220 °C couche 1), lit 60 °C, ventilateur
+0 % couche 1 puis 100 % dès la couche 3. `generate.py`, `assemble.py` et
+`stamp_stl_settings.py` réécrivent l'en-tête (STL binaires). `verify_stl.py`
+vérifie que chaque en-tête contient « Creality Hyper PLA blanc » et ne commence
+pas par `solid`. Aucun G-code n'est fourni ; les valeurs sont à reporter dans le
+slicer.
+
 ## Impression et montage
 
 1. Imprimer d'abord le test d'encombrement à plat et vérifier l'espace arrière.

@@ -1,0 +1,127 @@
+{
+  "printer": "Creality Ender-3 S1 (Klipper)",
+  "material": "Creality Hyper PLA blanc",
+  "common": {
+    "nozzle_mm": 0.4,
+    "nozzle_temp_c": 215,
+    "first_layer_nozzle_temp_c": 220,
+    "bed_temp_c": 60,
+    "fan": "0 % couche 1, 100 % des la couche 3",
+    "first_layer_height_mm": 0.2,
+    "first_layer_speed_mm_s": 25,
+    "bed_adhesion": "jupe 3 mm, plateau PEI propre; pas de brim sauf mention",
+    "elephant_foot_compensation_mm": 0.1,
+    "seam": "aligne au dos / face non fonctionnelle",
+    "notes": [
+      "Hyper PLA : plage fabricant ~190-230 C, 215 C retenu (210-220 C demandes); le sechage n'est pas necessaire sauf stockage humide.",
+      "Pas de G-code genere : ces valeurs sont des recommandations a reporter dans le slicer.",
+      "Filets M5x0,8 : jeu radial 0,25 mm deja modelise; tarauder/passer un M5 a la main si serre apres impression.",
+      "Emboitements/clips : jeu 0,2 mm modelise; pas de compensation XY supplementaire dans le slicer."
+    ]
+  },
+  "parts": {
+    "pi_camera_tilt_base.stl": {
+      "layer_height_mm": 0.2,
+      "infill_percent": 25,
+      "infill_pattern": "gyroid",
+      "walls": 4,
+      "speed_mm_s": 60,
+      "supports": "oui - Everywhere, surplomb 55 deg, densite 12 %, interface 2 couches, distance Z 0,22 mm",
+      "orientation": "grand dos de la plaque contre le plateau",
+      "tolerances": "trou M5 de la tige a fond de filet interne 4,2 mm; avant-trous M3 2,7 mm; ne pas agrandir",
+      "header_orientation": "dos a plat;sup 55deg"
+    },
+    "fit_test_rear_cavity_30.45x38.2.stl": {
+      "layer_height_mm": 0.2,
+      "infill_percent": 15,
+      "infill_pattern": "grid",
+      "walls": 2,
+      "speed_mm_s": 60,
+      "supports": "non",
+      "orientation": "a plat (plus grande face sur le plateau)",
+      "tolerances": "gabarit d'encombrement, a imprimer avant la base",
+      "header_orientation": "a plat;sans sup"
+    },
+    "adjustment_rod_M5x50_ball6.5_square_m3.stl": {
+      "layer_height_mm": 0.12,
+      "infill_percent": 100,
+      "infill_pattern": "lines",
+      "walls": 5,
+      "speed_mm_s": 35,
+      "supports": "non (bille en haut, surplomb <= 45 deg)",
+      "orientation": "debout, carre sur le plateau, bille Z+ (axe M5 vertical)",
+      "tolerances": "filet M5x0,8 crete 5,0 / noyau 4,0 mm, jeu radial 0,25 mm; trou M3 central 3,2 mm; verifier la phase de vissage avec la base",
+      "header_orientation": "debout;sans sup"
+    },
+    "wheel_crank_50mm_square_m3.stl": {
+      "layer_height_mm": 0.2,
+      "infill_percent": 25,
+      "infill_pattern": "gyroid",
+      "walls": 3,
+      "speed_mm_s": 60,
+      "supports": "non",
+      "orientation": "a plat, empreinte carree 5,2 mm orientee vers le haut (pas de pont)",
+      "tolerances": "empreinte carree 5,2x5,2 mm pour le carre 5x5 mm de la tige; trou M3 axial 3,2 mm",
+      "header_orientation": "a plat;carre en haut"
+    },
+    "camera_carrier_v3_25x24_tab4.8.stl": {
+      "layer_height_mm": 0.16,
+      "infill_percent": 30,
+      "infill_pattern": "gyroid",
+      "walls": 4,
+      "speed_mm_s": 50,
+      "supports": "non si surplombs <= 45 deg; sinon contact plateau uniquement",
+      "orientation": "patin plat du dos sur le plateau; verifier l'orientation en tranches avant impression",
+      "tolerances": "tenon pivot 3,40 mm pour axe M3; 4 trous 2,5 mm entraxe 21 mm; avant-trous M3 2,7 mm pour la plaque-support",
+      "header_orientation": "dos a plat;sup"
+    },
+    "camera_front_cover_v3_clip.stl": {
+      "layer_height_mm": 0.12,
+      "infill_percent": 40,
+      "infill_pattern": "gyroid",
+      "walls": 4,
+      "speed_mm_s": 40,
+      "supports": "non",
+      "orientation": "face arriere a plat, 4 pions clips vers le haut",
+      "tolerances": "4 pions pour trous 2,5 mm (clip par friction); ouverture objectif 11 mm",
+      "header_orientation": "pions en haut;sans sup"
+    },
+    "ball_screw_M5x40_ball6.5.stl": {
+      "layer_height_mm": 0.12,
+      "infill_percent": 100,
+      "infill_pattern": "lines",
+      "walls": 5,
+      "speed_mm_s": 35,
+      "supports": "non (tete spherique en haut)",
+      "orientation": "debout, extremite filetee sur le plateau, tete Z+",
+      "tolerances": "filet M5x0,8; bille 6,5 mm pour douille a levres 6,0 mm; fente tournevis 0,8x5x1,5 mm",
+      "header_orientation": "debout;sans sup"
+    },
+    "camera_support_plate_28.05x7x1.stl": {
+      "layer_height_mm": 0.12,
+      "infill_percent": 100,
+      "infill_pattern": "lines",
+      "walls": 4,
+      "speed_mm_s": 35,
+      "supports": "non (verifier la levre de douille en tranches)",
+      "orientation": "a plat, face de la plaque sur le plateau, douille a 4 petales vers le haut",
+      "tolerances": "trous M3 3,2 mm entraxe 14 mm; passage de tige 5,3 mm; levre 6,0 mm pour bille 6,5 mm; fentes 0,8 mm",
+      "header_orientation": "a plat;douille haut"
+    },
+    "fit_test_plate_slot_28.45x7.4.stl": {
+      "layer_height_mm": 0.12,
+      "infill_percent": 15,
+      "infill_pattern": "grid",
+      "walls": 2,
+      "speed_mm_s": 50,
+      "supports": "non",
+      "orientation": "a plat, poche vers le haut",
+      "tolerances": "poche 28,45x7,40 mm = plaque + 0,2 mm par cote; couches fines pour precision",
+      "header_orientation": "a plat;poche haut"
+    },
+    "assembly_pi_camera_tilt_mount.stl": {
+      "printable": false,
+      "header_orientation": "ASSEMBLAGE VISUEL NE PAS IMPRIMER"
+    }
+  }
+}

@@ -147,6 +147,16 @@ def main() -> int:
         print(f"overlap {a} x {b}: {vol:.3f} mm3 ({tag})")
     print("interference check:", "OK" if not bad else f"{bad} unexpected overlap(s)")
 
+    # Plate 5 <-> carrier 3: flush contact, M3 holes aligned with carrier pilots.
+    plate, carrier = meshes["support_plate"], meshes["carrier"]
+    contact = float(np.abs(plate.bounds[0][1] - CARRIER_BACK_Y))
+    probes = np.array([[s * 7.0, CARRIER_BACK_Y - 0.7, M5_HOLE_Z] for s in (-1, 1)])
+    hole_ok = not carrier.contains(probes).any() and not plate.contains(
+        probes + [0, 1.2, 0]
+    ).any()
+    print(f"plate 5 on carrier 3: gap {contact:.3f} mm, M3 holes aligned: {hole_ok}")
+    bad += 0 if contact < 0.01 and hole_ok else 1
+
     render(meshes, "assembly_iso_front.png", 20, -50)
     render(meshes, "assembly_iso_back.png", 20, 130)
     render(meshes, "assembly_side.png", 0, 0)

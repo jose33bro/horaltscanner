@@ -62,7 +62,9 @@ Numérotation du plan : 1 tige, 3 berceau, 4 cache avant (clipsé sur 3),
 8 base, 9 roue (sur le carré de 1). La tige 1 traverse le trou M5 de 8, 3
 pivote sur les oreilles de 8 (axe M3, non modélisé). Seuls recouvrements
 (voulus) : filet de 1 dans le trou M5 (7,5 mm³) et carré de 1 dans le moyeu
-de 9 (170 mm³).
+de 9 (170 mm³). La plaque 5 est vissée à plat au dos du berceau 3 par deux
+vis M3 (entraxe 14 mm, avant-trous Ø 2,7 mm ajoutés au berceau dans
+`generate.py`) ; le contrôle vérifie contact à 0 mm et trous alignés.
 
 
 - plaque verticale : 30,45 × 38,20 × 3,20 mm;

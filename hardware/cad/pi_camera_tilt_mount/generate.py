@@ -172,6 +172,8 @@ SUPPORT_LENGTH = 28.05
 SUPPORT_WIDTH = 7.00
 SUPPORT_THICKNESS = 1.00
 SUPPORT_HOLE_SPACING = 14.00  # M3 holes on 14 mm centres (spec)
+SUPPORT_SCREW_PILOT_DIAMETER = 2.70  # blind pilot in the carrier for the M3 screws
+SUPPORT_SCREW_PILOT_DEPTH = 1.40  # carrier is 2 mm thick: stays closed on the PCB side
 SUPPORT_SOCKET_DIAMETER = BALL_DIAMETER + 0.40  # 6.90 mm (spec)
 SUPPORT_LIP_DIAMETER = BALL_DIAMETER - 0.50  # rim narrower than the ball: snap
 SUPPORT_SHAFT_HOLE_DIAMETER = 5.30
@@ -696,6 +698,20 @@ def make_camera_carrier() -> TopoDS_Shape:
     carrier = cut(cut(carrier, top_left_hole), top_right_hole)
     carrier = cut(cut(carrier, bottom_left_hole), bottom_right_hole)
     carrier = cut(carrier, ball_socket)
+    # Two M3 pilot holes (self-tapping in PLA) on the 14 mm centres of the
+    # camera support plate, fixing it flat on the carrier back face.
+    for sign in (-1, 1):
+        carrier = cut(
+            carrier,
+            BRepPrimAPI_MakeCylinder(
+                gp_Ax2(
+                    gp_Pnt(sign * SUPPORT_HOLE_SPACING / 2, carrier_back_y + 1, adjustment_boss_z),
+                    gp_Dir(0, -1, 0),
+                ),
+                SUPPORT_SCREW_PILOT_DIAMETER / 2,
+                SUPPORT_SCREW_PILOT_DEPTH + 1,
+            ).Shape(),
+        )
     carrier = cut(carrier, cable_channel_through)
     return cut(carrier, cable_channel_groove)
 

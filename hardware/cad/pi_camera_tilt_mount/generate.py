@@ -1,6 +1,11 @@
 from dataclasses import dataclass
 from pathlib import Path
 import math
+import struct
+from collections import Counter
+
+import numpy as np
+from verify_stl import DEGENERATE_AREA_MM2, analyse, load_stl
 
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
 from OCP.BRepBuilderAPI import (
@@ -160,6 +165,38 @@ CLIP_PIN_TIP_LENGTH = 0.80
 # How far short of the carrier's back face the pins stop, so they never
 # reach into the 1mm gap in front of the main plate (ball-socket area).
 CLIP_PIN_BACK_MARGIN = 0.30
+
+# Camera support plate (28.05 x 7 x 1 mm, hardware/mechanical_specs.md) and the
+# M5 x 0.8 ball screw that snaps into its 4-petal socket.
+SUPPORT_LENGTH = 28.05
+SUPPORT_WIDTH = 7.00
+SUPPORT_THICKNESS = 1.00
+SUPPORT_HOLE_SPACING = 14.00  # M3 holes on 14 mm centres (spec)
+SUPPORT_SOCKET_DIAMETER = BALL_DIAMETER + 0.40  # 6.90 mm (spec)
+SUPPORT_LIP_DIAMETER = BALL_DIAMETER - 0.50  # rim narrower than the ball: snap
+SUPPORT_SHAFT_HOLE_DIAMETER = 5.30
+SUPPORT_COLLAR_RADIUS = (SUPPORT_SOCKET_DIAMETER / 2) + 0.80
+PETAL_HEIGHT = 4.00
+PETAL_LIP_HEIGHT = 0.60
+PETAL_CHAMFER = 0.50
+PETAL_SLIT_WIDTH = 0.80
+BALL_SCREW_LENGTH = 40.00
+BALL_SCREW_PITCH = 0.80  # ISO M5 coarse
+BALL_SCREW_THREAD_DEPTH = 0.50
+BALL_SCREW_ROOT_RADIUS = 2.50 - BALL_SCREW_THREAD_DEPTH
+BALL_SCREW_THREAD_START = 1.50
+BALL_SCREW_THREAD_LENGTH = 32.00
+BALL_SCREW_BALL_RECESS = (BALL_DIAMETER - 5.00) / 2
+BALL_SCREW_SLOT_LENGTH = 5.00
+BALL_SCREW_SLOT_WIDTH = 0.80
+BALL_SCREW_SLOT_DEPTH = 1.50
+
+# Gauge for the support plate: pocket = plate + 0.2 mm per side.
+PLATE_SLOT_WIDTH = SUPPORT_LENGTH + 0.40
+PLATE_SLOT_DEPTH = SUPPORT_WIDTH + 0.40
+SLOT_TEST_WALL = 3.00
+SLOT_TEST_HEIGHT = 8.00
+SLOT_TEST_FLOOR = 2.00
 
 
 def make_box(
@@ -728,6 +765,14 @@ def make_camera_front_cover() -> TopoDS_Shape:
     return cut(cover, lens_hole)
 
 
+def make_ball(center: gp_Pnt, radius: float) -> TopoDS_Shape:
+    # Poles on the Y axis: the sphere's pole fans never sit on the contact tip
+    # (+Z) where they used to produce degenerate triangles in the STL.
+    return BRepPrimAPI_MakeSphere(
+        gp_Ax2(center, gp_Dir(0, 1, 0), gp_Dir(1, 0, 0)), radius
+    ).Shape()
+
+
 def make_external_thread(
     root_radius: float,
     pitch: float,
@@ -738,6 +783,12 @@ def make_external_thread(
     """Sweep a triangular V-profile along a helix to cut a real printable
     external thread on a rod, starting at z=start_z and running +Z for
     `length` along a cylinder of the given root (minor) radius."""
+    # Keep the whole swept profile inside [start_z, start_z + length]: the
+    # flanks overhanging the rod ends used to leave sliver faces (degenerate
+    # triangles / non-manifold edges) where the sweep met the end caps.
+    half_width = (pitch / 2) - 0.05
+    start_z += half_width
+    length -= 2 * half_width
     n_turns = length / pitch
     axis = gp_Ax3(gp_Pnt(0, 0, start_z), gp_Dir(0, 0, 1))
     cylinder = Geom_CylindricalSurface(axis, root_radius)
@@ -754,11 +805,15 @@ def make_external_thread(
     BRepLib.BuildCurves3d_s(helix_edge)
     helix_wire = BRepBuilderAPI_MakeWire(helix_edge).Wire()
 
-    half_width = (pitch / 2) - 0.05
+    # The profile base is buried in the core so the fuse never has to resolve
+    # a tangent/coincident cylinder surface.
+    embed = 0.2
     profile = BRepBuilderAPI_MakePolygon()
+    profile.Add(gp_Pnt(root_radius - embed, 0, start_z - half_width))
     profile.Add(gp_Pnt(root_radius, 0, start_z - half_width))
     profile.Add(gp_Pnt(root_radius + depth, 0, start_z))
     profile.Add(gp_Pnt(root_radius, 0, start_z + half_width))
+    profile.Add(gp_Pnt(root_radius - embed, 0, start_z + half_width))
     profile.Close()
 
     pipe = BRepOffsetAPI_MakePipeShell(helix_wire)
@@ -792,10 +847,10 @@ def make_adjustment_rod() -> TopoDS_Shape:
         thread_start_z,
     )
     rod = fuse(rod, thread)
-    ball = BRepPrimAPI_MakeSphere(
+    ball = make_ball(
         gp_Pnt(0, 0, (ROD_LENGTH / 2) + (BALL_DIAMETER / 2) - BALL_OVERLAP),
         BALL_DIAMETER / 2,
-    ).Shape()
+    )
     drive_square = make_box(
         DRIVE_SQUARE_WIDTH,
         DRIVE_SQUARE_WIDTH,
@@ -843,6 +898,182 @@ def make_fit_test() -> TopoDS_Shape:
     return make_box(PLATE_WIDTH, MATERIAL_THICKNESS, PLATE_HEIGHT)
 
 
+def make_cylinder_z(radius: float, z: float, height: float) -> TopoDS_Shape:
+    return BRepPrimAPI_MakeCylinder(
+        gp_Ax2(gp_Pnt(0, 0, z), gp_Dir(0, 0, 1)), radius, height
+    ).Shape()
+
+
+def make_plate_slot_fit_test() -> TopoDS_Shape:
+    """Pocket gauge for the 28.05 x 7 mm camera support plate."""
+    block = make_box(
+        PLATE_SLOT_WIDTH + 2 * SLOT_TEST_WALL,
+        PLATE_SLOT_DEPTH + 2 * SLOT_TEST_WALL,
+        SLOT_TEST_HEIGHT,
+    )
+    pocket = make_box(
+        PLATE_SLOT_WIDTH,
+        PLATE_SLOT_DEPTH,
+        SLOT_TEST_HEIGHT - SLOT_TEST_FLOOR + 1,
+        z=SLOT_TEST_FLOOR,
+    )
+    return cut(block, pocket)
+
+
+def make_ball_screw() -> TopoDS_Shape:
+    """M5 x 0.8 screw with a 6.5 mm ball head (shaft along +Z, ball on top)."""
+    shaft = make_cylinder_z(BALL_SCREW_ROOT_RADIUS, 0, BALL_SCREW_LENGTH)
+    thread = make_external_thread(
+        BALL_SCREW_ROOT_RADIUS,
+        BALL_SCREW_PITCH,
+        BALL_SCREW_THREAD_DEPTH,
+        BALL_SCREW_THREAD_LENGTH,
+        BALL_SCREW_THREAD_START,
+    )
+    ball = make_ball(
+        gp_Pnt(0, 0, BALL_SCREW_LENGTH - BALL_SCREW_BALL_RECESS),
+        BALL_DIAMETER / 2,
+    )
+    driver_slot = make_box(
+        BALL_SCREW_SLOT_LENGTH,
+        BALL_SCREW_SLOT_WIDTH,
+        BALL_SCREW_SLOT_DEPTH + 1,
+        z=-1,
+    )
+    return cut(fuse(shaft, thread, ball), driver_slot)
+
+
+def make_camera_support_plate() -> TopoDS_Shape:
+    """28.05 x 7 x 1 mm plate with a 4-petal snap-fit socket for the ball."""
+    plate = make_box(SUPPORT_LENGTH, SUPPORT_WIDTH, SUPPORT_THICKNESS)
+    collar = make_cylinder_z(
+        SUPPORT_COLLAR_RADIUS, SUPPORT_THICKNESS - 0.2, PETAL_HEIGHT + 0.2
+    )
+    body = fuse(plate, collar)
+    top = SUPPORT_THICKNESS + PETAL_HEIGHT
+    bore = make_cylinder_z(
+        SUPPORT_SOCKET_DIAMETER / 2, SUPPORT_THICKNESS, PETAL_HEIGHT + 1
+    )
+    lip_hole = make_cylinder_z(
+        SUPPORT_LIP_DIAMETER / 2, top - PETAL_LIP_HEIGHT, PETAL_LIP_HEIGHT + 1
+    )
+    shaft_hole = make_cylinder_z(
+        SUPPORT_SHAFT_HOLE_DIAMETER / 2, -1, SUPPORT_THICKNESS + 2
+    )
+    chamfer = BRepPrimAPI_MakeCone(
+        gp_Ax2(gp_Pnt(0, 0, top - PETAL_CHAMFER), gp_Dir(0, 0, 1)),
+        SUPPORT_LIP_DIAMETER / 2,
+        SUPPORT_LIP_DIAMETER / 2 + PETAL_CHAMFER,
+        PETAL_CHAMFER,
+    ).Shape()
+    slit_x = make_box(
+        SUPPORT_COLLAR_RADIUS * 2 + 2,
+        PETAL_SLIT_WIDTH,
+        PETAL_HEIGHT + 1,
+        z=SUPPORT_THICKNESS,
+    )
+    slit_y = make_box(
+        PETAL_SLIT_WIDTH,
+        SUPPORT_COLLAR_RADIUS * 2 + 2,
+        PETAL_HEIGHT + 1,
+        z=SUPPORT_THICKNESS,
+    )
+    body = cut(body, bore)
+    body = cut(body, lip_hole)
+    body = cut(body, chamfer)
+    body = cut(body, shaft_hole)
+    body = cut(body, slit_x)
+    body = cut(body, slit_y)
+    for sign in (-1, 1):
+        body = cut(
+            body,
+            BRepPrimAPI_MakeCylinder(
+                gp_Ax2(
+                    gp_Pnt(sign * SUPPORT_HOLE_SPACING / 2, 0, -1),
+                    gp_Dir(0, 0, 1),
+                ),
+                M3_CLEARANCE_DIAMETER / 2,
+                SUPPORT_THICKNESS + 2,
+            ).Shape(),
+        )
+    return body
+
+
+def repair_stl(path: Path, tolerance: float = 0.02) -> None:
+    """Weld vertices closer than `tolerance` mm and drop collapsed triangles.
+
+    The OpenCascade mesher leaves micron-sized cracks and sliver triangles
+    where a swept helical thread meets its core cylinder (non-manifold edges
+    in the slicer). Welding those few vertices closes the cracks without
+    changing the shape visibly (0.02 mm is far below print resolution)."""
+    tris = load_stl(path)
+    points = np.round(tris.reshape(-1, 3), 5)
+    unique, inverse = np.unique(points, axis=0, return_inverse=True)
+    parent = list(range(len(unique)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    # Only vertices on open/non-manifold edges are candidates for welding, so
+    # intact regions (sphere poles, seams) are never touched.
+    faces = inverse.reshape(-1, 3)
+    directed = Counter()
+    for a, b, c in faces:
+        directed[(a, b)] += 1
+        directed[(b, c)] += 1
+        directed[(c, a)] += 1
+    candidates = {
+        v
+        for (a, b), n in directed.items()
+        if n != 1 or directed.get((b, a), 0) != 1
+        for v in (a, b)
+    }
+    slivers = 0.5 * np.linalg.norm(
+        np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0]), axis=1
+    ) < DEGENERATE_AREA_MM2
+    candidates.update(int(v) for v in faces[slivers].reshape(-1))
+
+    cells: dict[tuple[int, int, int], list[int]] = {}
+    for idx in sorted(candidates):
+        p = unique[idx]
+        cell = tuple(np.floor(p / tolerance).astype(int))
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    key = (cell[0] + dx, cell[1] + dy, cell[2] + dz)
+                    for other in cells.get(key, ()):
+                        if np.linalg.norm(unique[other] - p) < tolerance:
+                            parent[find(idx)] = find(other)
+        cells.setdefault(cell, []).append(idx)
+
+    roots = np.array([find(i) for i in range(len(unique))])
+    welded = unique.copy()
+    for root in np.unique(roots):
+        members = roots == root
+        if members.sum() > 1:
+            welded[members] = unique[members].mean(axis=0)
+    new_tris = welded[roots[inverse]].reshape(-1, 3, 3)
+    face_roots = roots[inverse].reshape(-1, 3)
+    keep = (
+        (face_roots[:, 0] != face_roots[:, 1])
+        & (face_roots[:, 1] != face_roots[:, 2])
+        & (face_roots[:, 0] != face_roots[:, 2])
+    )
+    new_tris = new_tris[keep]
+    cross = np.cross(new_tris[:, 1] - new_tris[:, 0], new_tris[:, 2] - new_tris[:, 0])
+    norms = np.linalg.norm(cross, axis=1)
+    new_tris, cross, norms = new_tris[norms > 2e-9], cross[norms > 2e-9], norms[norms > 2e-9]
+    normals = cross / norms[:, None]
+    with open(path, "wb") as handle:
+        handle.write(b"repaired by generate.py".ljust(80, b" "))
+        handle.write(struct.pack("<I", len(new_tris)))
+        for normal, tri in zip(normals, new_tris):
+            handle.write(struct.pack("<12fH", *normal, *tri.reshape(-1), 0))
+
+
 def export_model(model: TopoDS_Shape, filename: str) -> None:
     if not BRepCheck_Analyzer(model).IsValid():
         raise ValueError(f"Invalid solid: {filename}")
@@ -851,7 +1082,14 @@ def export_model(model: TopoDS_Shape, filename: str) -> None:
     # helical thread geometry that otherwise show up as non-watertight STL.
     BRepMesh_IncrementalMesh(model, 0.01, False, 0.1, True)
     writer = StlAPI_Writer()
-    writer.Write(model, str(OUTPUT_DIR / filename))
+    target = OUTPUT_DIR / filename
+    writer.Write(model, str(target))
+    info = analyse(load_stl(target))
+    if info["degenerate"] or info["bad_edges"]:
+        repair_stl(target)
+        info = analyse(load_stl(target))
+    if info["degenerate"] or info["bad_edges"] or info["volume"] <= 0:
+        raise ValueError(f"STL is not a closed manifold: {filename}: {info}")
 
 
 if __name__ == "__main__":
@@ -861,3 +1099,6 @@ if __name__ == "__main__":
     export_model(make_wheel_crank(), "wheel_crank_50mm_square_m3.stl")
     export_model(make_camera_carrier(), "camera_carrier_v3_25x24_tab4.8.stl")
     export_model(make_camera_front_cover(), "camera_front_cover_v3_clip.stl")
+    export_model(make_ball_screw(), "ball_screw_M5x40_ball6.5.stl")
+    export_model(make_camera_support_plate(), "camera_support_plate_28.05x7x1.stl")
+    export_model(make_plate_slot_fit_test(), "fit_test_plate_slot_28.45x7.4.stl")

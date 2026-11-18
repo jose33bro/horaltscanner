@@ -52,7 +52,6 @@ PARTS = {
 # Contacts that are part of the design (not defects).
 EXPECTED = {
     frozenset({"rod", "base"}): "printed M5 thread cuts into the 5 mm pilot hole",
-    frozenset({"rod", "wheel"}): "rod square sits inside the wheel hub (M3 clamp)",
     frozenset({"carrier", "cover"}): "cover pins press-fit in the carrier holes",
 }
 
@@ -79,8 +78,8 @@ def build() -> dict[str, trimesh.Trimesh]:
     ) @ rot_x(-90)
     meshes["support_plate"].apply_transform(plate_tf)
 
-    # Wheel: hub centred on the rod square, disc beyond the stem end (+Y).
-    wheel_y = rod_origin_y - ROD_STEM_END_LOCAL_Z
+    # Wheel: hub face against the rod's stem end, square inside the socket.
+    wheel_y = rod_origin_y - ROD_STEM_END_LOCAL_Z + 5.0
     wheel_tf = trimesh.transformations.translation_matrix(
         [0, wheel_y, M5_HOLE_Z]
     ) @ rot_x(-90)

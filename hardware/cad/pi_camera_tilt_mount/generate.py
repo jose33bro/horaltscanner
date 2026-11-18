@@ -94,8 +94,10 @@ DRIVE_SQUARE_LENGTH = 10.00
 M3_CLEARANCE_DIAMETER = 3.20
 WHEEL_DIAMETER = 50.00
 WHEEL_THICKNESS = 6.00
-WHEEL_HUB_WIDTH = 8.00
+WHEEL_HUB_WIDTH = 10.00
 WHEEL_HUB_LENGTH = 10.00
+WHEEL_SOCKET_WIDTH = DRIVE_SQUARE_WIDTH + 0.20
+WHEEL_SOCKET_DEPTH = 6.00  # 5 mm of protruding square + 1 mm slack
 WHEEL_HUB_M3_CLEARANCE_DIAMETER = 3.20
 
 # Camera carrier: holds the Pi Camera Module 3 (standard or NoIR, same PCB)
@@ -907,7 +909,15 @@ def make_wheel_crank() -> TopoDS_Shape:
         WHEEL_HUB_M3_CLEARANCE_DIAMETER / 2,
         WHEEL_HUB_LENGTH + 2,
     ).Shape()
-    return cut(fuse(wheel, hub), hub_hole)
+    # Square socket for the rod's drive square (5 mm + 0.2 mm clearance),
+    # open on the hub's free face.
+    socket = make_box(
+        WHEEL_SOCKET_WIDTH,
+        WHEEL_SOCKET_WIDTH,
+        WHEEL_SOCKET_DEPTH + 1,
+        z=-(WHEEL_HUB_LENGTH / 2) - 1,
+    )
+    return cut(cut(fuse(wheel, hub), hub_hole), socket)
 
 
 def make_fit_test() -> TopoDS_Shape:

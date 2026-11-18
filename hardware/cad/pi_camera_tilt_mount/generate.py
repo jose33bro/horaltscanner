@@ -1176,3 +1176,6 @@ if __name__ == "__main__":
     export_model(make_ball_screw(), "ball_screw_M5x40_ball6.5.stl")
     export_model(make_camera_support_plate(), "camera_support_plate_28.05x7x1.stl")
     export_model(make_plate_slot_fit_test(), "fit_test_plate_slot_28.45x7.4.stl")
+    from stamp_stl_settings import stamp_all
+
+    stamp_all()

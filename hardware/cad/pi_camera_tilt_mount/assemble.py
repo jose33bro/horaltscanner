@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import trimesh
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from stamp_stl_settings import stamp_all
 
 HERE = Path(__file__).parent
 STL = HERE / "stl"
@@ -178,6 +179,7 @@ def main() -> int:
     combined = trimesh.util.concatenate(list(meshes.values()))
     out = STL / "assembly_pi_camera_tilt_mount.stl"
     combined.export(out)
+    stamp_all()
     print(f"wrote {out.relative_to(HERE.parents[2])} bounds={combined.bounds.round(2).tolist()}")
 
     bad = 0

@@ -166,7 +166,10 @@ orientation, supports), et (2) détaillés pièce par pièce dans
 supports, tolérances de filetage M5 et d'emboîtement).
 
 Valeurs communes : buse 0,4 mm, 215 °C (220 °C couche 1), lit 60 °C, ventilateur
-0 % couche 1 puis 100 % dès la couche 3. `generate.py`, `assemble.py` et
+0 % couche 1 puis 100 % dès la couche 3. Supports : toujours **arborescents
+(tree)**, creux/légers (densité 8-10 %, interface fine d'1 couche, distance Z
+0,16-0,22 mm, surplomb 55°), jamais sur les filetages — l'en-tête indique
+`sup arbre` pour la base et le berceau. `generate.py`, `assemble.py` et
 `stamp_stl_settings.py` réécrivent l'en-tête (STL binaires). `verify_stl.py`
 vérifie que chaque en-tête contient « Creality Hyper PLA blanc » et ne commence
 pas par `solid`. Aucun G-code n'est fourni ; les valeurs sont à reporter dans le
@@ -176,8 +179,11 @@ slicer.
 
 1. Imprimer d'abord le test d'encombrement à plat et vérifier l'espace arrière.
 2. Imprimer la base avec le grand dos de la plaque contre le plateau.
-3. Utiliser des supports « Everywhere », angle de surplomb 55°, densité 12 %,
-   interface activée (2 couches) et distance Z de 0,22 mm.
+3. Supports **arborescents (tree)**, légers et faciles à retirer : angle de
+   surplomb 55°, densité 8-10 %, interface fine d'1 couche à 10 %, distance Z
+   0,22 mm (0,18 mm pour le berceau), appuis sur le plateau de préférence, jamais
+   dans les filetages M5 ni les trous M3/Ø2,5 (les tiges et vis M5 sont
+   imprimées debout, sans support). Retirer à la main ou à la pince fine.
 4. Poser la carte Pi Camera Module 3 contre la face avant du berceau
    (`camera_carrier_v3_25x24_tab4.8.stl`), trous alignés.
 5. Clipser le cache avant (`camera_front_cover_v3_clip.stl`) par-dessus : les

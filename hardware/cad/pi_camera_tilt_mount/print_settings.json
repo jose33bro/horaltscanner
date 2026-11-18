@@ -12,6 +12,7 @@
     "bed_adhesion": "jupe 3 mm, plateau PEI propre; pas de brim sauf mention",
     "elephant_foot_compensation_mm": 0.1,
     "seam": "aligne au dos / face non fonctionnelle",
+    "supports_policy": "Supports ARBORESCENTS (tree), creux/legers : densite 8-10 %, interface fine 1 couche a 10 %, distance Z 0,16-0,22 mm, branches fines, angle de surplomb 55 deg; jamais sur les filetages M5 (orientation choisie pour les eviter) ni dans les trous; retrait a la main/pince fine sans casser les pieces fragiles.",
     "notes": [
       "Hyper PLA : plage fabricant ~190-230 C, 215 C retenu (210-220 C demandes); le sechage n'est pas necessaire sauf stockage humide.",
       "Pas de G-code genere : ces valeurs sont des recommandations a reporter dans le slicer.",
@@ -26,10 +27,10 @@
       "infill_pattern": "gyroid",
       "walls": 4,
       "speed_mm_s": 60,
-      "supports": "oui - Everywhere, surplomb 55 deg, densite 12 %, interface 2 couches, distance Z 0,22 mm",
+      "supports": "oui - ARBORESCENTS (tree) legers, partout, surplomb 55 deg, appuis sur le plateau de preference, jamais dans les filets/trous M5-M3; densite 8-10 %, interface 1 couche fine a 10 %, distance Z 0,22 mm, branches 2 parois max, retrait facile a la main",
       "orientation": "grand dos de la plaque contre le plateau",
       "tolerances": "trou M5 de la tige a fond de filet interne 4,2 mm; avant-trous M3 2,7 mm; ne pas agrandir",
-      "header_orientation": "dos a plat;sup 55deg"
+      "header_orientation": "dos a plat;sup arbre"
     },
     "fit_test_rear_cavity_30.45x38.2.stl": {
       "layer_height_mm": 0.2,
@@ -70,10 +71,10 @@
       "infill_pattern": "gyroid",
       "walls": 4,
       "speed_mm_s": 50,
-      "supports": "non si surplombs <= 45 deg; sinon contact plateau uniquement",
+      "supports": "oui si necessaire - ARBORESCENTS (tree) legers, surplomb 55 deg, appuis plateau uniquement (pas sur le tenon, les trous 2,5/2,7 mm), densite 8 %, interface 1 couche a 10 %, distance Z 0,18 mm, retrait facile",
       "orientation": "patin plat du dos sur le plateau; verifier l'orientation en tranches avant impression",
       "tolerances": "tenon pivot 3,40 mm pour axe M3; 4 trous 2,5 mm entraxe 21 mm; avant-trous M3 2,7 mm pour la plaque-support",
-      "header_orientation": "dos a plat;sup"
+      "header_orientation": "dos a plat;sup arbre"
     },
     "camera_front_cover_v3_clip.stl": {
       "layer_height_mm": 0.12,
@@ -103,7 +104,7 @@
       "infill_pattern": "lines",
       "walls": 4,
       "speed_mm_s": 35,
-      "supports": "non (verifier la levre de douille en tranches)",
+      "supports": "non; si la levre de douille l'exige : ARBORESCENTS (tree) legers, densite 8 %, interface 1 couche a 10 %, distance Z 0,16 mm, retrait facile",
       "orientation": "a plat, face de la plaque sur le plateau, douille a 4 petales vers le haut",
       "tolerances": "trous M3 3,2 mm entraxe 14 mm; passage de tige 5,3 mm; levre 6,0 mm pour bille 6,5 mm; fentes 0,8 mm",
       "header_orientation": "a plat;douille haut"

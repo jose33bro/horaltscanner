@@ -46,7 +46,24 @@ Chaque STL est vérifié à l'export (maillage fermé, sans triangle dégénér�
 python3 hardware/cad/pi_camera_tilt_mount/verify_stl.py
 ```
 
-## Cotes fonctionnelles de la base
+## Assemblage complet (`assemble.py`)
+
+`assemble.py` place toutes les pièces dans un seul repère et exporte
+`stl/assembly_pi_camera_tilt_mount.stl`, des vues dans `preview/` et un
+contrôle d'interférence (intersections booléennes deux à deux) :
+
+```bash
+python3 -m pip install numpy trimesh manifold3d matplotlib
+python3 hardware/cad/pi_camera_tilt_mount/assemble.py
+```
+
+Numérotation du plan : 1 tige, 3 berceau, 4 cache avant (clipsé sur 3),
+5 plaque-support à rotule (posée au dos de 3, bille de 1 dans sa douille),
+8 base, 9 roue (sur le carré de 1). La tige 1 traverse le trou M5 de 8, 3
+pivote sur les oreilles de 8 (axe M3, non modélisé). Seuls recouvrements
+(voulus) : filet de 1 dans le trou M5 (7,5 mm³) et carré de 1 dans le moyeu
+de 9 (170 mm³).
+
 
 - plaque verticale : 30,45 × 38,20 × 3,20 mm;
 - tablette inférieure vers l'avant : projection 24,00 mm;

@@ -46,7 +46,30 @@ Chaque STL est vérifié à l'export (maillage fermé, sans triangle dégénér�
 python3 hardware/cad/pi_camera_tilt_mount/verify_stl.py
 ```
 
-## Cotes fonctionnelles de la base
+## Assemblage complet (`assemble.py`)
+
+`assemble.py` place toutes les pièces dans un seul repère et exporte
+`stl/assembly_pi_camera_tilt_mount.stl`, des vues dans `preview/` et un
+contrôle d'interférence (intersections booléennes deux à deux) :
+
+```bash
+python3 -m pip install numpy trimesh manifold3d matplotlib
+python3 hardware/cad/pi_camera_tilt_mount/assemble.py
+```
+
+Numérotation du plan : 1 tige, 3 berceau, 4 cache avant (clipsé sur 3),
+5 plaque-support à rotule (posée au dos de 3, bille de 1 dans sa douille),
+8 base, 9 roue (sur le carré de 1). La tige 1 traverse le trou M5 de 8, 3
+pivote sur les oreilles de 8 (axe M3, non modélisé). Filetages réels
+M5 × 0,8 : tige à crête Ø 5,0 / noyau Ø 4,0 (thread 20 mm), trou de 8 alésé
+Ø 5,5 avec filet interne de fond Ø 4,2 ; jeu radial 0,25 mm. Recouvrement
+tige × base ≈ 0 mm³ (phase de vissage recherchée par `assemble.py`). Le carré de 1 (5 × 5 mm,
+5 mm saillants) entre dans l'empreinte carrée du moyeu de 9 (5,2 × 5,2 mm,
+6 mm de profondeur, moyeu 10 × 10 × 10 mm, vis M3 axiale Ø 3,2 mm), sans
+recouvrement. La plaque 5 est vissée à plat au dos du berceau 3 par deux
+vis M3 (entraxe 14 mm, avant-trous Ø 2,7 mm ajoutés au berceau dans
+`generate.py`) ; le contrôle vérifie contact à 0 mm et trous alignés.
+
 
 - plaque verticale : 30,45 × 38,20 × 3,20 mm;
 - tablette inférieure vers l'avant : projection 24,00 mm;

@@ -115,6 +115,13 @@ def render(meshes: dict[str, trimesh.Trimesh], name: str, elev: float, azim: flo
             face_cols[front] = matplotlib.colors.to_rgb(COVER_TINT)
         tris_all.append(mesh.vertices[mesh.faces])
         cols_all.append(face_cols * shade[:, None])
+    # Overhang trimmed from the carrier (z 3.2 -> 8.21), shown as a ghost.
+    removed = trimesh.creation.box(
+        extents=(25.0, 2.0, 5.01),
+        transform=trimesh.transformations.translation_matrix((0, -11.6, 5.705)),
+    )
+    tris_all.append(removed.vertices[removed.faces])
+    cols_all.append(np.tile(matplotlib.colors.to_rgb("#e63946"), (len(removed.faces), 1)) * 0.8)
     # One collection so matplotlib depth-sorts every triangle together.
     ax.add_collection3d(
         Poly3DCollection(np.vstack(tris_all), facecolors=np.vstack(cols_all), linewidths=0)
@@ -131,7 +138,7 @@ def render(meshes: dict[str, trimesh.Trimesh], name: str, elev: float, azim: flo
     handles = [
         plt.Line2D([0], [0], marker="s", ls="", color=PARTS[k][2], label=f"{PARTS[k][0]} {k}")
         for k in meshes
-    ] + [plt.Line2D([0], [0], marker="s", ls="", color=COVER_TINT, label="3 (ex-4 cover zone)")]
+    ] + [plt.Line2D([0], [0], marker="s", ls="", color=COVER_TINT, label="3 (ex-4 cover zone)")] + [plt.Line2D([0], [0], marker="s", ls="", color="#e63946", label="removed overhang")]
     ax.legend(handles=handles, loc="upper left", fontsize=8)
     fig.savefig(PREVIEW / name, dpi=130, bbox_inches="tight")
     plt.close(fig)

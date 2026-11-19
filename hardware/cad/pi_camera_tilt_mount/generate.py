@@ -176,7 +176,13 @@ BALL_SOCKET_DEPTH = 0.60
 # mounting holes instead of screws/nuts. Four printed pins push through the
 # PCB holes and into the carrier's holes (friction/press fit); a central
 # opening clears the lens.
-CAM_PCB_THICKNESS = 1.20
+# Measured: bare PCB 1.06, board with components (connector side) 4.25,
+# total with lens 10.86 (CAM_TOTAL_THICKNESS).
+CAM_PCB_BARE_THICKNESS = 1.06
+CAM_PCB_SLOT_CLEARANCE = 0.20
+CAM_PCB_THICKNESS = CAM_PCB_BARE_THICKNESS + CAM_PCB_SLOT_CLEARANCE  # 1.26 slot
+CAM_COMPONENT_HEIGHT = 4.25  # board + components, connector side (measured)
+CAM_COMPONENT_CLEARANCE_DEPTH = CAM_COMPONENT_HEIGHT + 0.3  # rear relief budget
 COVER_THICKNESS = 1.60
 LENS_HOLE_DIAMETER = 11.00
 # Slightly undersized vs. CAM_MOUNT_HOLE_DIAMETER (2.50mm) for a snug push

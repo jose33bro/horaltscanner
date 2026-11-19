@@ -240,3 +240,15 @@ La piece fusionnee 3+5 (et le capot 4, l'encoche de la base) utilisent maintenan
 le logement 25,50 x 24,50 ; bbox fusionnee 25,50 x 8,29 x 35,00 mm. L'epaisseur totale
 10,86 mm est enregistree mais la profondeur du logement n'est pas encore verifiee contre
 le capot (non imprime).
+
+### Epaisseurs camera mesurees (mise a jour)
+
+| Constante | Valeur | Statut |
+|---|---|---|
+| `CAM_PCB_BARE_THICKNESS` | 1,06 mm | mesure (PCB nue) |
+| `CAM_PCB_THICKNESS` (fente) | 1,26 mm | 1,06 + 0,20 de jeu |
+| `CAM_COMPONENT_HEIGHT` | 4,25 mm | mesure (composants cote nappe/connecteur) |
+| `CAM_TOTAL_THICKNESS` | 10,86 mm | mesure (avec objectif) |
+
+Le capot 4 passe a 4,56 mm de profondeur (fente 1,26). Le degagement composants
+(4,25 + 0,3) est une constante prevue mais pas encore sculptee dans la geometrie.

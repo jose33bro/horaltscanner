@@ -349,3 +349,11 @@ Constantes `TURNTABLE_*`, `FOV_MARGIN`, `DOOR_PLANE_AHEAD_OF_LENS_MM` dans `gene
 - Composants : poche de dégagement côté carte (`CARRIER_COMPONENT_POCKET_DEPTH` 1,40 mm sur 2,00, 16,9 mm de large, z 12,2 → 24,4 mm), + fenêtre connecteur existante. Les 4,25 mm de composants ne tiennent pas dans 2 mm : le reste du dégagement dépend de l'épaisseur du capot/entretoise, non modifiée.
 - Cohérence : carte 25,16 × 24,16, 1 solide étanche, 25,5 × 8,29 × 35,0 mm, interférence OK, `verify_stl.py` OK.
 
+
+## Bossages autour des 4 trous de fixation caméra
+
+- Constantes `CARRIER_HOLE_BOSS_DIAMETER` 4,50 mm (maximum : 21 mm d'entraxe + 4,5 = 25,5 mm de large), `CARRIER_HOLE_BOSS_HEIGHT` 3,00 mm, `CARRIER_HOLE_BOSS_END_WALL` 0,80 mm.
+- Sur la face arrière du berceau (opposée à la carte) : aucun conflit avec les composants, la nappe (21,02 mm) ni l'objectif. Les trous restent Ø2,5 mm (pions du capot ou vis M2 auto-taraudeuses), entraxe doc 21 × 12,5 mm ; ils deviennent borgnes (profondeur 5,0 mm sur 5,0 mm de matière, fond de 0,8 mm).
+- Imprimable sans supports : face PCB sur le plateau, bossages vers le haut. Pièce 3+5 : 1 solide étanche 25,5 × 8,29 × 35,0 mm.
+- Non vérifié : tenue réelle des vis M2 en PLA, pions du capot (longueur inchangée, n'atteignent pas le fond).
+

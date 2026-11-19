@@ -73,7 +73,7 @@
       "speed_mm_s": 40,
       "supports": "oui - ARBORESCENTS (tree) legers, surplomb 55 deg, appuis plateau/pied du tenon seulement; PAS dans la douille a petales (levre 6,0 mm), les trous 2,5/2,7/3,2 mm ni le passage de tige 5,3 mm; densite 8 %, interface 1 couche a 10 %, distance Z 0,16 mm, retrait facile a la pince fine",
       "orientation": "a plat, face PCB (cote objectif, rainure nappe) sur le plateau; douille a 4 petales, tenon et plaque-support vers le haut",
-      "tolerances": "tenon pivot 3,40 mm pour axe M3; 4 trous 2,5 mm entraxe 21 mm; trous M3 3,2 mm (plaque) + avant-trous 2,7 mm (berceau) entraxe 14 mm; douille 6,9 mm, levre 6,0 mm pour bille 6,5 mm, fentes 0,8 mm; passage de tige 5,3 mm; plaque 5 rognee a 25 mm de large",
+      "tolerances": "tenon pivot 3,40 mm pour axe M3; 4 trous 2,5 mm (aveugles, bossages dia 4,5 x 3 mm au dos) entraxe 21 x 12,5 mm; trous M3 3,2 mm (plaque) + avant-trous 2,7 mm (berceau) entraxe 14 mm; douille 6,9 mm, levre 6,0 mm pour bille 6,5 mm, fentes 0,8 mm; passage de tige 5,3 mm; plaque 5 rognee a 25 mm de large",
       "header_orientation": "a plat;sup arbre"
     },
     "camera_front_cover_v3_clip_no_frame.stl": {

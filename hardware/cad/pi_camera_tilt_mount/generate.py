@@ -174,6 +174,12 @@ CARRIER_CABLE_WIDE_HOLE_MARGIN = 0.50  # solid left under the lower holes
 # Rear component relief pocket (front face of the carrier, PCB side).
 CARRIER_COMPONENT_POCKET_DEPTH = 1.40  # of 2.00 carrier; 0.6 mm wall remains
 CARRIER_COMPONENT_POCKET_WALL_X = 0.80  # solid left around the M3 holes
+# Thicker rims (bosses) around the 4 camera mounting holes, on the carrier back
+# face (away from the PCB/components, so no clash with them, the ribbon or lens).
+# The 2.5 mm holes take the cover pins / M2 self-tapping screws.
+CARRIER_HOLE_BOSS_DIAMETER = 4.50  # max: 25.5 mm carrier width limits it
+CARRIER_HOLE_BOSS_HEIGHT = 3.00  # extra thickness behind the 2.00 mm carrier
+CARRIER_HOLE_BOSS_END_WALL = 0.80  # blind hole: closed end, no support needed
 assert CARRIER_CABLE_CHANNEL_WIDTH >= CAM_FFC_WIDTH + CAM_FFC_WIDTH_CLEARANCE
 CARRIER_CABLE_CHANNEL_DEPTH = CAM_FFC_THICKNESS + CAM_FFC_THICKNESS_CLEARANCE  # 1.02
 CARRIER_CABLE_CHANNEL_MARGIN_ABOVE_CONNECTOR = 3.00
@@ -754,7 +760,7 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
             gp_Dir(0, 1, 0),
         ),
         CAM_MOUNT_HOLE_DIAMETER / 2,
-        CARRIER_THICKNESS + 2,
+        CARRIER_THICKNESS + 1 + CARRIER_HOLE_BOSS_HEIGHT - CARRIER_HOLE_BOSS_END_WALL,
     ).Shape()
     top_right_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
@@ -762,7 +768,7 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
             gp_Dir(0, 1, 0),
         ),
         CAM_MOUNT_HOLE_DIAMETER / 2,
-        CARRIER_THICKNESS + 2,
+        CARRIER_THICKNESS + 1 + CARRIER_HOLE_BOSS_HEIGHT - CARRIER_HOLE_BOSS_END_WALL,
     ).Shape()
     bottom_left_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
@@ -770,7 +776,7 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
             gp_Dir(0, 1, 0),
         ),
         CAM_MOUNT_HOLE_DIAMETER / 2,
-        CARRIER_THICKNESS + 2,
+        CARRIER_THICKNESS + 1 + CARRIER_HOLE_BOSS_HEIGHT - CARRIER_HOLE_BOSS_END_WALL,
     ).Shape()
     bottom_right_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
@@ -778,7 +784,7 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
             gp_Dir(0, 1, 0),
         ),
         CAM_MOUNT_HOLE_DIAMETER / 2,
-        CARRIER_THICKNESS + 2,
+        CARRIER_THICKNESS + 1 + CARRIER_HOLE_BOSS_HEIGHT - CARRIER_HOLE_BOSS_END_WALL,
     ).Shape()
 
     # Shallow flat-bottomed pocket on the back face, aligned with the base's
@@ -879,6 +885,17 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
         y=carrier_front_y + CARRIER_COMPONENT_POCKET_DEPTH / 2,
         z=pocket_bottom_z,
     )
+
+    for bx in (-mount_hole_x, mount_hole_x):
+        for bz in (hole_top_z, hole_bottom_z):
+            carrier = fuse(
+                carrier,
+                BRepPrimAPI_MakeCylinder(
+                    gp_Ax2(gp_Pnt(bx, carrier_back_y - 0.5, bz), gp_Dir(0, 1, 0)),
+                    CARRIER_HOLE_BOSS_DIAMETER / 2,
+                    CARRIER_HOLE_BOSS_HEIGHT + 0.5,
+                ).Shape(),
+            )
 
     carrier = cut(carrier, pivot_hole)
     carrier = cut(cut(carrier, top_left_hole), top_right_hole)
@@ -1331,7 +1348,19 @@ def make_camera_carrier_with_plate() -> TopoDS_Shape:
                 z=boss_z - SUPPORT_WIDTH / 2 - 1,
             ),
         )
-    return fuse(carrier, plate)
+    merged = fuse(carrier, plate)
+    holes = camera_hole_layout(ear)
+    for hx in (-holes.mount_hole_x, holes.mount_hole_x):
+        for hz in (holes.hole_top_z, holes.hole_bottom_z):
+            merged = cut(
+                merged,
+                BRepPrimAPI_MakeCylinder(
+                    gp_Ax2(gp_Pnt(hx, carrier_back_y - CARRIER_THICKNESS - 1, hz), gp_Dir(0, 1, 0)),
+                    CAM_MOUNT_HOLE_DIAMETER / 2,
+                    CARRIER_THICKNESS + 1 + CARRIER_HOLE_BOSS_HEIGHT - CARRIER_HOLE_BOSS_END_WALL,
+                ).Shape(),
+            )
+    return merged
 
 
 def repair_stl(path: Path, tolerance: float = 0.02) -> None:

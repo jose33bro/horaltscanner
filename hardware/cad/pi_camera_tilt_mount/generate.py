@@ -270,6 +270,7 @@ LENS_HOUSING_SIZE = LENS_SQUARE_SIZE
 LENS_HOUSING_CLEARANCE = 0.20
 LENS_RECESS_SIZE = LENS_HOUSING_SIZE + 2 * LENS_HOUSING_CLEARANCE  # 13.59
 LENS_RECESS_FRONT_WALL = 1.20
+COVER_LENS_DROP_Z = 3.50  # user: lower recess + window 3-4 mm (-z), same x axis as the pin holes
 LENS_RECESS_WIDTH_X = 14.00  # user: 13.59 'voir 14' mm across X (room for the lens connector)
 LENS_RECESS_DEPTH = COVER_THICKNESS - LENS_RECESS_FRONT_WALL  # 4.16
 
@@ -1070,7 +1071,7 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     cover_front_y = cover_back_y - COVER_THICKNESS
     lens_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(LENS_OFFSET_X, cover_front_y - 1, holes.hole_center_z + LENS_OFFSET_Z),
+            gp_Pnt(LENS_OFFSET_X, cover_front_y - 1, holes.hole_center_z + LENS_OFFSET_Z - COVER_LENS_DROP_Z),
             gp_Dir(0, 1, 0),
         ),
         LENS_HOLE_DIAMETER / 2,
@@ -1096,14 +1097,14 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
         LENS_RECESS_SIZE,
         x=LENS_OFFSET_X,
         y=cover_back_y - LENS_RECESS_DEPTH / 2 + 0.25,
-        z=holes.hole_center_z + LENS_OFFSET_Z - LENS_RECESS_SIZE / 2,
+        z=holes.hole_center_z + LENS_OFFSET_Z - COVER_LENS_DROP_Z - LENS_RECESS_SIZE / 2,
     )
     cover = cut(cover, lens_recess)
     if not with_frame:
         return cover
 
     axis_x = LENS_OFFSET_X
-    axis_z = holes.hole_center_z + LENS_OFFSET_Z
+    axis_z = holes.hole_center_z + LENS_OFFSET_Z - COVER_LENS_DROP_Z
     cover_center_z = cover_bottom_z + CAM_HOUSING_HEIGHT / 2
     standoff = cut(
         make_box(

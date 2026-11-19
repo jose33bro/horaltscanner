@@ -144,8 +144,11 @@ def check_lens_square() -> list[str]:
         print(f"FAIL cannot isolate the square recess: {recess}")
         return ["recess"]
     c = g.LENS_HOUSING_CLEARANCE
-    conn = recess[0][0] + c - conn_edge_z
-    far = far_edge_z - (recess[0][1] - c)
+    conn = recess[0][0] + c - conn_edge_z + g.COVER_LENS_DROP_Z  # drop added back: lens-axis reference
+    far = far_edge_z - (recess[0][1] - c) - g.COVER_LENS_DROP_Z
+    if not (mesh.bounds[0][2] + 1.0 < recess[0][0] and recess[0][1] < mesh.bounds[1][2]):
+        print('FAIL recess leaves the cover')
+        return ['recess bounds']
     print(f"     recess z {recess[0][0]:.2f}..{recess[0][1]:.2f} (size "
           f"{recess[0][1] - recess[0][0]:.2f}), PCB edges z {conn_edge_z:.2f}/{far_edge_z:.2f}")
     errs = []

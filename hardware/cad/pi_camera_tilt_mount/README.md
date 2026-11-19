@@ -48,7 +48,7 @@ douille à pétales vers +Y, puis fondue.
   berceau, soit 1,525 mm de trop de chaque côté ; elle est rognée à 25,00 mm
   (≈ 2 × 1,525 × 1 × 7 mm³ retirés, en rouge sur les vues `preview/`).
 - Conservés tels quels : logement/trous caméra Ø2,5, rainure de nappe, tenon
-  et trou d'axe M3 Ø3,4, trous M3 Ø3,2 (entraxe 14 mm) + avant-trous Ø2,7,
+  et trou d'axe M3 Ø3,4, (trous M3 de fixation entraxe 14 mm supprimés : 3+5 est un seul corps),
   douille Ø6,9 / lèvre Ø6,0 / passage de tige Ø5,3 / fentes 0,8.
 - Seule modification : le patin du dos passe du rayon 6,00 à 3,50 mm (la bille
   n'y entre que par le passage Ø5,3) pour ne pas laisser un pont de 12 mm
@@ -87,7 +87,7 @@ tige × base ≈ 0 mm³ (phase de vissage recherchée par `assemble.py`). Le car
 5 mm saillants) entre dans l'empreinte carrée du moyeu de 9 (5,2 × 5,2 mm,
 6 mm de profondeur, moyeu 10 × 10 × 10 mm, vis M3 axiale Ø 3,2 mm), sans
 recouvrement. Le contrôle de `assemble.py` vérifie que 3+5 est un seul
-solide fermé de 25 mm de large, trous M3/tige ouverts et avant-trous aveugles.
+solide fermé de 25 mm de large, passage de tige ouvert et emplacements M3 (±7 mm) pleins.
 
 
 - plaque verticale : 30,45 × 38,20 × 3,20 mm;

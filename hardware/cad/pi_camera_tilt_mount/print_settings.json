@@ -73,7 +73,7 @@
       "speed_mm_s": 40,
       "supports": "arborescents LEGERS uniquement sous le dos du berceau et les bossages (appui plateau); BLOQUER dans la fente nappe, la poche composants, la douille a petales et autour des pions; pions 2,0 mm sans support (45 deg)",
       "orientation": "pions camera vers le HAUT (face PCB en haut), dos/plaque-support vers le plateau; recommande car les 4 pions de 2,0 mm sont sur la face PCB",
-      "tolerances": "tenon pivot 3,40 mm pour axe M3; 4 PIONS dia 2,0 mm (bout 1,2 mm), longueur 2,46 mm, face PCB, entraxe 21 x 12,5 mm (bossages dia 4,5 x 3 mm au dos) entraxe 21 x 12,5 mm; trous M3 3,2 mm (plaque) + avant-trous 2,7 mm (berceau) entraxe 14 mm; douille 6,9 mm, levre 6,0 mm pour bille 6,5 mm, petales paroi 1,2 mm, fentes 1,0 mm; poche composants traversante x 16,9 mm, fente nappe 21,02 mm; passage de tige 5,3 mm; plaque 5 rognee a 25 mm de large",
+      "tolerances": "tenon pivot 3,40 mm pour axe M3; 4 PIONS dia 2,0 mm (bout 1,2 mm), longueur 2,46 mm, face PCB, entraxe 21 x 12,5 mm (bossages dia 4,5 x 3 mm au dos) entraxe 21 x 12,5 mm; aucun trou M3 de fixation (3+5 fusionnees); douille 6,9 mm, levre 6,0 mm pour bille 6,5 mm, petales paroi 1,2 mm, fentes 1,0 mm; poche composants traversante x 16,9 mm, fente nappe 21,02 mm; passage de tige 5,3 mm; plaque 5 rognee a 25 mm de large",
       "header_orientation": "pions haut;sup limites"
     },
     "camera_front_cover_v3_clip_no_frame.stl": {

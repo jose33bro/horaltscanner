@@ -262,3 +262,10 @@ de la tablette) ; profondeur `CARRIER_CABLE_CHANNEL_DEPTH` = 0,82 + 0,20 = 1,02 
 
 `CAM_FFC_LENGTH` 8,88 mm (+ 0,30 de jeu = 9,18 mm) : la rainure de nappe s'etend maintenant
 de 4,59 mm (= 9,18 / 2) au-dessus du centre du connecteur (avant 3,00 mm), soit +1,59 mm.
+
+`CAM_FFC_CONNECTOR_HEIGHT` 2,45 mm (hauteur du connecteur FFC cote composants, interpretation de
+"epaisseur nappe 2,45") + 0,30 = `CAM_FFC_CONNECTOR_RELIEF` 2,75 mm requis. Une fenetre traversante
+de 7,73 mm de large est ouverte dans le berceau (2 mm d'epaisseur) au droit du connecteur, de la
+fente basse jusqu'a 1 mm sous la poche de rotule (z ~ 11,7). Les 2,75 mm ne tiennent pas dans 2 mm :
+la fenetre est bornee par la plaque 5 fusionnee derriere (non creusee). Le reste des composants
+garde 4,25 mm (`CAM_COMPONENT_HEIGHT`). La mesure ~20,9 mm lue sur photo est ignoree.

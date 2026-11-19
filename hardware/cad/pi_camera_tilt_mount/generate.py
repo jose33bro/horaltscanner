@@ -146,6 +146,9 @@ FPC_CONNECTOR_OFFSET_FROM_PCB_BOTTOM = 2.10
 CAM_FFC_WIDTH = 7.43
 CAM_FFC_THICKNESS = 0.82
 CAM_FFC_LENGTH = 8.88
+# FFC connector height on the component side (user: "epaisseur nappe 2,45").
+CAM_FFC_CONNECTOR_HEIGHT = 2.45
+CAM_FFC_CONNECTOR_RELIEF = CAM_FFC_CONNECTOR_HEIGHT + 0.30  # 2.75 needed
 CAM_FFC_LENGTH_CLEARANCE = 0.30
 CAM_FFC_WIDTH_CLEARANCE = 0.30
 CAM_FFC_THICKNESS_CLEARANCE = 0.20
@@ -758,6 +761,20 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
         y=carrier_front_y + (CARRIER_CABLE_CHANNEL_DEPTH / 2),
         z=channel_through_top_z,
     )
+    # Connector window: through the carrier plate (limited by its 2 mm
+    # thickness, less than CAM_FFC_CONNECTOR_RELIEF), stopping short of the
+    # ball pocket on the back face.
+    window_top_z = min(
+        channel_top_z,
+        adjustment_boss_z - ball_pad_radius - CARRIER_CABLE_CHANNEL_CLEAR_MARGIN,
+    )
+    connector_window = make_box(
+        CAM_FFC_WIDTH + CAM_FFC_WIDTH_CLEARANCE,
+        CARRIER_THICKNESS + 2,
+        window_top_z - channel_through_top_z,
+        y=carrier_center_y,
+        z=channel_through_top_z,
+    )
 
     carrier = cut(carrier, pivot_hole)
     carrier = cut(cut(carrier, top_left_hole), top_right_hole)
@@ -778,6 +795,7 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
             ).Shape(),
         )
     carrier = cut(carrier, cable_channel_through)
+    carrier = cut(carrier, connector_window)
     return cut(carrier, cable_channel_groove)
 
 

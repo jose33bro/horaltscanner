@@ -259,3 +259,6 @@ Le capot 4 passe a 4,56 mm de profondeur (fente 1,26). Le degagement composants
 interpretation "languette FFC" NON confirmee). Utilisees pour la rainure de nappe du berceau
 3+5 : largeur requise 7,43 + 0,30 = 7,73 mm (canal garde a 16 mm, impose par `CABLE_PASSAGE_WIDTH`
 de la tablette) ; profondeur `CARRIER_CABLE_CHANNEL_DEPTH` = 0,82 + 0,20 = 1,02 mm (avant 0,60).
+
+`CAM_FFC_LENGTH` 8,88 mm (+ 0,30 de jeu = 9,18 mm) : la rainure de nappe s'etend maintenant
+de 4,59 mm (= 9,18 / 2) au-dessus du centre du connecteur (avant 3,00 mm), soit +1,59 mm.

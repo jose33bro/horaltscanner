@@ -145,6 +145,8 @@ FPC_CONNECTOR_OFFSET_FROM_PCB_BOTTOM = 2.10
 # tongue, interpretation not confirmed).
 CAM_FFC_WIDTH = 7.43
 CAM_FFC_THICKNESS = 0.82
+CAM_FFC_LENGTH = 8.88
+CAM_FFC_LENGTH_CLEARANCE = 0.30
 CAM_FFC_WIDTH_CLEARANCE = 0.30
 CAM_FFC_THICKNESS_CLEARANCE = 0.20
 # 16 mm stays: it must match the shelf's CABLE_PASSAGE_WIDTH and is
@@ -734,7 +736,12 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
     #     the two pockets never meet even where their Z ranges overlap.
     pcb_bottom_z = hole_bottom_z - ((CAM_PCB_HEIGHT - CAM_MOUNT_HOLE_SPACING) / 2)
     connector_center_z = pcb_bottom_z + FPC_CONNECTOR_OFFSET_FROM_PCB_BOTTOM
-    channel_top_z = connector_center_z + CARRIER_CABLE_CHANNEL_MARGIN_ABOVE_CONNECTOR
+    # The 8.88 mm tongue is centred on the connector: keep half its length
+    # (plus clearance) open above it, never less than the existing margin.
+    channel_top_z = connector_center_z + max(
+        CARRIER_CABLE_CHANNEL_MARGIN_ABOVE_CONNECTOR,
+        (CAM_FFC_LENGTH + CAM_FFC_LENGTH_CLEARANCE) / 2,
+    )
     ball_socket_bottom_z = adjustment_boss_z - BALL_SOCKET_PAD_RADIUS
     channel_through_top_z = ball_socket_bottom_z - CARRIER_CABLE_CHANNEL_CLEAR_MARGIN
     cable_channel_through = make_box(

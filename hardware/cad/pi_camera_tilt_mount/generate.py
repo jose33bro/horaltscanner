@@ -141,8 +141,17 @@ CARRIER_THICKNESS = 2.00
 # connector down to the carrier's bottom edge, where it continues into the
 # shelf's CABLE_PASSAGE below.
 FPC_CONNECTOR_OFFSET_FROM_PCB_BOTTOM = 2.10
+# Measured on the strip next to the lens (user's photo; read as the FFC
+# tongue, interpretation not confirmed).
+CAM_FFC_WIDTH = 7.43
+CAM_FFC_THICKNESS = 0.82
+CAM_FFC_WIDTH_CLEARANCE = 0.30
+CAM_FFC_THICKNESS_CLEARANCE = 0.20
+# 16 mm stays: it must match the shelf's CABLE_PASSAGE_WIDTH and is
+# far above the required 7.43 + 0.30 = 7.73 mm.
 CARRIER_CABLE_CHANNEL_WIDTH = 16.00
-CARRIER_CABLE_CHANNEL_DEPTH = 0.60
+assert CARRIER_CABLE_CHANNEL_WIDTH >= CAM_FFC_WIDTH + CAM_FFC_WIDTH_CLEARANCE
+CARRIER_CABLE_CHANNEL_DEPTH = CAM_FFC_THICKNESS + CAM_FFC_THICKNESS_CLEARANCE  # 1.02
 CARRIER_CABLE_CHANNEL_MARGIN_ABOVE_CONNECTOR = 3.00
 # How far below the ball-socket pocket's lower edge the full through-slot
 # (see CARRIER_CABLE_CHANNEL_* below) must stop, leaving solid wall so the

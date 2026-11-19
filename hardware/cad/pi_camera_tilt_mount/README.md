@@ -252,3 +252,10 @@ le capot (non imprime).
 
 Le capot 4 passe a 4,56 mm de profondeur (fente 1,26). Le degagement composants
 (4,25 + 0,3) est une constante prevue mais pas encore sculptee dans la geometrie.
+
+### Languette nappe FFC (mesuree)
+
+`CAM_FFC_WIDTH` 7,43 mm et `CAM_FFC_THICKNESS` 0,82 mm (pied a coulisse, a cote de l'objectif ;
+interpretation "languette FFC" NON confirmee). Utilisees pour la rainure de nappe du berceau
+3+5 : largeur requise 7,43 + 0,30 = 7,73 mm (canal garde a 16 mm, impose par `CABLE_PASSAGE_WIDTH`
+de la tablette) ; profondeur `CARRIER_CABLE_CHANNEL_DEPTH` = 0,82 + 0,20 = 1,02 mm (avant 0,60).

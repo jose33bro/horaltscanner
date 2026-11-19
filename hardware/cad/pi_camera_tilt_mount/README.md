@@ -303,7 +303,7 @@ Les mentions "20,87 x 12,33" ci-dessus sont obsoletes : le motif de trous est 21
 
 `LENS_BARREL_SIZE` 8,50 mm (estime a l'oeil, NON mesure) + 2 x `LENS_CLEARANCE_PER_SIDE` 0,45
 = `LENS_HOLE_DIAMETER` 9,40 mm (avant : 11,00). Centre : centre du motif de trous (21 x 12,5, doc)
-+ `LENS_OFFSET_X` / `LENS_OFFSET_Z` (0 / 0 par defaut, hypothese, a regler a la main : la position
++ `LENS_OFFSET_X` / `LENS_OFFSET_Z` (0 / +6,15 mm : axe optique d'apres le dessin mecanique officiel, a la main si besoin : la position
 reelle de l'axe optique n'est pas mesuree). Hauteur totale 10,86 mm non utilisee ici.
 
 ## Volets « barn doors » (pièce 4 + 2 plaques X + 2 plaques Z)
@@ -367,7 +367,7 @@ Constantes `TURNTABLE_*`, `FOV_MARGIN`, `DOOR_PLANE_AHEAD_OF_LENS_MM` dans `gene
 
 ### Pions sur le 3+5, piece 4 pleine (5,36 mm)
 - Les 4 pions (dia 2,0 mm, bout 1,2 mm, longueur 2,46 mm) sont sur la face PCB de la piece 3+5, a l'entraxe doc 21 x 12,5 mm (constantes CARRIER_PIN_*) : ils traversent les trous de la carte (fente 1,26 mm).
-- Piece 4 : plaque PLEINE de 5,36 mm (COVER_THICKNESS), 4 trous borgnes dia 2,25 x 1,4 mm (COVER_PIN_HOLE_*, jeu 0,125 mm/cote) + fenetre objectif 9,4 mm centree sur l'axe (meme repere que les pions). Pas de poche 11 x 11.
+- Piece 4 : plaque PLEINE de 5,36 mm (COVER_THICKNESS), 4 trous borgnes dia 2,25 x 1,4 mm (COVER_PIN_HOLE_*, jeu 0,125 mm/cote) + fenetre objectif 9,4 mm decalee de +6,15 mm en Z (axe optique sur la rangee de trous, dessin officiel ; meme repere que les pions) ; jupe d'emboitement : 2 rails lateraux 1,2 mm, jeu 0,15 mm, capot 28,2 mm de large. Pas de poche 11 x 11.
 - Impression 3+5 : pions vers le HAUT (dos sur le plateau), supports arborescents legers sous le dos seulement, bloques dans la fente, la poche composants et la douille. Impression 4 : face arriere a plat (trous vers le plateau, sans supports) ; version cadre : bout du cadre a plat, trous vers le haut.
 - Non verifie : impression, ajustement reel des pions (carte ~2,2 mm), position reelle de l'axe optique, 4,24 mm d'objectif au-dela du capot (estime).
 

@@ -225,19 +225,27 @@ CAM_COMPONENT_HEIGHT = 4.25  # board + components, connector side (measured)
 CAM_COMPONENT_CLEARANCE_DEPTH = CAM_COMPONENT_HEIGHT + 0.3  # rear relief budget
 # Part 4 is a solid plate 5.36 mm thick (user), with 4 blind pin holes.
 COVER_THICKNESS = 5.36
+# Skirt (rim) on the cover's rear side wrapping the carrier board so 3+5 and 4 nest:
+# inner opening = board + 2 x 0.15 mm, wall 1.2 mm, no supports (vertical walls).
+COVER_SKIRT_CLEARANCE = 0.15
+COVER_SKIRT_WALL = 1.20
+COVER_RAIL_MIN_Z = 9.70  # above the base shelf lip (top at z 9.4)
 # Camera pins now live on the carrier (3+5); the cover only has blind holes.
 COVER_PIN_HOLE_DIAMETER = 2.25  # carrier pin 2.00 + 0.25: 0.125 mm/side insertion clearance
 COVER_PIN_ENGAGEMENT = 1.20  # pin length inside the cover
 COVER_PIN_HOLE_DEPTH = COVER_PIN_ENGAGEMENT + 0.20
 # Lens window of the cover (part 4). Barrel ~8.5 mm is a VISUAL estimate (not
 # measured); window = barrel + 2 x 0.45 clearance. Offsets are relative to the
-# hole-pattern centre (+X right, +Z up) and are manual tuning knobs: 0/0 is an
-# assumption, the true optical axis offset is not measured.
+# hole-pattern centre (+X right, +Z up; +Z = side away from the FPC connector).
+# Single reference: official Camera Module 3 mechanical drawing (PDF vector
+# data): holes 21 x 12.5, lens axis centred in X and 14.5 mm from the connector
+# edge = on the far hole row, i.e. 12.5/2 - 0.1 = 6.15 mm above pattern centre.
+# Which PCB edge is 'up' in the print is an assumption (connector at bottom).
 LENS_BARREL_SIZE = 8.50
 LENS_CLEARANCE_PER_SIDE = 0.45
 LENS_HOLE_DIAMETER = LENS_BARREL_SIZE + 2 * LENS_CLEARANCE_PER_SIDE  # 9.40
 LENS_OFFSET_X = 0.0
-LENS_OFFSET_Z = 0.0
+LENS_OFFSET_Z = 6.15
 
 # Barn doors (part 4 hood). The doors must sit IN FRONT of the lens glass, so
 # a hollow standoff lifts the door frame above the barrel; the frame holds two
@@ -974,6 +982,38 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
         y=cover_center_y,
         z=cover_bottom_z,
     )
+    # Side rails (left/right) wrap the carrier board edges; they start above
+    # the base shelf lip (COVER_RAIL_MIN_Z) and the carrier is wider than the
+    # camera at the bottom/top, so no top/bottom rails.
+    rail_z0 = COVER_RAIL_MIN_Z
+    rail_h = cover_bottom_z + CAM_HOUSING_HEIGHT - rail_z0
+    skirt_depth = CAM_PCB_THICKNESS + 1.50
+    rails = []
+    for sign in (-1, 1):
+        x_in = CAM_HOUSING_WIDTH / 2 + COVER_SKIRT_CLEARANCE
+        x_out = x_in + COVER_SKIRT_WALL
+        wing_in = CAM_HOUSING_WIDTH / 2 - 0.2
+        rails.append(
+            make_box(
+                x_out - x_in,
+                skirt_depth + 0.1,
+                rail_h,
+                x=sign * (x_in + x_out) / 2,
+                y=cover_back_y + (skirt_depth - 0.1) / 2,
+                z=rail_z0,
+            )
+        )
+        rails.append(
+            make_box(
+                x_out - wing_in,
+                COVER_THICKNESS,
+                rail_h,
+                x=sign * (wing_in + x_out) / 2,
+                y=cover_center_y,
+                z=rail_z0,
+            )
+        )
+    cover_plate = fuse(cover_plate, *rails)
 
     cover_front_y = cover_back_y - COVER_THICKNESS
     lens_hole = BRepPrimAPI_MakeCylinder(

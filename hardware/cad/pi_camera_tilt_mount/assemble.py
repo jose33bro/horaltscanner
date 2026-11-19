@@ -58,7 +58,7 @@ REMOVED_STRIP_X = (28.05 - 25.5) / 2  # plate 5 overhang per side beyond the car
 # Contacts that are part of the design (not defects).
 EXPECTED = {
     frozenset({"rod", "base"}): "thread flank overlap above limit",
-    frozenset({"carrier", "cover"}): "cover pins press-fit in the carrier holes",
+    frozenset({"carrier", "cover"}): "cover pin holes receive the carrier pins",
 }
 THREAD_PITCH = 0.8
 THREAD_OVERLAP_LIMIT = 0.5  # mm3, tessellation noise only

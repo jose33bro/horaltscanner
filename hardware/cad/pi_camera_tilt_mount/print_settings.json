@@ -83,9 +83,31 @@
       "walls": 4,
       "speed_mm_s": 40,
       "supports": "non",
-      "orientation": "face arriere a plat, 4 pions clips vers le haut",
-      "tolerances": "4 pions pour trous 2,5 mm (clip par friction); ouverture objectif 11 mm",
-      "header_orientation": "pions en haut;sans sup"
+      "orientation": "bout du cadre a volets (avant) a plat sur le plateau, 4 pions clips vers le haut",
+      "tolerances": "4 pions pour trous 2,5 mm (clip par friction); fenetre objectif 9,4 mm; fentes volets 1,1 mm; ponts courts a verifier a l impression",
+      "header_orientation": "cadre plat;sans sup"
+    },
+    "camera_barn_door_x_x2.stl": {
+      "layer_height_mm": 0.12,
+      "infill_percent": 100,
+      "infill_pattern": "lines",
+      "walls": 3,
+      "speed_mm_s": 40,
+      "supports": "non",
+      "orientation": "a plat, imprimer 2 exemplaires (volets gauche/droite)",
+      "tolerances": "epaisseur 0,9 mm pour fente 1,1 mm",
+      "header_orientation": "a plat x2;sans sup"
+    },
+    "camera_barn_door_z_x2.stl": {
+      "layer_height_mm": 0.12,
+      "infill_percent": 100,
+      "infill_pattern": "lines",
+      "walls": 3,
+      "speed_mm_s": 40,
+      "supports": "non",
+      "orientation": "a plat, imprimer 2 exemplaires (volets haut/bas)",
+      "tolerances": "epaisseur 0,9 mm pour fente 1,1 mm",
+      "header_orientation": "a plat x2;sans sup"
     },
     "ball_screw_M5x40_ball6.5.stl": {
       "layer_height_mm": 0.12,

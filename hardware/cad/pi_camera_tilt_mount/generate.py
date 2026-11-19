@@ -215,6 +215,33 @@ LENS_CLEARANCE_PER_SIDE = 0.45
 LENS_HOLE_DIAMETER = LENS_BARREL_SIZE + 2 * LENS_CLEARANCE_PER_SIDE  # 9.40
 LENS_OFFSET_X = 0.0
 LENS_OFFSET_Z = 0.0
+
+# Barn doors (part 4 hood). The doors must sit IN FRONT of the lens glass, so
+# a hollow standoff lifts the door frame above the barrel; the frame holds two
+# guide layers (X doors behind, Z doors in front). Doors are flat plates that
+# slide in slots open on the sides (friction fit, no screws).
+LENS_PROTRUSION = (
+    CAM_TOTAL_THICKNESS - CAM_PCB_BARE_THICKNESS - CAM_PCB_SLOT_CLEARANCE - COVER_THICKNESS
+)  # lens glass above the cover front face (~8.0)
+HOOD_LENS_GAP = 0.50
+HOOD_STANDOFF_DEPTH = LENS_PROTRUSION + HOOD_LENS_GAP
+HOOD_WALL = 1.60  # standoff wall thickness
+DOOR_THICKNESS = 0.90
+DOOR_SLOT_CLEARANCE = 0.20  # total, added to the slot thickness
+DOOR_SLOT_MARGIN = 0.40  # total, added to the slot's other dimension
+DOOR_RIB = 0.80  # solid layer between/in front of slots
+DOOR_LENGTH = 10.0  # sliding direction
+# Open aperture of the frame at the fully-open position. Sized so the
+# 102 x 67 deg field of view is not clipped by the frame itself.
+FRAME_BORE_WIDTH = 18.0
+FRAME_BORE_HEIGHT = 17.0
+DOOR_X_HEIGHT = FRAME_BORE_HEIGHT + 2.0  # left/right doors, Z extent
+DOOR_Z_WIDTH = FRAME_BORE_WIDTH + 2.0  # top/bottom doors, X extent
+DOOR_SLOT_DEPTH = DOOR_THICKNESS + DOOR_SLOT_CLEARANCE
+DOOR_STACK_DEPTH = 2 * DOOR_SLOT_DEPTH + 2 * DOOR_RIB
+# Closing travel: from fully open (door edge at the bore edge) to the axis.
+DOOR_TRAVEL_X = FRAME_BORE_WIDTH / 2
+DOOR_TRAVEL_Z = FRAME_BORE_HEIGHT / 2
 # Slightly undersized vs. CAM_MOUNT_HOLE_DIAMETER (2.50mm) for a snug push
 # fit directly against the PCB's rigid holes.
 CLIP_PIN_DIAMETER = 2.30
@@ -880,7 +907,74 @@ def make_camera_front_cover() -> TopoDS_Shape:
     ]
 
     cover = fuse(cover_plate, *pins)
-    return cut(cover, lens_hole)
+    cover = cut(cover, lens_hole)
+
+    axis_x = LENS_OFFSET_X
+    axis_z = holes.hole_center_z + LENS_OFFSET_Z
+    cover_center_z = cover_bottom_z + CAM_HOUSING_HEIGHT / 2
+    standoff = cut(
+        make_box(
+            CAM_HOUSING_WIDTH,
+            HOOD_STANDOFF_DEPTH,
+            CAM_HOUSING_HEIGHT,
+            y=cover_front_y - HOOD_STANDOFF_DEPTH / 2,
+            z=cover_bottom_z,
+        ),
+        make_box(
+            CAM_HOUSING_WIDTH - 2 * HOOD_WALL,
+            HOOD_STANDOFF_DEPTH + 2,
+            CAM_HOUSING_HEIGHT - 2 * HOOD_WALL,
+            y=cover_front_y - HOOD_STANDOFF_DEPTH / 2,
+            z=cover_bottom_z + HOOD_WALL,
+        ),
+    )
+
+    stack_y0 = cover_front_y - HOOD_STANDOFF_DEPTH
+    stack = make_box(
+        CAM_HOUSING_WIDTH,
+        DOOR_STACK_DEPTH,
+        CAM_HOUSING_HEIGHT,
+        y=stack_y0 - DOOR_STACK_DEPTH / 2,
+        z=cover_bottom_z,
+    )
+    bore = make_box(
+        FRAME_BORE_WIDTH,
+        DOOR_STACK_DEPTH + 2,
+        FRAME_BORE_HEIGHT,
+        x=axis_x,
+        y=stack_y0 - DOOR_STACK_DEPTH / 2,
+        z=axis_z - FRAME_BORE_HEIGHT / 2,
+    )
+    # Rear layer: X doors (left/right), slot open through both sides.
+    slot_x_doors = make_box(
+        CAM_HOUSING_WIDTH + 2,
+        DOOR_SLOT_DEPTH,
+        DOOR_X_HEIGHT + DOOR_SLOT_MARGIN,
+        y=stack_y0 - DOOR_SLOT_DEPTH / 2,
+        z=axis_z - (DOOR_X_HEIGHT + DOOR_SLOT_MARGIN) / 2,
+    )
+    # Front layer: Z doors (top/bottom), slot open through top and bottom.
+    slot_z_y = stack_y0 - DOOR_SLOT_DEPTH - DOOR_RIB
+    slot_z_doors = make_box(
+        DOOR_Z_WIDTH + DOOR_SLOT_MARGIN,
+        DOOR_SLOT_DEPTH,
+        CAM_HOUSING_HEIGHT + 2,
+        x=axis_x,
+        y=slot_z_y - DOOR_SLOT_DEPTH / 2,
+        z=cover_bottom_z - 1,
+    )
+    stack = cut(cut(cut(stack, bore), slot_x_doors), slot_z_doors)
+    return fuse(cover, standoff, stack)
+
+
+def make_barn_door_x() -> TopoDS_Shape:
+    """Left/right door (print 2x), flat: X = sliding length, Y = height."""
+    return make_box(DOOR_LENGTH, DOOR_X_HEIGHT, DOOR_THICKNESS, z=0)
+
+
+def make_barn_door_z() -> TopoDS_Shape:
+    """Top/bottom door (print 2x), flat: X = width, Y = sliding length."""
+    return make_box(DOOR_Z_WIDTH, DOOR_LENGTH, DOOR_THICKNESS, z=0)
 
 
 def make_ball(center: gp_Pnt, radius: float) -> TopoDS_Shape:
@@ -1278,6 +1372,8 @@ if __name__ == "__main__":
     export_model(make_wheel_crank(), "wheel_crank_50mm_square_m3.stl")
     export_model(make_camera_carrier_with_plate(), "camera_carrier_plate_v4_onepiece.stl")
     export_model(make_camera_front_cover(), "camera_front_cover_v3_clip.stl")
+    export_model(make_barn_door_x(), "camera_barn_door_x_x2.stl")
+    export_model(make_barn_door_z(), "camera_barn_door_z_x2.stl")
     export_model(make_ball_screw(), "ball_screw_M5x40_ball6.5.stl")
     from stamp_stl_settings import stamp_all
 

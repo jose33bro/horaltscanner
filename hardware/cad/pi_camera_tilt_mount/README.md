@@ -305,3 +305,12 @@ Les mentions "20,87 x 12,33" ci-dessus sont obsoletes : le motif de trous est 21
 = `LENS_HOLE_DIAMETER` 9,40 mm (avant : 11,00). Centre : centre du motif de trous (21 x 12,5, doc)
 + `LENS_OFFSET_X` / `LENS_OFFSET_Z` (0 / 0 par defaut, hypothese, a regler a la main : la position
 reelle de l'axe optique n'est pas mesuree). Hauteur totale 10,86 mm non utilisee ici.
+
+## Volets « barn doors » (pièce 4 + 2 plaques X + 2 plaques Z)
+
+**Faisabilité** : la paroi du capot (1,6 mm) est trop fine pour des rainures, et l'objectif dépasse d'environ 8,0 mm de la face avant. Les volets doivent être devant la lentille pour cadrer. Le capot reçoit donc un fourreau creux (profondeur 8,5 mm) puis un cadre à deux couches de fentes (volets gauche/droite derrière, haut/bas devant).
+
+- Constantes dans `generate.py` : `DOOR_THICKNESS` 0,9, `DOOR_SLOT_CLEARANCE` 0,2, `DOOR_TRAVEL_X` 9, `DOOR_TRAVEL_Z` 8,5, `FRAME_BORE_WIDTH/HEIGHT` 18 × 17, `HOOD_STANDOFF_DEPTH` 8,5.
+- STL séparés, à plat, sans supports : `camera_barn_door_x_x2.stl` (10 × 19 × 0,9, imprimer 2) et `camera_barn_door_z_x2.stl` (20 × 10 × 0,9, imprimer 2).
+- Capot : bbox 25,50 × 16,86 × 24,50 mm ; imprimé bout du cadre à plat, pions vers le haut.
+- Non vérifié : impression, friction des volets, ponts courts des fentes, vignettage du cadre sur les coins du champ ~120° (H 102°, V 67°). Pas de vis M3 / trous oblongs (glissement par friction seulement).

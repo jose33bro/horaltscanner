@@ -144,8 +144,8 @@ def check_lens_square() -> list[str]:
         print(f"FAIL cannot isolate the square recess: {recess}")
         return ["recess"]
     c = g.LENS_HOUSING_CLEARANCE
-    conn = recess[0][0] + c - conn_edge_z + g.COVER_LENS_DROP_Z  # drop added back: lens-axis reference
-    far = far_edge_z - (recess[0][1] - c) - g.COVER_LENS_DROP_Z
+    conn = recess[0][0] + c - conn_edge_z
+    far = far_edge_z - (recess[0][1] - c)
     if not (mesh.bounds[0][2] + 1.0 < recess[0][0] and recess[0][1] < mesh.bounds[1][2]):
         print('FAIL recess leaves the cover')
         return ['recess bounds']
@@ -159,7 +159,7 @@ def check_lens_square() -> list[str]:
         print(f"{'OK  ' if ok else 'FAIL'} cover {name}: {got:.2f} mm (min {want})")
         if not ok:
             errs.append(name)
-    for name, got, want in (("connector edge", conn, 4.11), ("hole-side edge", far, 6.86)):
+    for name, got, want in (("connector edge", conn, 4.11 - g.COVER_LENS_DROP_Z), ("hole-side edge", far, 6.86 + g.COVER_LENS_DROP_Z)):
         ok = abs(got - want) <= 0.2
         print(f"{'OK  ' if ok else 'FAIL'} lens square {name}: {got:.2f} mm (user {want})")
         if not ok:

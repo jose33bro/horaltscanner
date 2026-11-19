@@ -66,7 +66,11 @@ LOWER_RAIL_FRONT_CUT_DEPTH = 3.00
 # constants) so the CSI ribbon continues straight down through the shelf at
 # its full width right under the carrier's through-slot, instead of necking
 # down to a narrower opening and getting pinched/bent off-axis.
-CABLE_PASSAGE_WIDTH = 16.00
+# Ribbon/connector span measured with the caliper (20.72 mm) + 0.30 mm clearance;
+# the shelf passage was 16.00 (printed 15.85), too narrow for the connector.
+CAM_FFC_SPAN = 20.72
+CAM_FFC_SPAN_CLEARANCE = 0.30
+CABLE_PASSAGE_WIDTH = CAM_FFC_SPAN + CAM_FFC_SPAN_CLEARANCE  # 21.02
 CABLE_PASSAGE_HEIGHT = 5.00
 CABLE_PASSAGE_Y_OFFSET = 8.00
 
@@ -162,7 +166,14 @@ CAM_FFC_WIDTH_CLEARANCE = 0.30
 CAM_FFC_THICKNESS_CLEARANCE = 0.20
 # 16 mm stays: it must match the shelf's CABLE_PASSAGE_WIDTH and is
 # far above the required 7.43 + 0.30 = 7.73 mm.
+# Narrow section (between the upper mounting holes); the lower, wide section
+# (CARRIER_CABLE_WIDE_WIDTH) sits below the lower mounting holes.
 CARRIER_CABLE_CHANNEL_WIDTH = 16.00
+CARRIER_CABLE_WIDE_WIDTH = CAM_FFC_SPAN + CAM_FFC_SPAN_CLEARANCE  # 21.02
+CARRIER_CABLE_WIDE_HOLE_MARGIN = 0.50  # solid left under the lower holes
+# Rear component relief pocket (front face of the carrier, PCB side).
+CARRIER_COMPONENT_POCKET_DEPTH = 1.40  # of 2.00 carrier; 0.6 mm wall remains
+CARRIER_COMPONENT_POCKET_WALL_X = 0.80  # solid left around the M3 holes
 assert CARRIER_CABLE_CHANNEL_WIDTH >= CAM_FFC_WIDTH + CAM_FFC_WIDTH_CLEARANCE
 CARRIER_CABLE_CHANNEL_DEPTH = CAM_FFC_THICKNESS + CAM_FFC_THICKNESS_CLEARANCE  # 1.02
 CARRIER_CABLE_CHANNEL_MARGIN_ABOVE_CONNECTOR = 3.00
@@ -843,6 +854,32 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
         z=channel_through_top_z,
     )
 
+    # Wide through-slot under the lower mounting holes: passes the 20.72 mm
+    # connector/ribbon span (the narrow 16 mm slot above stays between holes).
+    wide_top_z = (
+        hole_bottom_z - CAM_MOUNT_HOLE_DIAMETER / 2 - CARRIER_CABLE_WIDE_HOLE_MARGIN
+    )
+    cable_channel_wide = make_box(
+        CARRIER_CABLE_WIDE_WIDTH,
+        CARRIER_THICKNESS + 2,
+        wide_top_z - MATERIAL_THICKNESS,
+        y=carrier_center_y,
+        z=MATERIAL_THICKNESS,
+    )
+    # Component relief: board back components (up to 4.25 mm) cannot fit in a
+    # 2 mm carrier, so recess the PCB side between the holes as far as the
+    # wall allows (the carrier front is already pressed against the PCB).
+    pocket_half_x = mount_hole_x - CAM_MOUNT_HOLE_DIAMETER / 2 - CARRIER_COMPONENT_POCKET_WALL_X
+    pocket_bottom_z = wide_top_z
+    pocket_top_z = hole_top_z - CAM_MOUNT_HOLE_DIAMETER / 2 - CARRIER_COMPONENT_POCKET_WALL_X
+    component_pocket = make_box(
+        2 * pocket_half_x,
+        CARRIER_COMPONENT_POCKET_DEPTH,
+        pocket_top_z - pocket_bottom_z,
+        y=carrier_front_y + CARRIER_COMPONENT_POCKET_DEPTH / 2,
+        z=pocket_bottom_z,
+    )
+
     carrier = cut(carrier, pivot_hole)
     carrier = cut(cut(carrier, top_left_hole), top_right_hole)
     carrier = cut(cut(carrier, bottom_left_hole), bottom_right_hole)
@@ -862,6 +899,8 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
             ).Shape(),
         )
     carrier = cut(carrier, cable_channel_through)
+    carrier = cut(carrier, cable_channel_wide)
+    carrier = cut(carrier, component_pocket)
     carrier = cut(carrier, connector_window)
     return cut(carrier, cable_channel_groove)
 

@@ -342,3 +342,10 @@ Constantes `TURNTABLE_*`, `FOV_MARGIN`, `DOOR_PLANE_AHEAD_OF_LENS_MM` dans `gene
 - `camera_front_cover_v3_clip_with_frame.stl` : avec fourreau + cadre à volets, 25,50 × 16,86 × 24,50 mm ; seule version compatible avec `camera_barn_door_x_x2.stl` / `camera_barn_door_z_x2.stl`.
 - L'assemblage (`assemble.py`) utilise la version choisie par `COVER_WITH_FRAME` (True par défaut) ; les previews montrent donc la version avec cadre. L'ancien `camera_front_cover_v3_clip.stl` est supprimé.
 
+
+## Correctif après impression de la pièce 3+5
+
+- Passage de nappe : **15,85 mm imprimé (16,00 dans `generate.py`) → 20,72 + 0,30 = 21,02 mm** (`CAM_FFC_SPAN`, `CAM_FFC_SPAN_CLEARANCE`). Utilisé par `CABLE_PASSAGE_WIDTH` (base 8) et `CARRIER_CABLE_WIDE_WIDTH` (fente traversante du berceau, z 3,2 → 12,2 mm, sous les trous du bas à z 13,96). Au-dessus la fente reste à 16 mm (`CARRIER_CABLE_CHANNEL_WIDTH`) entre les trous (entraxe doc 21 × 12,5 conservé).
+- Composants : poche de dégagement côté carte (`CARRIER_COMPONENT_POCKET_DEPTH` 1,40 mm sur 2,00, 16,9 mm de large, z 12,2 → 24,4 mm), + fenêtre connecteur existante. Les 4,25 mm de composants ne tiennent pas dans 2 mm : le reste du dégagement dépend de l'épaisseur du capot/entretoise, non modifiée.
+- Cohérence : carte 25,16 × 24,16, 1 solide étanche, 25,5 × 8,29 × 35,0 mm, interférence OK, `verify_stl.py` OK.
+

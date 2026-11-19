@@ -284,3 +284,17 @@ l'entraxe des trous et non la largeur du connecteur.
 Le modele utilisait a tort 21 mm (motif carre) sur Z. Motif de trous : 20,87 (X) x 12,33 (Z).
 Le centre du motif est inchange, donc contour PCB, capot et nappe ne bougent pas ; seuls les
 trous/pions du berceau et du capot se rapprochent (z ~ 14,0 et 26,4).
+
+### Origine des valeurs camera (reference ; remplace les sections precedentes sur les entraxes)
+
+Decision du user : les entraxes de trous suivent la doc officielle (plus precise), pas le pied a coulisse.
+
+| Valeur | Source |
+|---|---|
+| Entraxe trous X x Z : 21,00 x 12,50 mm (`CAM_MOUNT_HOLE_SPACING_X`, `CAM_MOUNT_HOLE_SPACING`) | doc officielle |
+| Carte 25,16 x 24,16 ; epaisseur totale 10,86 ; PCB nue 1,06 ; composants 4,25 | pied a coulisse |
+| Languette FFC 7,43 x 8,88 x 0,82 ; hauteur connecteur 2,45 | pied a coulisse |
+| 20,87 mm (`CAM_FFC_CONNECTOR_WIDTH`) | pied a coulisse, enregistre seulement |
+| Jeux (0,17 / 0,20 / 0,30), fente PCB 1,26, objectif Ø11 | choix de conception / estimation |
+
+Les mentions "20,87 x 12,33" ci-dessus sont obsoletes : le motif de trous est 21,00 x 12,50 mm.

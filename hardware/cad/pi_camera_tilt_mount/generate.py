@@ -125,15 +125,15 @@ CAM_TOTAL_THICKNESS = 10.86  # PCB + lens, measured
 CAM_FIT_CLEARANCE_PER_SIDE = 0.17  # PLA clearance (0.15-0.20); housing = PCB + 2x
 CAM_HOUSING_WIDTH = CAM_PCB_WIDTH + 2 * CAM_FIT_CLEARANCE_PER_SIDE  # 25.50
 CAM_HOUSING_HEIGHT = CAM_PCB_HEIGHT + 2 * CAM_FIT_CLEARANCE_PER_SIDE  # 24.50
-# Hole pitch along X measured by the user (caliper 20.87 mm on the board
-# back, same dimension as the FFC connector width); pitch along Z NOT
-# measured: official Camera Module 3 drawing value.
-CAM_MOUNT_HOLE_SPACING_X = 20.87
-# Pitch along Z measured by the user (~12.33 mm, approximate); the official
-# drawing says 12.5. The model previously used 21.00 here, which was wrong.
-CAM_MOUNT_HOLE_SPACING = 12.33
-# Connector width reading; the carrier slot stays CARRIER_CABLE_CHANNEL_WIDTH
-# because 20.87 + 0.30 would run into the M3 holes (same X pitch).
+
+# Hole pitch X x Z: official Camera Module 3 drawing values (user decision:
+# the datasheet is more precise than the caliper readings 20.87 / ~12.33).
+CAM_MOUNT_HOLE_SPACING_X = 21.00
+# The model used 21.00 along Z before, which was wrong.
+CAM_MOUNT_HOLE_SPACING = 12.50
+# Caliper reading 20.87 mm on the board back (connector width, interpretation
+# unconfirmed); the carrier slot stays CARRIER_CABLE_CHANNEL_WIDTH since
+# 20.87 + 0.30 would run into the M3 holes.
 CAM_FFC_CONNECTOR_WIDTH = 20.87
 CAM_MOUNT_HOLE_DIAMETER = 2.50
 CARRIER_THICKNESS = 2.00
@@ -327,7 +327,7 @@ class CameraHoleLayout:
 
 
 def camera_hole_layout(ear: EarGeometry) -> CameraHoleLayout:
-    """Shared Pi Camera V3 mounting-hole positions (20.87 x 12.33 mm
+    """Shared Pi Camera V3 mounting-hole positions (21.00 x 12.50 mm
     pattern), used by both the carrier and the front cache so pins/screws
     line up. The pattern centre stays where the old 21 mm square sat, so the
     PCB outline, cover and ribbon geometry do not move."""

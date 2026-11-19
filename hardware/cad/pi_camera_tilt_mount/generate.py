@@ -270,7 +270,7 @@ LENS_HOUSING_SIZE = LENS_SQUARE_SIZE
 LENS_HOUSING_CLEARANCE = 0.20
 LENS_RECESS_SIZE = LENS_HOUSING_SIZE + 2 * LENS_HOUSING_CLEARANCE  # 13.59
 LENS_RECESS_FRONT_WALL = 1.20
-COVER_LENS_DROP_Z = 3.50  # user: lower recess + window 3-4 mm (-z), same x axis as the pin holes
+COVER_LENS_DROP_Z = 4.00  # user: lower recess + window 4 mm (vs. pre-2373fca print) (-z), same x axis as the pin holes
 LENS_RECESS_WIDTH_X = 14.00  # user: 13.59 'voir 14' mm across X (room for the lens connector)
 LENS_RECESS_DEPTH = COVER_THICKNESS - LENS_RECESS_FRONT_WALL  # 4.16
 

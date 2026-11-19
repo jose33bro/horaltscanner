@@ -809,7 +809,18 @@ def make_camera_carrier_with_cover() -> TopoDS_Shape:
         COVER_THICKNESS + 2,
     ).Shape()
 
-    merged = fuse(make_camera_carrier(), cover_plate, bridge, *ribs)
+    carrier_body = make_camera_carrier()
+    # Trim whatever hangs below the cover/PCB footprint (carrier bottom
+    # z = MATERIAL_THICKNESS .. cover_bottom_z): both plates now end flush.
+    overhang = make_box(
+        CAM_PCB_WIDTH + 2,
+        CARRIER_THICKNESS + 2,
+        cover_bottom_z - MATERIAL_THICKNESS + 1,
+        y=carrier_center_y,
+        z=MATERIAL_THICKNESS - 1,
+    )
+    carrier_body = cut(carrier_body, overhang)
+    merged = fuse(carrier_body, cover_plate, bridge, *ribs)
     return cut(merged, lens_hole)
 
 

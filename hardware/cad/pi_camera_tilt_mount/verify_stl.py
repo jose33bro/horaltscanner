@@ -28,7 +28,7 @@ EXPECTED_EXTENTS = {
     HERE / "stl" / "fit_test_rear_cavity_30.45x38.2.stl": (30.45, 3.20, 38.20),
     HERE / "stl" / "adjustment_rod_M5x50_ball6.5_square_m3.stl": (6.50, 6.50, 60.50),
     HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 11.00),
-    HERE / "stl" / "camera_carrier_cover_v4_onepiece.stl": (25.00, 11.19, 35.00),
+    HERE / "stl" / "camera_carrier_cover_v4_onepiece.stl": (25.00, 11.19, 29.99),
     HERE / "stl" / "ball_screw_M5x40_ball6.5.stl": (6.50, 6.50, 42.50),
     HERE / "stl" / "camera_support_plate_28.05x7x1.stl": (28.05, 8.50, 5.00),
     HERE / "stl" / "fit_test_plate_slot_28.45x7.4.stl": (34.45, 13.40, 8.00),

@@ -151,7 +151,9 @@ berceau (orange) par le pont du haut.
   coulisser); les 4 trous Ø 2,50 mm du berceau sont conservés;
 - inchangés : berceau 25 × ~29 × 2 mm, tenon 4,80 mm, trous d'axe, patin Ø 12
   × 0,6 mm, avant-trous M3 de la plaque 5, fente nappe. Emprise STL
-  25,00 × 11,19 × 35,00 mm, un seul solide, volume ≈ 2202 mm³.
+  25,00 × 11,19 × 29,99 mm, un seul solide, volume ≈ 2112 mm³. Débord retiré :
+  la partie basse du berceau (z 3,2 → 8,21, ~90 mm³) qui dépassait sous le
+  capot/la carte ; la pièce finit maintenant à ras en bas (z = 8,21).
 
 Pourquoi une fente coulissante et non une charnière souple : le capot est à
 1,2 mm de la carte, une charnière PLA de cette taille casserait au premier

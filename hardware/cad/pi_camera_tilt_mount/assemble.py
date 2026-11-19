@@ -2,7 +2,8 @@
 """Assemble the camera tilt mount from the printable STL files.
 
 Part numbers follow the user's drawing:
-  1 adjustment rod, 3 camera carrier, 4 front cover (clipped on 3),
+  1 adjustment rod, 3 camera carrier + front cover (ONE printed part; the old
+  separate part 4 cover is merged into 3),
   5 ball-socket support plate (snapped on the rod ball, resting on 3),
   8 base (M5 hole + hinge ears), 9 wheel/crank (on the rod square).
 
@@ -29,6 +30,7 @@ from stamp_stl_settings import stamp_all
 HERE = Path(__file__).parent
 STL = HERE / "stl"
 PREVIEW = HERE / "preview"
+COVER_TINT = "#3d405b"  # former part 4 (cover) area inside merged part 3
 
 PLATE_FRONT_Y = -1.60  # front face of the base plate
 CARRIER_BACK_Y = -10.60  # back face of the carrier (ball pad side)
@@ -43,8 +45,7 @@ BALL_CENTER_ABOVE_PLATE = 1.0 + np.sqrt(BALL_RADIUS**2 - 2.65**2)
 # name -> (part no., stl, colour)
 PARTS = {
     "base": (8, "pi_camera_tilt_base.stl", "#9aa5b1"),
-    "carrier": (3, "camera_carrier_v3_25x24_tab4.8.stl", "#e07a5f"),
-    "cover": (4, "camera_front_cover_v3_clip.stl", "#3d405b"),
+    "carrier": (3, "camera_carrier_cover_v4_onepiece.stl", "#e07a5f"),
     "rod": (1, "adjustment_rod_M5x50_ball6.5_square_m3.stl", "#81b29a"),
     "support_plate": (5, "camera_support_plate_28.05x7x1.stl", "#f2cc8f"),
     "wheel": (9, "wheel_crank_50mm_square_m3.stl", "#4f9dde"),
@@ -53,7 +54,6 @@ PARTS = {
 # Contacts that are part of the design (not defects).
 EXPECTED = {
     frozenset({"rod", "base"}): "thread flank overlap above limit",
-    frozenset({"carrier", "cover"}): "cover pins press-fit in the carrier holes",
 }
 THREAD_PITCH = 0.8
 THREAD_OVERLAP_LIMIT = 0.5  # mm3, tessellation noise only
@@ -66,7 +66,7 @@ def rot_x(deg: float) -> np.ndarray:
 def build() -> dict[str, trimesh.Trimesh]:
     meshes = {k: trimesh.load(STL / v[1]) for k, v in PARTS.items()}
 
-    # Base, carrier and cover STL already share the assembled frame.
+    # Base and carrier+cover STL already share the assembled frame.
     # Rod: local +Z (ball) -> world -Y, ball centre on the support plate.
     ball_y = CARRIER_BACK_Y + BALL_CENTER_ABOVE_PLATE
     rod_origin_y = ball_y + ROD_BALL_CENTER_LOCAL_Z
@@ -107,8 +107,14 @@ def render(meshes: dict[str, trimesh.Trimesh], name: str, elev: float, azim: flo
     for key, mesh in meshes.items():
         shade = np.clip(mesh.face_normals @ light / np.linalg.norm(light), 0, 1) * 0.6 + 0.4
         base = np.array(matplotlib.colors.to_rgb(PARTS[key][2]))
+        face_cols = np.tile(base, (len(mesh.faces), 1))
+        if key == "carrier":
+            # Part 3 is one solid; tint the cover (4) portion in front of the
+            # carrier so the merge joint (top bridge) is visible.
+            front = mesh.triangles_center[:, 1] < CARRIER_BACK_Y - 2.0
+            face_cols[front] = matplotlib.colors.to_rgb(COVER_TINT)
         tris_all.append(mesh.vertices[mesh.faces])
-        cols_all.append(base * shade[:, None])
+        cols_all.append(face_cols * shade[:, None])
     # One collection so matplotlib depth-sorts every triangle together.
     ax.add_collection3d(
         Poly3DCollection(np.vstack(tris_all), facecolors=np.vstack(cols_all), linewidths=0)
@@ -125,7 +131,7 @@ def render(meshes: dict[str, trimesh.Trimesh], name: str, elev: float, azim: flo
     handles = [
         plt.Line2D([0], [0], marker="s", ls="", color=PARTS[k][2], label=f"{PARTS[k][0]} {k}")
         for k in meshes
-    ]
+    ] + [plt.Line2D([0], [0], marker="s", ls="", color=COVER_TINT, label="3 (ex-4 cover zone)")]
     ax.legend(handles=handles, loc="upper left", fontsize=8)
     fig.savefig(PREVIEW / name, dpi=130, bbox_inches="tight")
     plt.close(fig)

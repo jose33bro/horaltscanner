@@ -14,15 +14,16 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
   M3 central dans le carré;
 - `stl/wheel_crank_50mm_square_m3.stl` : roue/crank de 50 mm de diamètre avec
   carré de montage et trou M3 central pour serrage sur plaque de 3 mm;
-- `stl/camera_carrier_v3_25x24_tab4.8.stl` : berceau qui porte la carte Pi
-  Camera Module 3 (noir/NoIR, 25 × 24 mm, 4 trous Ø2,5 mm en carré 21 mm) et
-  se clipse entre les oreilles de la base sur l'axe M3 (tenon Ø 3,40 mm), avec
-  un patin plat au dos où vient appuyer la bille de la tige d'ajustement;
-- `stl/camera_front_cover_v3_clip.stl` : cache avant (côté objectif) qui
-  tient la caméra sur le berceau sans vis — 4 pions se clipsent par
-  pression dans les mêmes 4 trous Ø2,5 mm, en traversant la carte et le
-  berceau, avec une ouverture centrale Ø11 mm pour l'objectif.
-
+- `stl/camera_carrier_cover_v4_onepiece.stl` : **pièce 3 = ancien berceau 3 +
+  ancien cache avant 4, en un seul solide fermé**, fusionnée dans la position
+  assemblée (repère de `assemble.py`). Porte la carte Pi Camera Module 3
+  (noir/NoIR, 25 × 24 mm, 4 trous Ø2,5 mm en carré 21 mm), se clipse entre les
+  oreilles de la base sur l'axe M3 (tenon Ø 3,40 mm) et offre un patin plat au
+  dos pour la bille de la tige. La carte **coulisse par le bas** dans une
+  fente de 1,30 mm entre le berceau et le capot, jusqu'au pont du haut;
+  l'objectif sort par l'ouverture Ø 11 mm. Les anciens fichiers
+  `camera_carrier_v3_25x24_tab4.8.stl` et `camera_front_cover_v3_clip.stl`
+  sont supprimés (obsolètes);
 Les autres fichiers STL éventuellement présents dans ce répertoire ne sont pas
 générés par `generate.py`.
 
@@ -57,8 +58,8 @@ python3 -m pip install numpy trimesh manifold3d matplotlib
 python3 hardware/cad/pi_camera_tilt_mount/assemble.py
 ```
 
-Numérotation du plan : 1 tige, 3 berceau, 4 cache avant (clipsé sur 3),
-5 plaque-support à rotule (posée au dos de 3, bille de 1 dans sa douille),
+Numérotation du plan : 1 tige, 3 berceau + capot avant (pièce unique; l'ancien
+4 est fusionné dans 3, numéro 4 retiré), 5 plaque-support à rotule (posée au dos de 3, bille de 1 dans sa douille),
 8 base, 9 roue (sur le carré de 1). La tige 1 traverse le trou M5 de 8, 3
 pivote sur les oreilles de 8 (axe M3, non modélisé). Filetages réels
 M5 × 0,8 : tige à crête Ø 5,0 / noyau Ø 4,0 (thread 20 mm), trou de 8 alésé
@@ -109,7 +110,7 @@ orientée vers le bas (vers le plateau tournant) au repos, donc le sens
 disponible le plus large (-15°, qui l'incline encore plus vers le bas) est
 celui qui compte le plus.
 
-## Cotes du berceau caméra (`camera_carrier_v3_25x24_tab4.8.stl`)
+## Cotes du berceau caméra (partie berceau de `camera_carrier_cover_v4_onepiece.stl`)
 
 - plaque porte-caméra : 25,00 × ~29,00 × 2,00 mm (hauteur ajustée pour
   rejoindre le bas des oreilles), espacée de 9,00 mm derrière la face avant
@@ -128,19 +129,35 @@ celui qui compte le plus.
   contrairement à une fossette sphérique de même rayon que la bille, dont
   la plage utile ne dépassait que ±2,4° avant perte de contact.
 
-## Cotes du cache avant (`camera_front_cover_v3_clip.stl`)
+## Fusion 3 + 4 (capot intégré, `camera_carrier_cover_v4_onepiece.stl`)
 
-- plaque : 25,00 × 24,00 × 1,60 mm, plaquée contre la face avant de la carte
-  caméra (côté objectif);
-- ouverture centrale Ø 11,00 mm, centrée sur le carré de trous de montage,
-  pour dégager l'objectif;
-- 4 pions de clipsage Ø 2,30 mm (léger serrage dans les trous Ø 2,50 mm de
-  la carte), longueur de pénétration ~2,90 mm (épaisseur carte + berceau,
-  sans atteindre la face arrière du berceau), pointe conique de 0,80 mm pour
-  faciliter l'insertion. Remplace les vis/écrous M2,5 : pousser le cache en
-  face, les pions traversent la carte et se bloquent par friction dans les
-  trous du berceau.
+Fusion faite dans les positions assemblées (mêmes coordonnées que
+`assemble.py`). Vues avant/après dans `preview/` : `before_*.png` (3 et 4
+séparés, ancien assemblage) et `assembly_*.png` (iso avant, iso arrière, côté,
+dessus) où la zone bleu nuit « 3 (ex-4) » est l'ancien capot, jointe au
+berceau (orange) par le pont du haut.
 
+- capot : plaque 25,00 × 24,00 × 1,60 mm devant la carte, ouverture
+  objectif Ø 11,00 mm (inchangée);
+- fente carte : 1,30 mm (carte 1,20 + 0,10 de jeu), ouverte vers le bas et
+  sur les côtés; le capot est décalé de 0,10 mm vers l'avant par rapport à
+  l'ancien 4;
+- pont de jonction : 25,00 × 1,50 mm au-dessus du bord haut de la carte
+  (z = 32,21 → 33,71), du capot (y = −15,50) jusqu'au milieu du berceau
+  (y = −11,60), posé sur le bord haut du berceau; il sert aussi de butée;
+- 2 nervures de serrage 0,70 × 0,15 mm (x = ±12,05, hors carré de trous)
+  qui maintiennent la carte par friction;
+- les 4 pions de clip Ø 2,30 mm sont supprimés (ils empêchaient la carte de
+  coulisser); les 4 trous Ø 2,50 mm du berceau sont conservés;
+- inchangés : berceau 25 × ~29 × 2 mm, tenon 4,80 mm, trous d'axe, patin Ø 12
+  × 0,6 mm, avant-trous M3 de la plaque 5, fente nappe. Emprise STL
+  25,00 × 11,19 × 35,00 mm, un seul solide, volume ≈ 2202 mm³.
+
+Pourquoi une fente coulissante et non une charnière souple : le capot est à
+1,2 mm de la carte, une charnière PLA de cette taille casserait au premier
+pliage; une fente à pont rigide s'imprime sans pièce fragile. La nappe CSI
+se branche après avoir glissé la carte (connecteur accessible par la fente
+traversante du berceau).
 ## Génération
 
 Le générateur paramétrique `generate.py` dépend des bindings OpenCascade
@@ -152,7 +169,7 @@ python3 hardware/cad/pi_camera_tilt_mount/generate.py
 ```
 
 Exécuter la commande depuis la racine du dépôt. Elle vérifie les solides avant
-l'export et remplace les six STL listés ci-dessus.
+l'export et remplace les STL listés ci-dessus.
 
 ## Réglages d'impression (matériau : Creality Hyper PLA blanc)
 
@@ -178,18 +195,16 @@ slicer.
 ## Impression et montage
 
 1. Imprimer d'abord le test d'encombrement à plat et vérifier l'espace arrière.
-2. Imprimer la base avec le grand dos de la plaque contre le plateau.
+2. Imprimer la pièce 3 debout sur son bord bas (supports arborescents légers sous le tenon, brim 3 mm conseillé), puis la base avec le grand dos de la plaque contre le plateau.
 3. Supports **arborescents (tree)**, légers et faciles à retirer : angle de
    surplomb 55°, densité 8-10 %, interface fine d'1 couche à 10 %, distance Z
    0,22 mm (0,18 mm pour le berceau), appuis sur le plateau de préférence, jamais
    dans les filetages M5 ni les trous M3/Ø2,5 (les tiges et vis M5 sont
    imprimées debout, sans support). Retirer à la main ou à la pince fine.
-4. Poser la carte Pi Camera Module 3 contre la face avant du berceau
-   (`camera_carrier_v3_25x24_tab4.8.stl`), trous alignés.
-5. Clipser le cache avant (`camera_front_cover_v3_clip.stl`) par-dessus : les
-   4 pions traversent les trous de la carte et se bloquent par pression dans
-   les trous du berceau — pas de vis ni d'écrou nécessaires.
-6. Installer le berceau (carte + cache) entre les oreilles de la base avec
+4. Glisser la carte Pi Camera Module 3 par le bas dans la fente de la pièce 3
+   (`camera_carrier_cover_v4_onepiece.stl`), objectif vers l'ouverture Ø 11 mm,
+   jusqu'à la butée du pont; puis brancher la nappe CSI par la fente du berceau.
+5. (étape supprimée : le cache 4 est intégré à 3.)6. Installer la pièce 3 (carte incluse) entre les oreilles de la base avec
    l'axe M3 (pivot), sans le bloquer serré pour qu'il puisse encore pivoter.
 7. Visser la tige d'ajustement (`adjustment_rod_M5x50_ball6.5_square_m3.stl`)
    dans le bossage taraudé M5 au dos de la plaque, bille côté caméra, jusqu'à

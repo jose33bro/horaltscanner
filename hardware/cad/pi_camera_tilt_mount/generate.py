@@ -166,21 +166,20 @@ CARRIER_WALL_CLEARANCE = 0.30
 BALL_SOCKET_PAD_RADIUS = 6.00
 BALL_SOCKET_DEPTH = 0.60
 
-# Front cache (lens-side cover): clips onto the camera through the same 4
-# mounting holes instead of screws/nuts. Four printed pins push through the
-# PCB holes and into the carrier's holes (friction/press fit); a central
-# opening clears the lens.
+# Integrated front cover (lens side), printed in ONE piece with the carrier
+# (part 3 = former 3 carrier + 4 cover). The cover plate is joined to the
+# carrier by a top bridge, leaving a slot between them: the PCB slides in
+# from the bottom edge (open side, where the ribbon exits) up to the bridge.
+# The former 4 clip pins would block that slide, so they are gone; the PCB is
+# held by two thin crush ribs on the cover's back face (light friction).
 CAM_PCB_THICKNESS = 1.20
 COVER_THICKNESS = 1.60
 LENS_HOLE_DIAMETER = 11.00
-# Slightly undersized vs. CAM_MOUNT_HOLE_DIAMETER (2.50mm) for a snug push
-# fit directly against the PCB's rigid holes.
-CLIP_PIN_DIAMETER = 2.30
-CLIP_PIN_TIP_DIAMETER = 1.20
-CLIP_PIN_TIP_LENGTH = 0.80
-# How far short of the carrier's back face the pins stop, so they never
-# reach into the 1mm gap in front of the main plate (ball-socket area).
-CLIP_PIN_BACK_MARGIN = 0.30
+PCB_SLOT_CLEARANCE = 0.10  # slot = PCB thickness + this
+COVER_BRIDGE_HEIGHT = 1.50  # bridge above the PCB's top edge
+RETENTION_RIB_WIDTH = 0.70
+RETENTION_RIB_HEIGHT = 0.15  # protrusion into the slot (net 0.05 mm squeeze)
+RETENTION_RIB_X = 12.05  # rib centre, outside the 21 mm hole pattern
 
 # Camera support plate (28.05 x 7 x 1 mm, hardware/mechanical_specs.md) and the
 # M5 x 0.8 ball screw that snaps into its 4-petal socket.
@@ -752,17 +751,22 @@ def make_camera_carrier() -> TopoDS_Shape:
     return cut(carrier, cable_channel_groove)
 
 
-def make_camera_front_cover() -> TopoDS_Shape:
-    """Lens-side cache that clips onto the Pi Camera V3 through the same 4
-    mounting holes used by the carrier, instead of screws/nuts. Four pins
-    push through the PCB's holes and into the carrier's holes (press/
-    friction fit); a central opening clears the lens."""
+def make_camera_carrier_with_cover() -> TopoDS_Shape:
+    """Part 3 (merged carrier + front cover), one closed solid.
+
+    The cover plate sits in front of the carrier with a PCB-thick slot between
+    them, joined by a bridge along the top edge. The camera PCB slides into
+    the slot from the open bottom edge until it stops against the bridge; the
+    lens passes through the cover's round opening and the CSI ribbon leaves
+    through the carrier's bottom slot. Slide the PCB in first, then plug the
+    ribbon through the carrier's through-slot."""
     ear = ear_geometry()
     holes = camera_hole_layout(ear)
 
     carrier_back_y = ear.plate_front_y - CARRIER_STANDOFF_GAP
     carrier_front_y = carrier_back_y - CARRIER_THICKNESS
-    pcb_front_y = carrier_front_y - CAM_PCB_THICKNESS
+    carrier_center_y = carrier_back_y - (CARRIER_THICKNESS / 2)
+    pcb_front_y = carrier_front_y - CAM_PCB_THICKNESS - PCB_SLOT_CLEARANCE
     cover_back_y = pcb_front_y
     cover_center_y = cover_back_y - (COVER_THICKNESS / 2)
     cover_bottom_z = ear.ear_z - CAM_PCB_HEIGHT
@@ -776,6 +780,26 @@ def make_camera_front_cover() -> TopoDS_Shape:
     )
 
     cover_front_y = cover_back_y - COVER_THICKNESS
+    # Bridge: cover front face to carrier mid-thickness, resting on the
+    # carrier's top edge (z = ear_z), above the PCB's top edge.
+    bridge = make_box(
+        CAM_PCB_WIDTH,
+        carrier_center_y - cover_front_y,
+        COVER_BRIDGE_HEIGHT,
+        y=(carrier_center_y + cover_front_y) / 2,
+        z=ear.ear_z,
+    )
+    ribs = [
+        make_box(
+            RETENTION_RIB_WIDTH,
+            RETENTION_RIB_HEIGHT + 0.2,
+            CAM_PCB_HEIGHT - 4.0,
+            x=sign * RETENTION_RIB_X,
+            y=cover_back_y + (RETENTION_RIB_HEIGHT - 0.2) / 2,
+            z=cover_bottom_z + 1.0,
+        )
+        for sign in (-1, 1)
+    ]
     lens_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
             gp_Pnt(0, cover_front_y - 1, holes.hole_center_z),
@@ -785,36 +809,8 @@ def make_camera_front_cover() -> TopoDS_Shape:
         COVER_THICKNESS + 2,
     ).Shape()
 
-    # Pins span the PCB thickness plus most of the carrier thickness,
-    # stopping short of the carrier's back face (ball-socket side).
-    engagement_length = (
-        CAM_PCB_THICKNESS + CARRIER_THICKNESS - CLIP_PIN_BACK_MARGIN
-    )
-    shaft_length = engagement_length - CLIP_PIN_TIP_LENGTH
-
-    def clip_pin(x: float, z: float) -> TopoDS_Shape:
-        shaft = BRepPrimAPI_MakeCylinder(
-            gp_Ax2(gp_Pnt(x, cover_back_y, z), gp_Dir(0, 1, 0)),
-            CLIP_PIN_DIAMETER / 2,
-            shaft_length,
-        ).Shape()
-        tip = BRepPrimAPI_MakeCone(
-            gp_Ax2(gp_Pnt(x, cover_back_y + shaft_length, z), gp_Dir(0, 1, 0)),
-            CLIP_PIN_DIAMETER / 2,
-            CLIP_PIN_TIP_DIAMETER / 2,
-            CLIP_PIN_TIP_LENGTH,
-        ).Shape()
-        return fuse(shaft, tip)
-
-    pins = [
-        clip_pin(-holes.mount_hole_x, holes.hole_top_z),
-        clip_pin(holes.mount_hole_x, holes.hole_top_z),
-        clip_pin(-holes.mount_hole_x, holes.hole_bottom_z),
-        clip_pin(holes.mount_hole_x, holes.hole_bottom_z),
-    ]
-
-    cover = fuse(cover_plate, *pins)
-    return cut(cover, lens_hole)
+    merged = fuse(make_camera_carrier(), cover_plate, bridge, *ribs)
+    return cut(merged, lens_hole)
 
 
 def make_ball(center: gp_Pnt, radius: float) -> TopoDS_Shape:
@@ -1171,8 +1167,7 @@ if __name__ == "__main__":
     export_model(make_fit_test(), "fit_test_rear_cavity_30.45x38.2.stl")
     export_model(make_adjustment_rod(), "adjustment_rod_M5x50_ball6.5_square_m3.stl")
     export_model(make_wheel_crank(), "wheel_crank_50mm_square_m3.stl")
-    export_model(make_camera_carrier(), "camera_carrier_v3_25x24_tab4.8.stl")
-    export_model(make_camera_front_cover(), "camera_front_cover_v3_clip.stl")
+    export_model(make_camera_carrier_with_cover(), "camera_carrier_cover_v4_onepiece.stl")
     export_model(make_ball_screw(), "ball_screw_M5x40_ball6.5.stl")
     export_model(make_camera_support_plate(), "camera_support_plate_28.05x7x1.stl")
     export_model(make_plate_slot_fit_test(), "fit_test_plate_slot_28.45x7.4.stl")

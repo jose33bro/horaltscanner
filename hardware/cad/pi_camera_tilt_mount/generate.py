@@ -248,6 +248,15 @@ LENS_HOLE_DIAMETER = LENS_BARREL_SIZE + 2 * LENS_CLEARANCE_PER_SIDE  # 9.40
 # X: user observation - lens square and optic are centred between the two holes
 # on the ribbon (connector) side, i.e. on the pattern centre line (x = 0).
 LENS_OFFSET_X = 0.0
+# Square recess on the cover's back face for the lens housing. 11.0 mm is the
+# user's figure (drawing ~10.8); NOTE the 4.11/6.86 caliper values imply 13.19
+# along Z, which contradicts it. Housing height above the PCB is not measured:
+# depth is capped by the front wall (>= 1.2 mm around the round window).
+LENS_HOUSING_SIZE = 11.00
+LENS_HOUSING_CLEARANCE = 0.20
+LENS_RECESS_SIZE = LENS_HOUSING_SIZE + 2 * LENS_HOUSING_CLEARANCE  # 11.40
+LENS_RECESS_FRONT_WALL = 1.20
+LENS_RECESS_DEPTH = COVER_THICKNESS - LENS_RECESS_FRONT_WALL  # 4.16
 assert LENS_OFFSET_X == 0.0
 # User caliper: lens square sits 4.11 mm from the connector-side PCB edge and
 # 6.86 mm from the opposite (hole-side) edge => square = 24.16 - 4.11 - 6.86
@@ -1078,6 +1087,15 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     for pin_hole in pin_holes:
         cover = cut(cover, pin_hole)
     cover = cut(cover, lens_hole)
+    lens_recess = make_box(
+        LENS_RECESS_SIZE,
+        LENS_RECESS_DEPTH + 0.5,
+        LENS_RECESS_SIZE,
+        x=LENS_OFFSET_X,
+        y=cover_back_y - LENS_RECESS_DEPTH / 2 + 0.25,
+        z=holes.hole_center_z + LENS_OFFSET_Z - LENS_RECESS_SIZE / 2,
+    )
+    cover = cut(cover, lens_recess)
     if not with_frame:
         return cover
 

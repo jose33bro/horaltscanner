@@ -373,3 +373,5 @@ Constantes `TURNTABLE_*`, `FOV_MARGIN`, `DOOR_PLANE_AHEAD_OF_LENS_MM` dans `gene
 
 
 - Piece 3+5, arriere : capot arriere (CARRIER_REAR_HOOD_WALL 1,2 mm) ferme le haut de la poche composants (z > rotule, profondeur 3,29 mm + peau 1,2 mm), imprime dos a plat, sans supports. Restent ouverts (necessaires) : fente nappe 21,02 mm en bas, passage tige/rotule au centre, zone de poche derriere la plaque de support (z 12-19,7 : fermee par la plaque 5, profondeur utile 3,0 mm < 3,29 mm composants : a verifier sur la vraie carte).
+
+- Piece 4 : evidement carre sur la face arriere autour de la fenetre (LENS_RECESS_SIZE 11,4 mm = boitier 11,0 + 2 x 0,2 ; profondeur 4,16 mm, paroi avant 1,2 mm), centre sur l'axe optique. 11 mm = valeur user (dessin ~10,8) ; les mesures 4,11/6,86 donneraient 13,19 en Z (contradiction a trancher) ; hauteur reelle du boitier non mesuree. Imprime face arriere a plat, sans supports.

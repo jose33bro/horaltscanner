@@ -217,16 +217,14 @@ def main() -> int:
     solid = meshes["carrier"]
     pieces = len(solid.split(only_watertight=False))
     plate_y = CARRIER_BACK_Y + 0.5
-    probes = np.array(
-        [[s * 7.0, plate_y, M5_HOLE_Z] for s in (-1, 1)] + [[0, plate_y, M5_HOLE_Z]]
-    )
-    holes_open = not solid.contains(probes).any()
-    pilots = np.array([[s * 7.0, CARRIER_BACK_Y - 0.7, M5_HOLE_Z] for s in (-1, 1)])
-    pilots_blind = not solid.contains(pilots).any()
+    holes_open = not solid.contains(np.array([[0, plate_y, M5_HOLE_Z]])).any()
+    # The plate is fused: the former M3 holes at x = +-7 must now be solid.
+    pilots = np.array([[s * 7.0, y, M5_HOLE_Z] for s in (-1, 1) for y in (CARRIER_BACK_Y + 0.3, plate_y)])
+    pilots_blind = bool(solid.contains(pilots).all())
     width = float(solid.extents[0])
     print(
         f"carrier+plate: {pieces} solid, watertight {solid.is_watertight}, "
-        f"width {width:.2f} mm, M3/rod holes open: {holes_open}, pilots blind: {pilots_blind}"
+        f"width {width:.2f} mm, rod passage open: {holes_open}, M3 spots solid: {pilots_blind}"
     )
     bad += 0 if pieces == 1 and solid.is_watertight and holes_open and pilots_blind and width < 25.51 else 1
 

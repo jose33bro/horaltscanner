@@ -731,7 +731,8 @@ def make_mount() -> TopoDS_Shape:
     return fuse(cut(cut(cut(mount, pivot_hole), m5_thread_hole), csi_slot), m5_thread_ridge)
 
 
-def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> TopoDS_Shape:
+def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS,
+                        screw_pilots: bool = True) -> TopoDS_Shape:
     """Carries the Pi Camera Module 3 PCB (25 x 24mm, 21mm square hole
     pattern) and provides the hinge tab that slots between the base's ears
     on the M3 pivot axle, plus a dimple on the back where the adjustment
@@ -968,7 +969,7 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
     carrier = cut(carrier, ball_socket)
     # Two M3 pilot holes (self-tapping in PLA) on the 14 mm centres of the
     # camera support plate, fixing it flat on the carrier back face.
-    for sign in (-1, 1):
+    for sign in ((-1, 1) if screw_pilots else ()):
         carrier = cut(
             carrier,
             BRepPrimAPI_MakeCylinder(
@@ -1367,7 +1368,7 @@ def make_ball_screw() -> TopoDS_Shape:
     return cut(fuse(shaft, thread, ball), driver_slot)
 
 
-def make_camera_support_plate() -> TopoDS_Shape:
+def make_camera_support_plate(screw_holes: bool = True) -> TopoDS_Shape:
     """28.05 x 7 x 1 mm plate with a 4-petal snap-fit socket for the ball."""
     plate = make_box(SUPPORT_LENGTH, SUPPORT_WIDTH, SUPPORT_THICKNESS)
     collar = make_cylinder_z(
@@ -1418,7 +1419,7 @@ def make_camera_support_plate() -> TopoDS_Shape:
     body = cut(body, shaft_hole)
     body = cut(body, slit_x)
     body = cut(body, slit_y)
-    for sign in (-1, 1):
+    for sign in ((-1, 1) if screw_holes else ()):
         body = cut(
             body,
             BRepPrimAPI_MakeCylinder(
@@ -1447,13 +1448,13 @@ def make_camera_carrier_with_plate() -> TopoDS_Shape:
     carrier_back_y = ear.plate_front_y - CARRIER_STANDOFF_GAP
     boss_z = PLATE_HEIGHT - M5_THREAD_HOLE_OFFSET_FROM_TOP
 
-    carrier = make_camera_carrier(ball_pad_radius=MERGED_BALL_POCKET_RADIUS)
+    carrier = make_camera_carrier(ball_pad_radius=MERGED_BALL_POCKET_RADIUS, screw_pilots=False)
 
     rotate = gp_Trsf()
     rotate.SetRotation(gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(1, 0, 0)), -math.pi / 2)
     move = gp_Trsf()
     move.SetTranslation(gp_Vec(0, carrier_back_y, boss_z))
-    plate = BRepBuilderAPI_Transform(make_camera_support_plate(), rotate, True).Shape()
+    plate = BRepBuilderAPI_Transform(make_camera_support_plate(screw_holes=False), rotate, True).Shape()
     plate = BRepBuilderAPI_Transform(plate, move, True).Shape()
 
     side_cut_width = SUPPORT_LENGTH

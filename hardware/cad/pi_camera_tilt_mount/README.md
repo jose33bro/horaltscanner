@@ -269,3 +269,11 @@ de 7,73 mm de large est ouverte dans le berceau (2 mm d'epaisseur) au droit du c
 fente basse jusqu'a 1 mm sous la poche de rotule (z ~ 11,7). Les 2,75 mm ne tiennent pas dans 2 mm :
 la fenetre est bornee par la plaque 5 fusionnee derriere (non creusee). Le reste des composants
 garde 4,25 mm (`CAM_COMPONENT_HEIGHT`). La mesure ~20,9 mm lue sur photo est ignoree.
+
+### Entraxe X mesure et largeur connecteur (20,87 mm)
+
+`CAM_MOUNT_HOLE_SPACING_X` = 20,87 mm (mesure, remplace 21 sur l'axe X) ; l'entraxe Z reste 21,00
+(doc officielle, non mesure). `CAM_FFC_CONNECTOR_WIDTH` = 20,87 mm est enregistre mais NON applique a
+la fente : 20,87 + 0,30 = 21,17 mm depasserait l'entraxe des trous M3 (meme cote) et les fusionnerait
+avec la fente. La fente reste a 16 mm (fenetre 7,73 mm). A confirmer : cette cote est probablement
+l'entraxe des trous et non la largeur du connecteur.

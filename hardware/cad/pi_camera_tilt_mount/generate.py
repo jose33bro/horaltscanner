@@ -125,8 +125,14 @@ CAM_TOTAL_THICKNESS = 10.86  # PCB + lens, measured
 CAM_FIT_CLEARANCE_PER_SIDE = 0.17  # PLA clearance (0.15-0.20); housing = PCB + 2x
 CAM_HOUSING_WIDTH = CAM_PCB_WIDTH + 2 * CAM_FIT_CLEARANCE_PER_SIDE  # 25.50
 CAM_HOUSING_HEIGHT = CAM_PCB_HEIGHT + 2 * CAM_FIT_CLEARANCE_PER_SIDE  # 24.50
-# Hole pitch NOT measured: official Camera Module 3 drawing value.
+# Hole pitch along X measured by the user (caliper 20.87 mm on the board
+# back, same dimension as the FFC connector width); pitch along Z NOT
+# measured: official Camera Module 3 drawing value.
+CAM_MOUNT_HOLE_SPACING_X = 20.87
 CAM_MOUNT_HOLE_SPACING = 21.00
+# Connector width reading; the carrier slot stays CARRIER_CABLE_CHANNEL_WIDTH
+# because 20.87 + 0.30 would run into the M3 holes (same X pitch).
+CAM_FFC_CONNECTOR_WIDTH = 20.87
 CAM_MOUNT_HOLE_DIAMETER = 2.50
 CARRIER_THICKNESS = 2.00
 # Official Camera Module 3 mechanical drawing: the CSI FPC connector is on
@@ -324,7 +330,7 @@ def camera_hole_layout(ear: EarGeometry) -> CameraHoleLayout:
     hole_top_z = ear.ear_z - 1.50
     hole_bottom_z = hole_top_z - CAM_MOUNT_HOLE_SPACING
     return CameraHoleLayout(
-        mount_hole_x=CAM_MOUNT_HOLE_SPACING / 2,
+        mount_hole_x=CAM_MOUNT_HOLE_SPACING_X / 2,
         hole_top_z=hole_top_z,
         hole_bottom_z=hole_bottom_z,
         hole_center_z=(hole_top_z + hole_bottom_z) / 2,

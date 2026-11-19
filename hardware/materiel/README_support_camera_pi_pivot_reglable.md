@@ -11,8 +11,8 @@ modèle sont documentées dans
 - `hardware/cad/pi_camera_tilt_mount/stl/fit_test_rear_cavity_30.45x38.2.stl`
 - `hardware/cad/pi_camera_tilt_mount/stl/adjustment_rod_M5x50_ball6.5_square_m3.stl`
 - `hardware/cad/pi_camera_tilt_mount/stl/wheel_crank_50mm_square_m3.stl`
-- `hardware/cad/pi_camera_tilt_mount/stl/camera_carrier_cover_v4_onepiece.stl`
-  (pièce 3 = ancien berceau + ancien cache 4, une seule pièce)
+- `hardware/cad/pi_camera_tilt_mount/stl/camera_carrier_plate_v4_onepiece.stl` (pièces 3 + 5 en une seule)
+- `hardware/cad/pi_camera_tilt_mount/stl/camera_front_cover_v3_clip.stl`
 
 ## Fonction mécanique
 
@@ -27,28 +27,39 @@ modèle sont documentées dans
 - La partie tablette de 24,00 mm reçoit un passage central pour la nappe
   CSI, orienté vers l'avant depuis le centre.
 
-### Berceau + capot avant (pièce 3, une seule pièce)
-- Pièce : `camera_carrier_cover_v4_onepiece.stl`
-- La carte Pi Camera Module 3 (noir/NoIR), 25 × 24 mm, 4 trous Ø 2,50 mm
-  en carré de 21,00 mm, coulisse par le bas dans une fente de 1,30 mm entre le
-  berceau (2 mm) et le capot (1,6 mm, ouverture objectif Ø 11,00 mm), jonction
-  par un pont rigide en haut; 2 nervures de serrage 0,15 mm. Plus de pions.
+### Berceau + plaque-support (pièces 3 + 5 fusionnées)
+- Pièce : `camera_carrier_plate_v4_onepiece.stl` (un seul solide, 25,00 × 8,29 × 35,00 mm)
+- Porte la carte Pi Camera Module 3 (noir/NoIR), 25 × 24 mm, 4 trous Ø 2,50 mm
+  en carré de 21,00 mm (cotes officielles Raspberry Pi).
 - Tenon de charnière (4,80 mm de large) qui se clipse dans l'espace de
   5,33 mm entre les oreilles de la base, aligné sur le même axe M3 Ø 3,40 mm.
-- Patin plat au dos (Ø 12 mm, 0,6 mm) pour la bille de la tige d'ajustement.
+- Au dos : l'ancienne plaque-support 5 (1 mm, douille à 4 pétales Ø 6,9 mm,
+  lèvre Ø 6,0 mm, passage de tige Ø 5,3 mm, trous M3 Ø 3,2 mm entraxe 14 mm)
+  est fondue au berceau, rognée à 25 mm de large (elle débordait de 1,525 mm
+  de chaque côté). La bille de la tige s'y encliquette.
+
+### Cache avant (clip, sans vis)
+- Pièce : `camera_front_cover_v3_clip.stl`
+- Plaque 25 × 24 × 1,60 mm avec ouverture Ø 11,00 mm pour l'objectif.
+- 4 pions Ø 2,30 mm (serrage léger dans les trous Ø 2,50 mm de la carte),
+  pointe conique pour l'insertion, longueur de pénétration ~2,90 mm
+  (traverse la carte + une grande partie du berceau par friction).
+- Remplace les vis/écrous M2,5 : on clipse la carte entre le berceau et ce
+  cache, sans outil.
 
 ## Assemblage
 
 1. Imprimer d'abord `fit_test_rear_cavity_30.45x38.2.stl` et valider
    l'encombrement.
-2. Glisser la carte Pi Camera Module 3 par le bas dans la fente de la pièce 3
-   (`camera_carrier_cover_v4_onepiece.stl`) jusqu'au pont, puis brancher la
-   nappe CSI par la fente du berceau.
-3. Installer la pièce 3 (carte incluse) entre les oreilles de la base avec
+2. Poser la carte Pi Camera Module 3 contre la face avant du berceau
+   (`camera_carrier_plate_v4_onepiece.stl`), trous alignés.
+3. Clipser le cache avant (`camera_front_cover_v3_clip.stl`) par-dessus : les
+   4 pions traversent les trous de la carte et se bloquent par pression dans
+   les trous du berceau — pas de vis ni d'écrou nécessaires.
+4. Installer le berceau (carte + cache) entre les oreilles de la base avec
    l'axe M3 traversant comme pivot, sans serrer à fond.
-4. (supprimé : le cache avant est fusionné dans la pièce 3.)
 5. Visser la tige d'ajustement dans le bossage M5 au dos de la plaque jusqu'à
-   ce qu'elle se loge dans la fossette au dos du berceau, puis clipser la roue
+   ce que la bille s'encliquette dans la douille à pétales du berceau, puis clipser la roue
    sur le carré avec une vis M3.
 6. Tourner la roue pour régler finement l'inclinaison.
 7. Fixer la base horizontalement au support par les deux rails inférieurs avec
@@ -86,11 +97,17 @@ Profil complet (start/end G-code Klipper, réglages support détaillés) :
   - Interface : ON (2 couches)
   - Z distance : 0.22 mm
 
-### `camera_carrier_cover_v4_onepiece.stl`
-- Orientation : debout sur le bord bas (fente carte verticale), brim 3 mm.
-- Supports : **arborescents légers** sous le tenon (et sous le toit de
-  l'ouverture Ø 11 mm si besoin), jamais dans la fente carte. Voir
-  `print_settings.json` (couche 0,12 mm, 30 %, 4 parois, 40 mm/s).
+### `camera_carrier_plate_v4_onepiece.stl`
+- Orientation : à plat, face PCB (côté objectif, rainure de nappe) contre le
+  plateau ; douille à pétales, tenon et plaque vers le haut.
+- Supports : arborescents légers uniquement si nécessaire (tenon, appuis
+  plateau) ; jamais dans la douille, les trous ni le passage de tige.
+
+### `camera_front_cover_v3_clip.stl`
+- Orientation : face des pions contre le plateau (pions imprimés en
+  surplomb léger vers le haut, cône vers le haut).
+- Supports : pas nécessaires si orienté ainsi; sinon activer « Everywhere »
+  pour les pions.
 
 ## Génération STL
 
@@ -103,5 +120,5 @@ python3 hardware/cad/pi_camera_tilt_mount/generate.py
 
 ## Notes
 - La commande régénère les STL listés ci-dessus : la base, le test
-  d'encombrement, la tige d'ajustement, la roue/crank et la pièce 3 unique
-  (berceau + capot avant).
+  d'encombrement, la tige d'ajustement, la roue/crank, le berceau + plaque
+  fusionnés (3 + 5) et le cache avant à clips.

@@ -2,9 +2,8 @@
 """Assemble the camera tilt mount from the printable STL files.
 
 Part numbers follow the user's drawing:
-  1 adjustment rod, 3 camera carrier + front cover (ONE printed part; the old
-  separate part 4 cover is merged into 3),
-  5 ball-socket support plate (snapped on the rod ball, resting on 3),
+  1 adjustment rod, 3 camera carrier + 5 ball-socket support plate (one
+  printed part), 4 front cover (clipped on 3),
   8 base (M5 hole + hinge ears), 9 wheel/crank (on the rod square).
 
 Writes stl/assembly_pi_camera_tilt_mount.stl and preview PNGs in preview/,
@@ -30,7 +29,6 @@ from stamp_stl_settings import stamp_all
 HERE = Path(__file__).parent
 STL = HERE / "stl"
 PREVIEW = HERE / "preview"
-COVER_TINT = "#3d405b"  # former part 4 (cover) area inside merged part 3
 
 PLATE_FRONT_Y = -1.60  # front face of the base plate
 CARRIER_BACK_Y = -10.60  # back face of the carrier (ball pad side)
@@ -45,15 +43,18 @@ BALL_CENTER_ABOVE_PLATE = 1.0 + np.sqrt(BALL_RADIUS**2 - 2.65**2)
 # name -> (part no., stl, colour)
 PARTS = {
     "base": (8, "pi_camera_tilt_base.stl", "#9aa5b1"),
-    "carrier": (3, "camera_carrier_cover_v4_onepiece.stl", "#e07a5f"),
+    "carrier": (3, "camera_carrier_plate_v4_onepiece.stl", "#e07a5f"),
+    "cover": (4, "camera_front_cover_v3_clip.stl", "#3d405b"),
     "rod": (1, "adjustment_rod_M5x50_ball6.5_square_m3.stl", "#81b29a"),
-    "support_plate": (5, "camera_support_plate_28.05x7x1.stl", "#f2cc8f"),
     "wheel": (9, "wheel_crank_50mm_square_m3.stl", "#4f9dde"),
 }
+PLATE_TINT = "#f2cc8f"  # former part 5 (support plate) zone inside merged part 3
+REMOVED_STRIP_X = (28.05 - 25.0) / 2  # plate 5 overhang per side beyond the carrier
 
 # Contacts that are part of the design (not defects).
 EXPECTED = {
     frozenset({"rod", "base"}): "thread flank overlap above limit",
+    frozenset({"carrier", "cover"}): "cover pins press-fit in the carrier holes",
 }
 THREAD_PITCH = 0.8
 THREAD_OVERLAP_LIMIT = 0.5  # mm3, tessellation noise only
@@ -66,7 +67,7 @@ def rot_x(deg: float) -> np.ndarray:
 def build() -> dict[str, trimesh.Trimesh]:
     meshes = {k: trimesh.load(STL / v[1]) for k, v in PARTS.items()}
 
-    # Base and carrier+cover STL already share the assembled frame.
+    # Base, carrier+plate and cover STL already share the assembled frame.
     # Rod: local +Z (ball) -> world -Y, ball centre on the support plate.
     ball_y = CARRIER_BACK_Y + BALL_CENTER_ABOVE_PLATE
     rod_origin_y = ball_y + ROD_BALL_CENTER_LOCAL_Z
@@ -74,12 +75,6 @@ def build() -> dict[str, trimesh.Trimesh]:
         [0, rod_origin_y, M5_HOLE_Z]
     ) @ rot_x(90)
     meshes["rod"].apply_transform(rod_tf)
-
-    # Support plate: base on the carrier back, petals toward +Y (Rx(-90)).
-    plate_tf = trimesh.transformations.translation_matrix(
-        [0, CARRIER_BACK_Y, M5_HOLE_Z]
-    ) @ rot_x(-90)
-    meshes["support_plate"].apply_transform(plate_tf)
 
     # Wheel: hub face against the rod's stem end, square inside the socket.
     wheel_y = rod_origin_y - ROD_STEM_END_LOCAL_Z + 5.0
@@ -109,19 +104,23 @@ def render(meshes: dict[str, trimesh.Trimesh], name: str, elev: float, azim: flo
         base = np.array(matplotlib.colors.to_rgb(PARTS[key][2]))
         face_cols = np.tile(base, (len(mesh.faces), 1))
         if key == "carrier":
-            # Part 3 is one solid; tint the cover (4) portion in front of the
-            # carrier so the merge joint (top bridge) is visible.
-            front = mesh.triangles_center[:, 1] < CARRIER_BACK_Y - 2.0
-            face_cols[front] = matplotlib.colors.to_rgb(COVER_TINT)
+            # Tint the ex-plate (5) zone fused on the carrier back face.
+            behind = mesh.triangles_center[:, 1] > CARRIER_BACK_Y + 0.05
+            face_cols[behind] = matplotlib.colors.to_rgb(PLATE_TINT)
         tris_all.append(mesh.vertices[mesh.faces])
         cols_all.append(face_cols * shade[:, None])
-    # Overhang trimmed from the carrier (z 3.2 -> 8.21), shown as a ghost.
-    removed = trimesh.creation.box(
-        extents=(25.0, 2.0, 5.01),
-        transform=trimesh.transformations.translation_matrix((0, -11.6, 5.705)),
-    )
-    tris_all.append(removed.vertices[removed.faces])
-    cols_all.append(np.tile(matplotlib.colors.to_rgb("#e63946"), (len(removed.faces), 1)) * 0.8)
+    # Ghost of what was trimmed: plate 5 strips beyond the 25 mm carrier width.
+    for sign in (-1, 1):
+        removed = trimesh.creation.box(
+            extents=(REMOVED_STRIP_X, 1.0, 7.0),
+            transform=trimesh.transformations.translation_matrix(
+                (sign * (12.5 + REMOVED_STRIP_X / 2), CARRIER_BACK_Y + 0.5, M5_HOLE_Z)
+            ),
+        )
+        tris_all.append(removed.vertices[removed.faces])
+        cols_all.append(
+            np.tile(matplotlib.colors.to_rgb("#e63946"), (len(removed.faces), 1)) * 0.85
+        )
     # One collection so matplotlib depth-sorts every triangle together.
     ax.add_collection3d(
         Poly3DCollection(np.vstack(tris_all), facecolors=np.vstack(cols_all), linewidths=0)
@@ -138,8 +137,10 @@ def render(meshes: dict[str, trimesh.Trimesh], name: str, elev: float, azim: flo
     handles = [
         plt.Line2D([0], [0], marker="s", ls="", color=PARTS[k][2], label=f"{PARTS[k][0]} {k}")
         for k in meshes
-    ] + [plt.Line2D([0], [0], marker="s", ls="", color=COVER_TINT, label="3 (ex-4 cover zone)")] + [plt.Line2D([0], [0], marker="s", ls="", color="#e63946", label="removed overhang")]
-    ax.legend(handles=handles, loc="upper left", fontsize=8)
+    ] + [
+        plt.Line2D([0], [0], marker="s", ls="", color=PLATE_TINT, label="3 (ex-5 plate zone)"),
+        plt.Line2D([0], [0], marker="s", ls="", color="#e63946", label="removed overhang (plate sides)"),
+    ]
     fig.savefig(PREVIEW / name, dpi=130, bbox_inches="tight")
     plt.close(fig)
 
@@ -207,15 +208,23 @@ def main() -> int:
         print(f"overlap {a} x {b}: {vol:.3f} mm3 ({tag})")
     print("interference check:", "OK" if not bad else f"{bad} unexpected overlap(s)")
 
-    # Plate 5 <-> carrier 3: flush contact, M3 holes aligned with carrier pilots.
-    plate, carrier = meshes["support_plate"], meshes["carrier"]
-    contact = float(np.abs(plate.bounds[0][1] - CARRIER_BACK_Y))
-    probes = np.array([[s * 7.0, CARRIER_BACK_Y - 0.7, M5_HOLE_Z] for s in (-1, 1)])
-    hole_ok = not carrier.contains(probes).any() and not plate.contains(
-        probes + [0, 1.2, 0]
-    ).any()
-    print(f"plate 5 on carrier 3: gap {contact:.3f} mm, M3 holes aligned: {hole_ok}")
-    bad += 0 if contact < 0.01 and hole_ok else 1
+    # Merged part 3+5: the plate zone must stay open (M3 holes, 5.3 mm rod
+    # passage, 6.9 mm socket) and the carrier pilots must stay blind.
+    solid = meshes["carrier"]
+    pieces = len(solid.split(only_watertight=False))
+    plate_y = CARRIER_BACK_Y + 0.5
+    probes = np.array(
+        [[s * 7.0, plate_y, M5_HOLE_Z] for s in (-1, 1)] + [[0, plate_y, M5_HOLE_Z]]
+    )
+    holes_open = not solid.contains(probes).any()
+    pilots = np.array([[s * 7.0, CARRIER_BACK_Y - 0.7, M5_HOLE_Z] for s in (-1, 1)])
+    pilots_blind = not solid.contains(pilots).any()
+    width = float(solid.extents[0])
+    print(
+        f"carrier+plate: {pieces} solid, watertight {solid.is_watertight}, "
+        f"width {width:.2f} mm, M3/rod holes open: {holes_open}, pilots blind: {pilots_blind}"
+    )
+    bad += 0 if pieces == 1 and solid.is_watertight and holes_open and pilots_blind and width < 25.01 else 1
 
     render(meshes, "assembly_iso_front.png", 20, -50)
     render(meshes, "assembly_iso_back.png", 20, 130)

@@ -172,7 +172,8 @@ CARRIER_CABLE_CHANNEL_WIDTH = 16.00
 CARRIER_CABLE_WIDE_WIDTH = CAM_FFC_SPAN + CAM_FFC_SPAN_CLEARANCE  # 21.02
 CARRIER_CABLE_WIDE_HOLE_MARGIN = 0.50  # solid left under the lower holes
 # Rear component relief pocket (front face of the carrier, PCB side).
-CARRIER_COMPONENT_POCKET_DEPTH = 1.40  # of 2.00 carrier; 0.6 mm wall remains
+# Through window (no blind pocket => no bridge/support needed printing face down):
+# the back-face components (4.25 mm incl. PCB) sink into the open 9 mm gap behind.
 CARRIER_COMPONENT_POCKET_WALL_X = 0.80  # solid left around the M3 holes
 # Thicker rims (bosses) around the 4 camera mounting holes, on the carrier back
 # face (away from the PCB/components, so no clash with them, the ribbon or lens).
@@ -300,11 +301,14 @@ SUPPORT_SCREW_PILOT_DEPTH = 1.40  # carrier is 2 mm thick: stays closed on the P
 SUPPORT_SOCKET_DIAMETER = BALL_DIAMETER + 0.40  # 6.90 mm (spec)
 SUPPORT_LIP_DIAMETER = BALL_DIAMETER - 0.50  # rim narrower than the ball: snap
 SUPPORT_SHAFT_HOLE_DIAMETER = 5.30
-SUPPORT_COLLAR_RADIUS = (SUPPORT_SOCKET_DIAMETER / 2) + 0.80
+PETAL_WALL = 1.20  # petal wall thickness (was 0.80, a petal snapped/curled)
+SUPPORT_COLLAR_RADIUS = (SUPPORT_SOCKET_DIAMETER / 2) + PETAL_WALL
 PETAL_HEIGHT = 4.00
 PETAL_LIP_HEIGHT = 0.60
 PETAL_CHAMFER = 0.50
-PETAL_SLIT_WIDTH = 0.80
+PETAL_SLIT_WIDTH = 1.00
+# 45 deg chamfer under the lip so the socket prints with no flat overhang.
+PETAL_LIP_UNDERCUT = (SUPPORT_SOCKET_DIAMETER - SUPPORT_LIP_DIAMETER) / 2  # 0.45
 BALL_SCREW_LENGTH = 40.00
 BALL_SCREW_PITCH = 0.80  # ISO M5 coarse
 BALL_SCREW_THREAD_DEPTH = 0.50
@@ -880,10 +884,10 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
     pocket_top_z = hole_top_z - CAM_MOUNT_HOLE_DIAMETER / 2 - CARRIER_COMPONENT_POCKET_WALL_X
     component_pocket = make_box(
         2 * pocket_half_x,
-        CARRIER_COMPONENT_POCKET_DEPTH,
-        pocket_top_z - pocket_bottom_z,
-        y=carrier_front_y + CARRIER_COMPONENT_POCKET_DEPTH / 2,
-        z=pocket_bottom_z,
+        CARRIER_THICKNESS + 2,
+        pocket_top_z - pocket_bottom_z + 0.01,
+        y=carrier_center_y,
+        z=pocket_bottom_z - 0.01,
     )
 
     for bx in (-mount_hole_x, mount_hole_x):
@@ -1264,9 +1268,18 @@ def make_camera_support_plate() -> TopoDS_Shape:
     )
     body = fuse(plate, collar)
     top = SUPPORT_THICKNESS + PETAL_HEIGHT
+    lip_z = top - PETAL_LIP_HEIGHT
     bore = make_cylinder_z(
-        SUPPORT_SOCKET_DIAMETER / 2, SUPPORT_THICKNESS, PETAL_HEIGHT + 1
+        SUPPORT_SOCKET_DIAMETER / 2,
+        SUPPORT_THICKNESS,
+        lip_z - PETAL_LIP_UNDERCUT - SUPPORT_THICKNESS,
     )
+    under_chamfer = BRepPrimAPI_MakeCone(
+        gp_Ax2(gp_Pnt(0, 0, lip_z - PETAL_LIP_UNDERCUT), gp_Dir(0, 0, 1)),
+        SUPPORT_SOCKET_DIAMETER / 2,
+        SUPPORT_LIP_DIAMETER / 2,
+        PETAL_LIP_UNDERCUT,
+    ).Shape()
     lip_hole = make_cylinder_z(
         SUPPORT_LIP_DIAMETER / 2, top - PETAL_LIP_HEIGHT, PETAL_LIP_HEIGHT + 1
     )
@@ -1292,6 +1305,7 @@ def make_camera_support_plate() -> TopoDS_Shape:
         z=SUPPORT_THICKNESS,
     )
     body = cut(body, bore)
+    body = cut(body, under_chamfer)
     body = cut(body, lip_hole)
     body = cut(body, chamfer)
     body = cut(body, shaft_hole)

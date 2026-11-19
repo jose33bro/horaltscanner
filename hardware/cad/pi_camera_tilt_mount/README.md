@@ -357,3 +357,10 @@ Constantes `TURNTABLE_*`, `FOV_MARGIN`, `DOOR_PLANE_AHEAD_OF_LENS_MM` dans `gene
 - Imprimable sans supports : face PCB sur le plateau, bossages vers le haut. Pièce 3+5 : 1 solide étanche 25,5 × 8,29 × 35,0 mm.
 - Non vérifié : tenue réelle des vis M2 en PLA, pions du capot (longueur inchangée, n'atteignent pas le fond).
 
+
+### Correctifs apres impression 3+5 (sans supports)
+- Poche composants **traversante** (x 16,9 mm, z 12,2-24,4) jointe a la fente nappe 21,02 mm : plus de pont ni de support dans la fente.
+- Petales de la douille : paroi 1,2 mm (PETAL_WALL), fentes 1,0 mm, chanfrein 45 deg sous la levre (PETAL_LIP_UNDERCUT).
+- Orientation recommandee (inchangee) : a plat, face PCB sur le plateau, douille vers le haut, **sans supports**.
+- Non verifie : impression reelle, encliquetage rotule 6,5 mm, solidite des petales.
+

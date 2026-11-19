@@ -277,3 +277,10 @@ garde 4,25 mm (`CAM_COMPONENT_HEIGHT`). La mesure ~20,9 mm lue sur photo est ign
 la fente : 20,87 + 0,30 = 21,17 mm depasserait l'entraxe des trous M3 (meme cote) et les fusionnerait
 avec la fente. La fente reste a 16 mm (fenetre 7,73 mm). A confirmer : cette cote est probablement
 l'entraxe des trous et non la largeur du connecteur.
+
+### Entraxe Z mesure (12,33 mm) - remplace les mentions "Z = 21 mm" ci-dessus
+
+`CAM_MOUNT_HOLE_SPACING` = 12,33 mm (mesure approximative du user ; doc officielle : 12,5 mm).
+Le modele utilisait a tort 21 mm (motif carre) sur Z. Motif de trous : 20,87 (X) x 12,33 (Z).
+Le centre du motif est inchange, donc contour PCB, capot et nappe ne bougent pas ; seuls les
+trous/pions du berceau et du capot se rapprochent (z ~ 14,0 et 26,4).

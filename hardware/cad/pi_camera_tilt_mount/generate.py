@@ -129,7 +129,9 @@ CAM_HOUSING_HEIGHT = CAM_PCB_HEIGHT + 2 * CAM_FIT_CLEARANCE_PER_SIDE  # 24.50
 # back, same dimension as the FFC connector width); pitch along Z NOT
 # measured: official Camera Module 3 drawing value.
 CAM_MOUNT_HOLE_SPACING_X = 20.87
-CAM_MOUNT_HOLE_SPACING = 21.00
+# Pitch along Z measured by the user (~12.33 mm, approximate); the official
+# drawing says 12.5. The model previously used 21.00 here, which was wrong.
+CAM_MOUNT_HOLE_SPACING = 12.33
 # Connector width reading; the carrier slot stays CARRIER_CABLE_CHANNEL_WIDTH
 # because 20.87 + 0.30 would run into the M3 holes (same X pitch).
 CAM_FFC_CONNECTOR_WIDTH = 20.87
@@ -325,15 +327,18 @@ class CameraHoleLayout:
 
 
 def camera_hole_layout(ear: EarGeometry) -> CameraHoleLayout:
-    """Shared Pi Camera V3 mounting-hole positions (21mm square pattern),
-    used by both the carrier and the front cache so pins/screws line up."""
-    hole_top_z = ear.ear_z - 1.50
-    hole_bottom_z = hole_top_z - CAM_MOUNT_HOLE_SPACING
+    """Shared Pi Camera V3 mounting-hole positions (20.87 x 12.33 mm
+    pattern), used by both the carrier and the front cache so pins/screws
+    line up. The pattern centre stays where the old 21 mm square sat, so the
+    PCB outline, cover and ribbon geometry do not move."""
+    hole_center_z = ear.ear_z - 1.50 - 10.50
+    hole_top_z = hole_center_z + CAM_MOUNT_HOLE_SPACING / 2
+    hole_bottom_z = hole_center_z - CAM_MOUNT_HOLE_SPACING / 2
     return CameraHoleLayout(
         mount_hole_x=CAM_MOUNT_HOLE_SPACING_X / 2,
         hole_top_z=hole_top_z,
         hole_bottom_z=hole_bottom_z,
-        hole_center_z=(hole_top_z + hole_bottom_z) / 2,
+        hole_center_z=hole_center_z,
     )
 
 

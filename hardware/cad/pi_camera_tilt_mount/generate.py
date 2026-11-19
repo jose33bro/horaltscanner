@@ -206,7 +206,15 @@ CAM_PCB_THICKNESS = CAM_PCB_BARE_THICKNESS + CAM_PCB_SLOT_CLEARANCE  # 1.26 slot
 CAM_COMPONENT_HEIGHT = 4.25  # board + components, connector side (measured)
 CAM_COMPONENT_CLEARANCE_DEPTH = CAM_COMPONENT_HEIGHT + 0.3  # rear relief budget
 COVER_THICKNESS = 1.60
-LENS_HOLE_DIAMETER = 11.00
+# Lens window of the cover (part 4). Barrel ~8.5 mm is a VISUAL estimate (not
+# measured); window = barrel + 2 x 0.45 clearance. Offsets are relative to the
+# hole-pattern centre (+X right, +Z up) and are manual tuning knobs: 0/0 is an
+# assumption, the true optical axis offset is not measured.
+LENS_BARREL_SIZE = 8.50
+LENS_CLEARANCE_PER_SIDE = 0.45
+LENS_HOLE_DIAMETER = LENS_BARREL_SIZE + 2 * LENS_CLEARANCE_PER_SIDE  # 9.40
+LENS_OFFSET_X = 0.0
+LENS_OFFSET_Z = 0.0
 # Slightly undersized vs. CAM_MOUNT_HOLE_DIAMETER (2.50mm) for a snug push
 # fit directly against the PCB's rigid holes.
 CLIP_PIN_DIAMETER = 2.30
@@ -836,7 +844,7 @@ def make_camera_front_cover() -> TopoDS_Shape:
     cover_front_y = cover_back_y - COVER_THICKNESS
     lens_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(0, cover_front_y - 1, holes.hole_center_z),
+            gp_Pnt(LENS_OFFSET_X, cover_front_y - 1, holes.hole_center_z + LENS_OFFSET_Z),
             gp_Dir(0, 1, 0),
         ),
         LENS_HOLE_DIAMETER / 2,

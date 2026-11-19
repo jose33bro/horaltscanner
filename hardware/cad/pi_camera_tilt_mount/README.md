@@ -298,3 +298,10 @@ Decision du user : les entraxes de trous suivent la doc officielle (plus precise
 | Jeux (0,17 / 0,20 / 0,30), fente PCB 1,26, objectif Ø11 | choix de conception / estimation |
 
 Les mentions "20,87 x 12,33" ci-dessus sont obsoletes : le motif de trous est 21,00 x 12,50 mm.
+
+### Fenetre objectif du capot 4
+
+`LENS_BARREL_SIZE` 8,50 mm (estime a l'oeil, NON mesure) + 2 x `LENS_CLEARANCE_PER_SIDE` 0,45
+= `LENS_HOLE_DIAMETER` 9,40 mm (avant : 11,00). Centre : centre du motif de trous (21 x 12,5, doc)
++ `LENS_OFFSET_X` / `LENS_OFFSET_Z` (0 / 0 par defaut, hypothese, a regler a la main : la position
+reelle de l'axe optique n'est pas mesuree). Hauteur totale 10,86 mm non utilisee ici.

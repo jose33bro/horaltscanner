@@ -76,7 +76,18 @@
       "tolerances": "tenon pivot 3,40 mm pour axe M3; 4 trous 2,5 mm entraxe 21 mm; trous M3 3,2 mm (plaque) + avant-trous 2,7 mm (berceau) entraxe 14 mm; douille 6,9 mm, levre 6,0 mm pour bille 6,5 mm, fentes 0,8 mm; passage de tige 5,3 mm; plaque 5 rognee a 25 mm de large",
       "header_orientation": "a plat;sup arbre"
     },
-    "camera_front_cover_v3_clip.stl": {
+    "camera_front_cover_v3_clip_no_frame.stl": {
+      "layer_height_mm": 0.12,
+      "infill_percent": 40,
+      "infill_pattern": "gyroid",
+      "walls": 4,
+      "speed_mm_s": 40,
+      "supports": "non",
+      "orientation": "face arriere a plat, 4 pions clips vers le haut",
+      "tolerances": "4 pions pour trous 2,5 mm (clip par friction); fenetre objectif 9,4 mm; sans cadre",
+      "header_orientation": "pions haut;sans sup"
+    },
+    "camera_front_cover_v3_clip_with_frame.stl": {
       "layer_height_mm": 0.12,
       "infill_percent": 40,
       "infill_pattern": "gyroid",

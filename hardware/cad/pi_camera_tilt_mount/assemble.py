@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Assemble the camera tilt mount from the printable STL files.
 
 Part numbers follow the user's drawing:
@@ -26,6 +26,10 @@ import trimesh
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from stamp_stl_settings import stamp_all
 
+# Part 4 variant used in the assembly: with barn-door frame or the plain one.
+COVER_WITH_FRAME = True
+COVER_STL = "camera_front_cover_v3_clip_%s.stl" % ("with_frame" if COVER_WITH_FRAME else "no_frame")
+
 HERE = Path(__file__).parent
 STL = HERE / "stl"
 PREVIEW = HERE / "preview"
@@ -44,7 +48,7 @@ BALL_CENTER_ABOVE_PLATE = 1.0 + np.sqrt(BALL_RADIUS**2 - 2.65**2)
 PARTS = {
     "base": (8, "pi_camera_tilt_base.stl", "#9aa5b1"),
     "carrier": (3, "camera_carrier_plate_v4_onepiece.stl", "#e07a5f"),
-    "cover": (4, "camera_front_cover_v3_clip.stl", "#3d405b"),
+    "cover": (4, COVER_STL, "#3d405b"),
     "rod": (1, "adjustment_rod_M5x50_ball6.5_square_m3.stl", "#81b29a"),
     "wheel": (9, "wheel_crank_50mm_square_m3.stl", "#4f9dde"),
 }

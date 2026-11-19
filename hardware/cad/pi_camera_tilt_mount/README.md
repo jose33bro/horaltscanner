@@ -1,4 +1,4 @@
-﻿# Support orientable pour Pi Camera V3
+# Support orientable pour Pi Camera V3
 
 Ce répertoire contient la base du support orientable de Pi Camera V3 et son
 test d'encombrement. La plaque verticale et la tablette inférieure forment un
@@ -19,7 +19,7 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
   Camera Module 3 (noir/NoIR, 25 × 24 mm, 4 trous Ø2,5 mm en carré 21 mm) et
   se clipse entre les oreilles de la base sur l'axe M3 (tenon Ø 3,40 mm), avec
   au dos l'ancienne plaque-support 5 fondue dedans (voir « Fusion 3 + 5 »);
-- `stl/camera_front_cover_v3_clip.stl` : cache avant (côté objectif) qui
+- `stl/camera_front_cover_v3_clip_with_frame.stl` (avec cadre + volets) ou `camera_front_cover_v3_clip_no_frame.stl` (sans cadre)` : cache avant (côté objectif) qui
   tient la caméra sur le berceau sans vis — 4 pions se clipsent par
   pression dans les mêmes 4 trous Ø2,5 mm, en traversant la carte et le
   berceau, avec une ouverture centrale Ø11 mm pour l'objectif.
@@ -147,7 +147,7 @@ celui qui compte le plus.
   contrairement à une fossette sphérique de même rayon que la bille, dont
   la plage utile ne dépassait que ±2,4° avant perte de contact.
 
-## Cotes du cache avant (`camera_front_cover_v3_clip.stl`)
+## Cotes du cache avant (`camera_front_cover_v3_clip_with_frame.stl` (avec cadre + volets) ou `camera_front_cover_v3_clip_no_frame.stl` (sans cadre)`)
 
 - plaque : 25,00 × 24,00 × 1,60 mm, plaquée contre la face avant de la carte
   caméra (côté objectif);
@@ -205,7 +205,7 @@ slicer.
    imprimées debout, sans support). Retirer à la main ou à la pince fine.
 4. Poser la carte Pi Camera Module 3 contre la face avant du berceau
    (`camera_carrier_plate_v4_onepiece.stl`), trous alignés.
-5. Clipser le cache avant (`camera_front_cover_v3_clip.stl`) par-dessus : les
+5. Clipser le cache avant (`camera_front_cover_v3_clip_with_frame.stl` (avec cadre + volets) ou `camera_front_cover_v3_clip_no_frame.stl` (sans cadre)`) par-dessus : les
    4 pions traversent les trous de la carte et se bloquent par pression dans
    les trous du berceau — pas de vis ni d'écrou nécessaires.
 6. Installer le berceau (carte + cache) entre les oreilles de la base avec
@@ -335,3 +335,10 @@ Constantes `TURNTABLE_*`, `FOV_MARGIN`, `DOOR_PLANE_AHEAD_OF_LENS_MM` dans `gene
 - Champ plein requis (cercle Ø200 + 10 %) : **~58,5°** au plus proche (centre à 225 mm), **~30,4°** au plus lointain (centre à 420 mm). Le champ de l'objectif (H ~102°, V ~67°) est donc à réduire d'environ 2 à 3,5 fois.
 - Bord de volet à ~1,7 mm (proche) à ~0,8 mm (loin) de l'axe, pour un plan de volet supposé 3 mm devant la lentille (**hypothèse, non mesurée**). La course actuelle (9 mm X, 8,5 mm Z, ouverture complète à ~1 mm de l'axe) couvre ces cas (assertion dans `generate.py`).
 - Le réglage reste à faire visuellement ; le plan réel des volets et la hauteur du plateau par rapport à l'axe optique ne sont pas mesurés.
+
+## Deux versions de la pièce 4
+
+- `camera_front_cover_v3_clip_no_frame.stl` : fenêtre simple Ø9,4 mm, 25,50 × 4,56 × 24,50 mm, sans volets.
+- `camera_front_cover_v3_clip_with_frame.stl` : avec fourreau + cadre à volets, 25,50 × 16,86 × 24,50 mm ; seule version compatible avec `camera_barn_door_x_x2.stl` / `camera_barn_door_z_x2.stl`.
+- L'assemblage (`assemble.py`) utilise la version choisie par `COVER_WITH_FRAME` (True par défaut) ; les previews montrent donc la version avec cadre. L'ancien `camera_front_cover_v3_clip.stl` est supprimé.
+

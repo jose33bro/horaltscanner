@@ -1,4 +1,4 @@
-﻿from dataclasses import dataclass
+from dataclasses import dataclass
 from pathlib import Path
 import math
 import struct
@@ -866,7 +866,7 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
     return cut(carrier, cable_channel_groove)
 
 
-def make_camera_front_cover() -> TopoDS_Shape:
+def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     """Lens-side cache that clips onto the Pi Camera V3 through the same 4
     mounting holes used by the carrier, instead of screws/nuts. Four pins
     push through the PCB's holes and into the carrier's holes (press/
@@ -929,6 +929,8 @@ def make_camera_front_cover() -> TopoDS_Shape:
 
     cover = fuse(cover_plate, *pins)
     cover = cut(cover, lens_hole)
+    if not with_frame:
+        return cover
 
     axis_x = LENS_OFFSET_X
     axis_z = holes.hole_center_z + LENS_OFFSET_Z
@@ -1392,7 +1394,8 @@ if __name__ == "__main__":
     export_model(make_adjustment_rod(), "adjustment_rod_M5x50_ball6.5_square_m3.stl")
     export_model(make_wheel_crank(), "wheel_crank_50mm_square_m3.stl")
     export_model(make_camera_carrier_with_plate(), "camera_carrier_plate_v4_onepiece.stl")
-    export_model(make_camera_front_cover(), "camera_front_cover_v3_clip.stl")
+    export_model(make_camera_front_cover(False), "camera_front_cover_v3_clip_no_frame.stl")
+    export_model(make_camera_front_cover(True), "camera_front_cover_v3_clip_with_frame.stl")
     export_model(make_barn_door_x(), "camera_barn_door_x_x2.stl")
     export_model(make_barn_door_z(), "camera_barn_door_z_x2.stl")
     export_model(make_ball_screw(), "ball_screw_M5x40_ball6.5.stl")

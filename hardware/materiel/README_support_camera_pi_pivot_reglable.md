@@ -12,7 +12,7 @@ modèle sont documentées dans
 - `hardware/cad/pi_camera_tilt_mount/stl/adjustment_rod_M5x50_ball6.5_square_m3.stl`
 - `hardware/cad/pi_camera_tilt_mount/stl/wheel_crank_50mm_square_m3.stl`
 - `hardware/cad/pi_camera_tilt_mount/stl/camera_carrier_plate_v4_onepiece.stl` (pièces 3 + 5 en une seule)
-- `hardware/cad/pi_camera_tilt_mount/stl/camera_front_cover_v3_clip.stl`
+- `hardware/cad/pi_camera_tilt_mount/stl/camera_front_cover_v3_clip_with_frame.stl` (avec cadre + volets) ou `camera_front_cover_v3_clip_no_frame.stl` (sans cadre)`
 
 ## Fonction mécanique
 
@@ -39,7 +39,7 @@ modèle sont documentées dans
   de chaque côté). La bille de la tige s'y encliquette.
 
 ### Cache avant (clip, sans vis)
-- Pièce : `camera_front_cover_v3_clip.stl`
+- Pièce : `camera_front_cover_v3_clip_with_frame.stl` (avec cadre + volets) ou `camera_front_cover_v3_clip_no_frame.stl` (sans cadre)`
 - Plaque 25 × 24 × 1,60 mm avec ouverture Ø 11,00 mm pour l'objectif.
 - 4 pions Ø 2,30 mm (serrage léger dans les trous Ø 2,50 mm de la carte),
   pointe conique pour l'insertion, longueur de pénétration ~2,90 mm
@@ -53,7 +53,7 @@ modèle sont documentées dans
    l'encombrement.
 2. Poser la carte Pi Camera Module 3 contre la face avant du berceau
    (`camera_carrier_plate_v4_onepiece.stl`), trous alignés.
-3. Clipser le cache avant (`camera_front_cover_v3_clip.stl`) par-dessus : les
+3. Clipser le cache avant (`camera_front_cover_v3_clip_with_frame.stl` (avec cadre + volets) ou `camera_front_cover_v3_clip_no_frame.stl` (sans cadre)`) par-dessus : les
    4 pions traversent les trous de la carte et se bloquent par pression dans
    les trous du berceau — pas de vis ni d'écrou nécessaires.
 4. Installer le berceau (carte + cache) entre les oreilles de la base avec
@@ -103,7 +103,7 @@ Profil complet (start/end G-code Klipper, réglages support détaillés) :
 - Supports : arborescents légers uniquement si nécessaire (tenon, appuis
   plateau) ; jamais dans la douille, les trous ni le passage de tige.
 
-### `camera_front_cover_v3_clip.stl`
+### `camera_front_cover_v3_clip_with_frame.stl` (avec cadre + volets) ou `camera_front_cover_v3_clip_no_frame.stl` (sans cadre)`
 - Orientation : face des pions contre le plateau (pions imprimés en
   surplomb léger vers le haut, cône vers le haut).
 - Supports : pas nécessaires si orienté ainsi; sinon activer « Everywhere »

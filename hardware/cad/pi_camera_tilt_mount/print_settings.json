@@ -71,10 +71,10 @@
       "infill_pattern": "gyroid",
       "walls": 4,
       "speed_mm_s": 40,
-      "supports": "NON recommande (redessine sans surplombs: fente/poche traversantes, chanfrein 45 deg sous la levre); si le trancheur en ajoute, les bloquer dans la fente, la douille et les trous (sinon arborescents legers, jamais dans la douille)",
-      "orientation": "a plat, face PCB (cote objectif, rainure nappe) sur le plateau; douille a 4 petales, tenon et plaque-support vers le haut",
-      "tolerances": "tenon pivot 3,40 mm pour axe M3; 4 trous 2,5 mm (aveugles, bossages dia 4,5 x 3 mm au dos) entraxe 21 x 12,5 mm; trous M3 3,2 mm (plaque) + avant-trous 2,7 mm (berceau) entraxe 14 mm; douille 6,9 mm, levre 6,0 mm pour bille 6,5 mm, petales paroi 1,2 mm, fentes 1,0 mm; poche composants traversante x 16,9 mm, fente nappe 21,02 mm; passage de tige 5,3 mm; plaque 5 rognee a 25 mm de large",
-      "header_orientation": "a plat;sans supports"
+      "supports": "arborescents LEGERS uniquement sous le dos du berceau et les bossages (appui plateau); BLOQUER dans la fente nappe, la poche composants, la douille a petales et autour des pions; pions 2,0 mm sans support (45 deg)",
+      "orientation": "pions camera vers le HAUT (face PCB en haut), dos/plaque-support vers le plateau; recommande car les 4 pions de 2,0 mm sont sur la face PCB",
+      "tolerances": "tenon pivot 3,40 mm pour axe M3; 4 PIONS dia 2,0 mm (bout 1,2 mm), longueur 2,46 mm, face PCB, entraxe 21 x 12,5 mm (bossages dia 4,5 x 3 mm au dos) entraxe 21 x 12,5 mm; trous M3 3,2 mm (plaque) + avant-trous 2,7 mm (berceau) entraxe 14 mm; douille 6,9 mm, levre 6,0 mm pour bille 6,5 mm, petales paroi 1,2 mm, fentes 1,0 mm; poche composants traversante x 16,9 mm, fente nappe 21,02 mm; passage de tige 5,3 mm; plaque 5 rognee a 25 mm de large",
+      "header_orientation": "pions haut;sup limites"
     },
     "camera_front_cover_v3_clip_no_frame.stl": {
       "layer_height_mm": 0.12,
@@ -83,9 +83,9 @@
       "walls": 4,
       "speed_mm_s": 40,
       "supports": "non",
-      "orientation": "face arriere a plat, 4 pions clips vers le haut",
-      "tolerances": "4 pions pour trous 2,5 mm (clip par friction); fenetre objectif 9,4 mm; sans cadre",
-      "header_orientation": "pions haut;sans sup"
+      "orientation": "face arriere a plat (trous de pions vers le plateau), sans supports",
+      "tolerances": "plaque pleine 5,36 mm + 4 trous borgnes dia 2,25 x 1,4 mm (jeu 0,125 mm/cote) pour les pions dia 2,0 du 3+5; fenetre objectif 9,4 mm; sans cadre",
+      "header_orientation": "arriere a plat;sans sup"
     },
     "camera_front_cover_v3_clip_with_frame.stl": {
       "layer_height_mm": 0.12,
@@ -94,8 +94,8 @@
       "walls": 4,
       "speed_mm_s": 40,
       "supports": "non",
-      "orientation": "bout du cadre a volets (avant) a plat sur le plateau, 4 pions clips vers le haut",
-      "tolerances": "4 pions pour trous 2,5 mm (clip par friction); fenetre objectif 9,4 mm; fentes volets 1,1 mm; ponts courts a verifier a l impression",
+      "orientation": "bout du cadre a volets (avant) a plat sur le plateau, trous de pions vers le haut, sans supports",
+      "tolerances": "plaque pleine 5,36 mm + 4 trous borgnes dia 2,25 x 1,4 mm (jeu 0,125 mm/cote) pour les pions dia 2,0 du 3+5; fenetre objectif 9,4 mm; fentes volets 1,1 mm; ponts courts a verifier a l impression",
       "header_orientation": "cadre plat;sans sup"
     },
     "camera_barn_door_x_x2.stl": {

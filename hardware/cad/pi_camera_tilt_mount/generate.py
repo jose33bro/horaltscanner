@@ -18,7 +18,7 @@ from OCP.BRepBuilderAPI import (
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepLib import BRepLib
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
-from OCP.BRepOffsetAPI import BRepOffsetAPI_MakePipeShell
+from OCP.BRepOffsetAPI import BRepOffsetAPI_MakePipeShell, BRepOffsetAPI_ThruSections
 from OCP.BRepPrimAPI import (
     BRepPrimAPI_MakeBox,
     BRepPrimAPI_MakeCone,
@@ -28,7 +28,7 @@ from OCP.BRepPrimAPI import (
 from OCP.Geom import Geom_CylindricalSurface
 from OCP.Geom2d import Geom2d_Line
 from OCP.StlAPI import StlAPI_Writer
-from OCP.TopoDS import TopoDS_Shape
+from OCP.TopoDS import TopoDS_Shape, TopoDS_Wire
 from OCP.gp import (
     gp_Ax1,
     gp_Ax2,
@@ -223,7 +223,12 @@ CAM_PCB_SLOT_CLEARANCE = 0.20
 CAM_PCB_THICKNESS = CAM_PCB_BARE_THICKNESS + CAM_PCB_SLOT_CLEARANCE  # 1.26 slot
 CAM_COMPONENT_HEIGHT = 4.25  # board + components, connector side (measured)
 CAM_COMPONENT_CLEARANCE_DEPTH = CAM_COMPONENT_HEIGHT + 0.3  # rear relief budget
-COVER_THICKNESS = 1.60
+# Part 4 is a solid plate 5.36 mm thick (user), with 4 blind pin holes.
+COVER_THICKNESS = 5.36
+# Camera pins now live on the carrier (3+5); the cover only has blind holes.
+COVER_PIN_HOLE_DIAMETER = 2.25  # carrier pin 2.00 + 0.25: 0.125 mm/side insertion clearance
+COVER_PIN_ENGAGEMENT = 1.20  # pin length inside the cover
+COVER_PIN_HOLE_DEPTH = COVER_PIN_ENGAGEMENT + 0.20
 # Lens window of the cover (part 4). Barrel ~8.5 mm is a VISUAL estimate (not
 # measured); window = barrel + 2 x 0.45 clearance. Offsets are relative to the
 # hole-pattern centre (+X right, +Z up) and are manual tuning knobs: 0/0 is an
@@ -283,12 +288,13 @@ assert DOOR_TRAVEL_X >= FRAME_BORE_WIDTH / 2 - DOOR_EDGE_FAR_MM
 assert DOOR_TRAVEL_Z >= FRAME_BORE_HEIGHT / 2 - DOOR_EDGE_FAR_MM
 # Slightly undersized vs. CAM_MOUNT_HOLE_DIAMETER (2.50mm) for a snug push
 # fit directly against the PCB's rigid holes.
-CLIP_PIN_DIAMETER = 2.30
-CLIP_PIN_TIP_DIAMETER = 1.20
-CLIP_PIN_TIP_LENGTH = 0.80
-# How far short of the carrier's back face the pins stop, so they never
-# reach into the 1mm gap in front of the main plate (ball-socket area).
-CLIP_PIN_BACK_MARGIN = 0.30
+# Pins on the carrier front face (3+5), exactly at the official 21 x 12.5 mm
+# hole pattern: thin (2.0 vs ~2.2-2.5 mm camera holes), through the PCB slot
+# then into the cover's blind holes.
+CARRIER_PIN_DIAMETER = 2.00
+CARRIER_PIN_TIP_DIAMETER = 1.20
+CARRIER_PIN_TIP_LENGTH = 0.60  # ~45 deg lead-in
+CARRIER_PIN_LENGTH = CAM_PCB_THICKNESS + COVER_PIN_ENGAGEMENT  # 2.46
 
 # Camera support plate (28.05 x 7 x 1 mm, hardware/mechanical_specs.md) and the
 # M5 x 0.8 ball screw that snaps into its 4-petal socket.
@@ -902,8 +908,6 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
             )
 
     carrier = cut(carrier, pivot_hole)
-    carrier = cut(cut(carrier, top_left_hole), top_right_hole)
-    carrier = cut(cut(carrier, bottom_left_hole), bottom_right_hole)
     carrier = cut(carrier, ball_socket)
     # Two M3 pilot holes (self-tapping in PLA) on the 14 mm centres of the
     # camera support plate, fixing it flat on the carrier back face.
@@ -923,7 +927,29 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
     carrier = cut(carrier, cable_channel_wide)
     carrier = cut(carrier, component_pocket)
     carrier = cut(carrier, connector_window)
-    return cut(carrier, cable_channel_groove)
+    carrier = cut(carrier, cable_channel_groove)
+    return fuse(carrier, *camera_pins(holes, carrier_center_y - CARRIER_THICKNESS / 2))
+
+
+def camera_pins(holes, front_y: float) -> list[TopoDS_Shape]:
+    """4 thin pins on the carrier front face (-Y), on the 21 x 12.5 pattern."""
+    shaft_length = CARRIER_PIN_LENGTH - CARRIER_PIN_TIP_LENGTH
+    pins = []
+    for x in (-holes.mount_hole_x, holes.mount_hole_x):
+        for z in (holes.hole_top_z, holes.hole_bottom_z):
+            shaft = BRepPrimAPI_MakeCylinder(
+                gp_Ax2(gp_Pnt(x, front_y + 0.2, z), gp_Dir(0, -1, 0)),
+                CARRIER_PIN_DIAMETER / 2,
+                shaft_length + 0.2,
+            ).Shape()
+            tip = BRepPrimAPI_MakeCone(
+                gp_Ax2(gp_Pnt(x, front_y - shaft_length, z), gp_Dir(0, -1, 0)),
+                CARRIER_PIN_DIAMETER / 2,
+                CARRIER_PIN_TIP_DIAMETER / 2,
+                CARRIER_PIN_TIP_LENGTH,
+            ).Shape()
+            pins.append(fuse(shaft, tip))
+    return pins
 
 
 def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
@@ -959,35 +985,18 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
         COVER_THICKNESS + 2,
     ).Shape()
 
-    # Pins span the PCB thickness plus most of the carrier thickness,
-    # stopping short of the carrier's back face (ball-socket side).
-    engagement_length = (
-        CAM_PCB_THICKNESS + CARRIER_THICKNESS - CLIP_PIN_BACK_MARGIN
-    )
-    shaft_length = engagement_length - CLIP_PIN_TIP_LENGTH
-
-    def clip_pin(x: float, z: float) -> TopoDS_Shape:
-        shaft = BRepPrimAPI_MakeCylinder(
-            gp_Ax2(gp_Pnt(x, cover_back_y, z), gp_Dir(0, 1, 0)),
-            CLIP_PIN_DIAMETER / 2,
-            shaft_length,
+    pin_holes = [
+        BRepPrimAPI_MakeCylinder(
+            gp_Ax2(gp_Pnt(sx * holes.mount_hole_x, cover_back_y - COVER_PIN_HOLE_DEPTH, pz), gp_Dir(0, 1, 0)),
+            COVER_PIN_HOLE_DIAMETER / 2,
+            COVER_PIN_HOLE_DEPTH + 0.5,
         ).Shape()
-        tip = BRepPrimAPI_MakeCone(
-            gp_Ax2(gp_Pnt(x, cover_back_y + shaft_length, z), gp_Dir(0, 1, 0)),
-            CLIP_PIN_DIAMETER / 2,
-            CLIP_PIN_TIP_DIAMETER / 2,
-            CLIP_PIN_TIP_LENGTH,
-        ).Shape()
-        return fuse(shaft, tip)
-
-    pins = [
-        clip_pin(-holes.mount_hole_x, holes.hole_top_z),
-        clip_pin(holes.mount_hole_x, holes.hole_top_z),
-        clip_pin(-holes.mount_hole_x, holes.hole_bottom_z),
-        clip_pin(holes.mount_hole_x, holes.hole_bottom_z),
+        for sx in (-1, 1)
+        for pz in (holes.hole_top_z, holes.hole_bottom_z)
     ]
-
-    cover = fuse(cover_plate, *pins)
+    cover = cover_plate
+    for pin_hole in pin_holes:
+        cover = cut(cover, pin_hole)
     cover = cut(cover, lens_hole)
     if not with_frame:
         return cover
@@ -1362,19 +1371,7 @@ def make_camera_carrier_with_plate() -> TopoDS_Shape:
                 z=boss_z - SUPPORT_WIDTH / 2 - 1,
             ),
         )
-    merged = fuse(carrier, plate)
-    holes = camera_hole_layout(ear)
-    for hx in (-holes.mount_hole_x, holes.mount_hole_x):
-        for hz in (holes.hole_top_z, holes.hole_bottom_z):
-            merged = cut(
-                merged,
-                BRepPrimAPI_MakeCylinder(
-                    gp_Ax2(gp_Pnt(hx, carrier_back_y - CARRIER_THICKNESS - 1, hz), gp_Dir(0, 1, 0)),
-                    CAM_MOUNT_HOLE_DIAMETER / 2,
-                    CARRIER_THICKNESS + 1 + CARRIER_HOLE_BOSS_HEIGHT - CARRIER_HOLE_BOSS_END_WALL,
-                ).Shape(),
-            )
-    return merged
+    return fuse(carrier, plate)
 
 
 def repair_stl(path: Path, tolerance: float = 0.02) -> None:

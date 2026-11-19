@@ -270,6 +270,7 @@ LENS_HOUSING_SIZE = LENS_SQUARE_SIZE
 LENS_HOUSING_CLEARANCE = 0.20
 LENS_RECESS_SIZE = LENS_HOUSING_SIZE + 2 * LENS_HOUSING_CLEARANCE  # 13.59
 LENS_RECESS_FRONT_WALL = 1.20
+LENS_RECESS_WIDTH_X = 14.00  # user: 13.59 'voir 14' mm across X (room for the lens connector)
 LENS_RECESS_DEPTH = COVER_THICKNESS - LENS_RECESS_FRONT_WALL  # 4.16
 
 # Barn doors (part 4 hood). The doors must sit IN FRONT of the lens glass, so
@@ -1090,7 +1091,7 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
         cover = cut(cover, pin_hole)
     cover = cut(cover, lens_hole)
     lens_recess = make_box(
-        LENS_RECESS_SIZE,
+        LENS_RECESS_WIDTH_X,
         LENS_RECESS_DEPTH + 0.5,
         LENS_RECESS_SIZE,
         x=LENS_OFFSET_X,

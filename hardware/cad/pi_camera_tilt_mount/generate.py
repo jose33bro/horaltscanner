@@ -248,15 +248,6 @@ LENS_HOLE_DIAMETER = LENS_BARREL_SIZE + 2 * LENS_CLEARANCE_PER_SIDE  # 9.40
 # X: user observation - lens square and optic are centred between the two holes
 # on the ribbon (connector) side, i.e. on the pattern centre line (x = 0).
 LENS_OFFSET_X = 0.0
-# Square recess on the cover's back face for the lens housing. 11.0 mm is the
-# user's figure (drawing ~10.8); NOTE the 4.11/6.86 caliper values imply 13.19
-# along Z, which contradicts it. Housing height above the PCB is not measured:
-# depth is capped by the front wall (>= 1.2 mm around the round window).
-LENS_HOUSING_SIZE = 11.00
-LENS_HOUSING_CLEARANCE = 0.20
-LENS_RECESS_SIZE = LENS_HOUSING_SIZE + 2 * LENS_HOUSING_CLEARANCE  # 11.40
-LENS_RECESS_FRONT_WALL = 1.20
-LENS_RECESS_DEPTH = COVER_THICKNESS - LENS_RECESS_FRONT_WALL  # 4.16
 assert LENS_OFFSET_X == 0.0
 # User caliper: lens square sits 4.11 mm from the connector-side PCB edge and
 # 6.86 mm from the opposite (hole-side) edge => square = 24.16 - 4.11 - 6.86
@@ -270,6 +261,16 @@ LENS_SQUARE_SIZE = (CAM_PCB_HEIGHT - LENS_SQUARE_EDGE_FROM_CONNECTOR
 CAM_HOLE_ROW_FROM_CONNECTOR_EDGE = 2.00
 LENS_OFFSET_Z = (LENS_SQUARE_EDGE_FROM_CONNECTOR + LENS_SQUARE_SIZE / 2
                  - CAM_HOLE_ROW_FROM_CONNECTOR_EDGE - CAM_MOUNT_HOLE_SPACING / 2)
+# Square recess on the cover's back face for the lens housing. The housing is
+# the user's caliper square (13.19 mm along Z, see below); the recess adds a
+# clearance per side so the housing edges stay at 4.11 / 6.86 mm from the PCB
+# edges (measured and checked on the STL by verify_stl.py). Depth is capped by
+# the front wall (>= 1.2 mm around the round window).
+LENS_HOUSING_SIZE = LENS_SQUARE_SIZE
+LENS_HOUSING_CLEARANCE = 0.20
+LENS_RECESS_SIZE = LENS_HOUSING_SIZE + 2 * LENS_HOUSING_CLEARANCE  # 13.59
+LENS_RECESS_FRONT_WALL = 1.20
+LENS_RECESS_DEPTH = COVER_THICKNESS - LENS_RECESS_FRONT_WALL  # 4.16
 
 # Barn doors (part 4 hood). The doors must sit IN FRONT of the lens glass, so
 # a hollow standoff lifts the door frame above the barrel; the frame holds two

@@ -111,10 +111,43 @@ def check_header(path: Path) -> list[str]:
 def check_lens_square() -> list[str]:
     import generate as g
 
-    side = g.CAM_PCB_WIDTH / 2 - g.LENS_OFFSET_X - g.LENS_SQUARE_SIZE / 2
-    conn = (g.CAM_HOLE_ROW_FROM_CONNECTOR_EDGE + g.CAM_MOUNT_HOLE_SPACING / 2
-            + g.LENS_OFFSET_Z - g.LENS_SQUARE_SIZE / 2)
-    far = g.CAM_PCB_HEIGHT - conn - g.LENS_SQUARE_SIZE
+    import trimesh
+
+    # Measured on the no_frame cover STL (z up, front face = min y). Reference:
+    # PCB connector edge = lower pin-hole row z - 2.0 mm (drawing assumption),
+    # far (hole-side) edge = connector edge + 24.16 mm.
+    mesh = trimesh.load(HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl")
+    y0 = float(mesh.bounds[0][1])
+    zs = np.arange(mesh.bounds[0][2] + 0.01, mesh.bounds[1][2], 0.01)
+
+    def empty_runs(x: float, y: float) -> list[tuple[float, float]]:
+        inside = mesh.contains(np.array([[x, y, z] for z in zs]))
+        runs, start = [], None
+        for z, solid in zip(zs, inside):
+            if not solid and start is None:
+                start = z
+            elif solid and start is not None:
+                runs.append((start, z))
+                start = None
+        return runs
+
+    hole_runs = [r for r in empty_runs(10.5, y0 + g.COVER_THICKNESS - 0.5)
+                 if r[1] - r[0] < 4.0]
+    if len(hole_runs) != 2:
+        print(f"FAIL cannot find the 2 pin holes at x=10.5: {hole_runs}")
+        return ["pin holes"]
+    conn_edge_z = (hole_runs[0][0] + hole_runs[0][1]) / 2 - g.CAM_HOLE_ROW_FROM_CONNECTOR_EDGE
+    far_edge_z = conn_edge_z + g.CAM_PCB_HEIGHT
+    recess = [r for r in empty_runs(g.LENS_HOLE_DIAMETER / 2 + 0.6, y0 + 3.0)
+              if r[1] - r[0] > 5.0]
+    if len(recess) != 1:
+        print(f"FAIL cannot isolate the square recess: {recess}")
+        return ["recess"]
+    c = g.LENS_HOUSING_CLEARANCE
+    conn = recess[0][0] + c - conn_edge_z
+    far = far_edge_z - (recess[0][1] - c)
+    print(f"     recess z {recess[0][0]:.2f}..{recess[0][1]:.2f} (size "
+          f"{recess[0][1] - recess[0][0]:.2f}), PCB edges z {conn_edge_z:.2f}/{far_edge_z:.2f}")
     errs = []
     wall = g.COVER_THICKNESS - g.LENS_RECESS_DEPTH
     ring = g.LENS_RECESS_SIZE / 2 - g.LENS_HOLE_DIAMETER / 2

@@ -371,3 +371,5 @@ Constantes `TURNTABLE_*`, `FOV_MARGIN`, `DOOR_PLANE_AHEAD_OF_LENS_MM` dans `gene
 - Impression 3+5 : pions vers le HAUT (dos sur le plateau), supports arborescents legers sous le dos seulement, bloques dans la fente, la poche composants et la douille. Impression 4 : face arriere a plat (trous vers le plateau, sans supports) ; version cadre : bout du cadre a plat, trous vers le haut.
 - Non verifie : impression, ajustement reel des pions (carte ~2,2 mm), position reelle de l'axe optique, 4,24 mm d'objectif au-dela du capot (estime).
 
+
+- Piece 3+5, arriere : capot arriere (CARRIER_REAR_HOOD_WALL 1,2 mm) ferme le haut de la poche composants (z > rotule, profondeur 3,29 mm + peau 1,2 mm), imprime dos a plat, sans supports. Restent ouverts (necessaires) : fente nappe 21,02 mm en bas, passage tige/rotule au centre, zone de poche derriere la plaque de support (z 12-19,7 : fermee par la plaque 5, profondeur utile 3,0 mm < 3,29 mm composants : a verifier sur la vraie carte).

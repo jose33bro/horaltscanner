@@ -178,6 +178,7 @@ CARRIER_COMPONENT_POCKET_WALL_X = 0.80  # solid left around the M3 holes
 # Thicker rims (bosses) around the 4 camera mounting holes, on the carrier back
 # face (away from the PCB/components, so no clash with them, the ribbon or lens).
 # The 2.5 mm holes take the cover pins / M2 self-tapping screws.
+CARRIER_REAR_HOOD_WALL = 1.20  # rear hood walls/skin closing the component pocket
 CARRIER_HOLE_BOSS_DIAMETER = 4.50  # max: 25.5 mm carrier width limits it
 CARRIER_HOLE_BOSS_HEIGHT = 3.00  # extra thickness behind the 2.00 mm carrier
 CARRIER_HOLE_BOSS_END_WALL = 0.80  # blind hole: closed end, no support needed
@@ -917,6 +918,31 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
         y=carrier_center_y,
         z=pocket_bottom_z - 0.01,
     )
+
+    # Rear hood closing the upper part of the component pocket (above the
+    # fused support plate): walls rise from the carrier back, a skin closes
+    # the cavity at the full component depth. Printed back-down, so the
+    # cavity opens upward: no overhang, no supports.
+    hood_bottom_z = adjustment_boss_z + BALL_DIAMETER / 2 + 0.5  # clears the rod
+    hood_top_z = pocket_top_z + CARRIER_REAR_HOOD_WALL
+    hood_half_x = pocket_half_x + CARRIER_REAR_HOOD_WALL
+    cavity_depth = CAM_COMPONENT_CLEARANCE_DEPTH - CAM_PCB_THICKNESS
+    skin_back_y = carrier_front_y + cavity_depth + CARRIER_REAR_HOOD_WALL
+    hood_outer = make_box(
+        2 * hood_half_x,
+        skin_back_y - carrier_back_y + 0.1,
+        hood_top_z - hood_bottom_z,
+        y=(skin_back_y + carrier_back_y - 0.1) / 2,
+        z=hood_bottom_z,
+    )
+    hood_cavity = make_box(
+        2 * pocket_half_x,
+        cavity_depth + 1.0,
+        pocket_top_z - hood_bottom_z + 1.0,
+        y=carrier_front_y + (cavity_depth - 1.0) / 2,
+        z=hood_bottom_z - 1.0,
+    )
+    carrier = fuse(carrier, cut(hood_outer, hood_cavity))
 
     for bx in (-mount_hole_x, mount_hole_x):
         for bz in (hole_top_z, hole_bottom_z):

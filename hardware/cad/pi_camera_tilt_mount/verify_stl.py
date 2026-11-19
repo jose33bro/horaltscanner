@@ -116,6 +116,13 @@ def check_lens_square() -> list[str]:
             + g.LENS_OFFSET_Z - g.LENS_SQUARE_SIZE / 2)
     far = g.CAM_PCB_HEIGHT - conn - g.LENS_SQUARE_SIZE
     errs = []
+    wall = g.COVER_THICKNESS - g.LENS_RECESS_DEPTH
+    ring = g.LENS_RECESS_SIZE / 2 - g.LENS_HOLE_DIAMETER / 2
+    for name, got, want in (("front wall", wall, 1.2), ("lateral ring", ring, 0.0)):
+        ok = got >= want - 1e-6 and (name != "lateral ring" or got > 0)
+        print(f"{'OK  ' if ok else 'FAIL'} cover {name}: {got:.2f} mm (min {want})")
+        if not ok:
+            errs.append(name)
     for name, got, want in (("connector edge", conn, 4.11), ("hole-side edge", far, 6.86)):
         ok = abs(got - want) <= 0.2
         print(f"{'OK  ' if ok else 'FAIL'} lens square {name}: {got:.2f} mm (user {want})")

@@ -303,7 +303,7 @@ Les mentions "20,87 x 12,33" ci-dessus sont obsoletes : le motif de trous est 21
 
 `LENS_BARREL_SIZE` 8,50 mm (estime a l'oeil, NON mesure) + 2 x `LENS_CLEARANCE_PER_SIDE` 0,45
 = `LENS_HOLE_DIAMETER` 9,40 mm (avant : 11,00). Centre : centre du motif de trous (21 x 12,5, doc)
-+ `LENS_OFFSET_X` / `LENS_OFFSET_Z` (0 / +6,15 mm ; X=0 confirme par le user : carre et optique centres entre les 2 trous cote nappe ; axe optique d'apres le dessin mecanique officiel, a la main si besoin : la position
++ `LENS_OFFSET_X` / `LENS_OFFSET_Z` (0 / +6,15 mm ; X=0 confirme par le user : carre et optique centres entre les 2 trous cote nappe ; carre a 4,11 mm du bord nappe et 6,86 mm du bord cote trous (pied a coulisse user, controle verify_stl.py +-0,2 mm, carre 13,19 mm ; suppose rangee de trous a 2,0 mm du bord nappe) ; axe optique d'apres le dessin mecanique officiel, a la main si besoin : la position
 reelle de l'axe optique n'est pas mesuree). Hauteur totale 10,86 mm non utilisee ici.
 
 ## Volets « barn doors » (pièce 4 + 2 plaques X + 2 plaques Z)

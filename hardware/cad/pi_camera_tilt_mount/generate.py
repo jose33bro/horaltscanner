@@ -248,7 +248,18 @@ LENS_HOLE_DIAMETER = LENS_BARREL_SIZE + 2 * LENS_CLEARANCE_PER_SIDE  # 9.40
 # on the ribbon (connector) side, i.e. on the pattern centre line (x = 0).
 LENS_OFFSET_X = 0.0
 assert LENS_OFFSET_X == 0.0
-LENS_OFFSET_Z = 6.15
+# User caliper: lens square sits 4.11 mm from the connector-side PCB edge and
+# 6.86 mm from the opposite (hole-side) edge => square = 24.16 - 4.11 - 6.86
+# = 13.19 mm along Z, centred in X between the connector-side holes.
+# Near hole row is assumed 2.0 mm from the connector edge (drawing, not
+# certain). The earlier drawing reading (14.5 mm) CONTRADICTS this.
+LENS_SQUARE_EDGE_FROM_CONNECTOR = 4.11
+LENS_SQUARE_EDGE_FROM_HOLE_SIDE = 6.86
+LENS_SQUARE_SIZE = (CAM_PCB_HEIGHT - LENS_SQUARE_EDGE_FROM_CONNECTOR
+                    - LENS_SQUARE_EDGE_FROM_HOLE_SIDE)
+CAM_HOLE_ROW_FROM_CONNECTOR_EDGE = 2.00
+LENS_OFFSET_Z = (LENS_SQUARE_EDGE_FROM_CONNECTOR + LENS_SQUARE_SIZE / 2
+                 - CAM_HOLE_ROW_FROM_CONNECTOR_EDGE - CAM_MOUNT_HOLE_SPACING / 2)
 
 # Barn doors (part 4 hood). The doors must sit IN FRONT of the lens glass, so
 # a hollow standoff lifts the door frame above the barrel; the frame holds two

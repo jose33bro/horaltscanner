@@ -108,8 +108,24 @@ def check_header(path: Path) -> list[str]:
     return errors
 
 
+def check_lens_square() -> list[str]:
+    import generate as g
+
+    side = g.CAM_PCB_WIDTH / 2 - g.LENS_OFFSET_X - g.LENS_SQUARE_SIZE / 2
+    conn = (g.CAM_HOLE_ROW_FROM_CONNECTOR_EDGE + g.CAM_MOUNT_HOLE_SPACING / 2
+            + g.LENS_OFFSET_Z - g.LENS_SQUARE_SIZE / 2)
+    far = g.CAM_PCB_HEIGHT - conn - g.LENS_SQUARE_SIZE
+    errs = []
+    for name, got, want in (("connector edge", conn, 4.11), ("hole-side edge", far, 6.86)):
+        ok = abs(got - want) <= 0.2
+        print(f"{'OK  ' if ok else 'FAIL'} lens square {name}: {got:.2f} mm (user {want})")
+        if not ok:
+            errs.append(name)
+    return errs
+
+
 def main() -> int:
-    failed = False
+    failed = bool(check_lens_square())
     for path in sorted((HERE / "stl").glob("*.stl")):
         errors = check_header(path)
         print(f"{'FAIL' if errors else 'OK  '} header {path.name}"

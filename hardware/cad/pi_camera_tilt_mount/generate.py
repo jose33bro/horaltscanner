@@ -244,7 +244,10 @@ COVER_PIN_HOLE_DEPTH = COVER_PIN_ENGAGEMENT + 0.20
 LENS_BARREL_SIZE = 8.50
 LENS_CLEARANCE_PER_SIDE = 0.45
 LENS_HOLE_DIAMETER = LENS_BARREL_SIZE + 2 * LENS_CLEARANCE_PER_SIDE  # 9.40
+# X: user observation - lens square and optic are centred between the two holes
+# on the ribbon (connector) side, i.e. on the pattern centre line (x = 0).
 LENS_OFFSET_X = 0.0
+assert LENS_OFFSET_X == 0.0
 LENS_OFFSET_Z = 6.15
 
 # Barn doors (part 4 hood). The doors must sit IN FRONT of the lens glass, so

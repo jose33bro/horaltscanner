@@ -314,3 +314,15 @@ reelle de l'axe optique n'est pas mesuree). Hauteur totale 10,86 mm non utilisee
 - STL séparés, à plat, sans supports : `camera_barn_door_x_x2.stl` (10 × 19 × 0,9, imprimer 2) et `camera_barn_door_z_x2.stl` (20 × 10 × 0,9, imprimer 2).
 - Capot : bbox 25,50 × 16,86 × 24,50 mm ; imprimé bout du cadre à plat, pions vers le haut.
 - Non vérifié : impression, friction des volets, ponts courts des fentes, vignettage du cadre sur les coins du champ ~120° (H 102°, V 67°). Pas de vis M3 / trous oblongs (glissement par friction seulement).
+
+### Plage de réglage des volets vs plateau Ø200 mm
+
+Donnée user : plateau Ø200 mm. **Distance caméra-plateau non mesurée : hypothèses ci-dessous.** Champ plein de l'objectif Wide : H ~102°, V ~67° (valeurs approximatives).
+
+| Distance (hypothèse) | Demi-angle pour couvrir 220 mm (plateau + 10 %) | Champ plein requis |
+|---|---|---|
+| 150 mm | 36,3° | ~73° |
+| 200 mm | 28,8° | ~58° |
+| 300 mm | 20,1° | ~40° |
+
+Un volet à L mm devant la lentille coupe à tan(demi-angle) × L du centre. Avec L ≈ 3 mm (hypothèse, plan de volet non mesuré), le bord se place à ~2-3 mm de l'axe pour 36°, soit dans la course (9 mm X, 8,5 mm Z, alésage 18 × 17 mm). La plage actuelle couvre donc ces cas ; à régler visuellement sur l'image réelle. Rien n'a été modifié dans la géométrie.

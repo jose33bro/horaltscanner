@@ -326,3 +326,12 @@ Donnée user : plateau Ø200 mm. **Distance caméra-plateau non mesurée : hypot
 | 300 mm | 20,1° | ~40° |
 
 Un volet à L mm devant la lentille coupe à tan(demi-angle) × L du centre. Avec L ≈ 3 mm (hypothèse, plan de volet non mesuré), le bord se place à ~2-3 mm de l'axe pour 36°, soit dans la course (9 mm X, 8,5 mm Z, alésage 18 × 17 mm). La plage actuelle couvre donc ces cas ; à régler visuellement sur l'image réelle. Rien n'a été modifié dans la géométrie.
+
+### Mesures user : plateau Ø200 mm mobile (remplace les hypothèses de distance ci-dessus)
+
+Constantes `TURNTABLE_*`, `FOV_MARGIN`, `DOOR_PLANE_AHEAD_OF_LENS_MM` dans `generate.py` (valeurs approximatives, mesurées par le user).
+
+- Bord le plus proche : 125-135 mm de la caméra. Point le plus lointain : ~320 mm (avant) à ~520 mm (arrière).
+- Champ plein requis (cercle Ø200 + 10 %) : **~58,5°** au plus proche (centre à 225 mm), **~30,4°** au plus lointain (centre à 420 mm). Le champ de l'objectif (H ~102°, V ~67°) est donc à réduire d'environ 2 à 3,5 fois.
+- Bord de volet à ~1,7 mm (proche) à ~0,8 mm (loin) de l'axe, pour un plan de volet supposé 3 mm devant la lentille (**hypothèse, non mesurée**). La course actuelle (9 mm X, 8,5 mm Z, ouverture complète à ~1 mm de l'axe) couvre ces cas (assertion dans `generate.py`).
+- Le réglage reste à faire visuellement ; le plan réel des volets et la hauteur du plateau par rapport à l'axe optique ne sont pas mesurés.

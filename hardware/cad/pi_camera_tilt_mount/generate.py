@@ -242,6 +242,27 @@ DOOR_STACK_DEPTH = 2 * DOOR_SLOT_DEPTH + 2 * DOOR_RIB
 # Closing travel: from fully open (door edge at the bore edge) to the axis.
 DOOR_TRAVEL_X = FRAME_BORE_WIDTH / 2
 DOOR_TRAVEL_Z = FRAME_BORE_HEIGHT / 2
+
+# Turntable framing (user measurements, approximate)
+TURNTABLE_DIAMETER_MM = 200.0
+TURNTABLE_NEAR_EDGE_MM = (125.0, 135.0)   # camera -> nearest turntable edge
+TURNTABLE_FAR_POINT_MM = (320.0, 520.0)   # farthest point, front..rear position
+FOV_MARGIN = 1.10
+DOOR_PLANE_AHEAD_OF_LENS_MM = 3.0         # assumed, not measured
+
+
+def required_full_fov_deg(center_distance_mm):
+    r = TURNTABLE_DIAMETER_MM / 2 * FOV_MARGIN
+    return 2 * math.degrees(math.asin(r / center_distance_mm))
+
+
+FOV_NEAR_DEG = required_full_fov_deg(TURNTABLE_NEAR_EDGE_MM[0] + TURNTABLE_DIAMETER_MM / 2)
+FOV_FAR_DEG = required_full_fov_deg(TURNTABLE_FAR_POINT_MM[1] - TURNTABLE_DIAMETER_MM / 2)
+# Door edge offset from the optical axis for each case
+DOOR_EDGE_NEAR_MM = DOOR_PLANE_AHEAD_OF_LENS_MM * math.tan(math.radians(FOV_NEAR_DEG / 2))
+DOOR_EDGE_FAR_MM = DOOR_PLANE_AHEAD_OF_LENS_MM * math.tan(math.radians(FOV_FAR_DEG / 2))
+assert DOOR_TRAVEL_X >= FRAME_BORE_WIDTH / 2 - DOOR_EDGE_FAR_MM
+assert DOOR_TRAVEL_Z >= FRAME_BORE_HEIGHT / 2 - DOOR_EDGE_FAR_MM
 # Slightly undersized vs. CAM_MOUNT_HOLE_DIAMETER (2.50mm) for a snug push
 # fit directly against the PCB's rigid holes.
 CLIP_PIN_DIAMETER = 2.30

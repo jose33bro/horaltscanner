@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Verify the printable STL files: closed manifold mesh, no degenerate
 triangles, expected bounding box and positive volume.
 
@@ -28,8 +28,8 @@ EXPECTED_EXTENTS = {
     HERE / "stl" / "fit_test_rear_cavity_30.45x38.2.stl": (30.45, 3.20, 38.20),
     HERE / "stl" / "adjustment_rod_M5x50_ball6.5_square_m3.stl": (6.50, 6.50, 60.50),
     HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 11.00),
-    HERE / "stl" / "camera_carrier_plate_v4_onepiece.stl": (25.00, 8.29, 35.00),
-    HERE / "stl" / "camera_front_cover_v3_clip.stl": (25.00, 4.50, 24.00),
+    HERE / "stl" / "camera_carrier_plate_v4_onepiece.stl": (25.50, 8.29, 35.00),
+    HERE / "stl" / "camera_front_cover_v3_clip.stl": (25.50, 4.50, 24.50),
     HERE / "stl" / "ball_screw_M5x40_ball6.5.stl": (6.50, 6.50, 42.50),
 }
 

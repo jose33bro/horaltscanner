@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+﻿from dataclasses import dataclass
 from pathlib import Path
 import math
 import struct
@@ -117,9 +117,15 @@ WHEEL_HUB_M3_CLEARANCE_DIAMETER = 3.20
 # Camera carrier: holds the Pi Camera Module 3 (standard or NoIR, same PCB)
 # and provides the hinge tab that slots between the base's ears on the M3
 # pivot axle. Hole spacing/diameter match the official Camera Module 3
-# mechanical drawing (25 x 24mm PCB, 21mm square hole pattern, Ã˜2.5mm holes).
-CAM_PCB_WIDTH = 25.00
-CAM_PCB_HEIGHT = 24.00
+# mechanical drawing (25 x 24mm PCB, 21mm square hole pattern, ÃƒËœ2.5mm holes).
+# Camera Module 3 NoIR Wide, measured with calipers by the user.
+CAM_PCB_WIDTH = 25.16
+CAM_PCB_HEIGHT = 24.16
+CAM_TOTAL_THICKNESS = 10.86  # PCB + lens, measured
+CAM_FIT_CLEARANCE_PER_SIDE = 0.17  # PLA clearance (0.15-0.20); housing = PCB + 2x
+CAM_HOUSING_WIDTH = CAM_PCB_WIDTH + 2 * CAM_FIT_CLEARANCE_PER_SIDE  # 25.50
+CAM_HOUSING_HEIGHT = CAM_PCB_HEIGHT + 2 * CAM_FIT_CLEARANCE_PER_SIDE  # 24.50
+# Hole pitch NOT measured: official Camera Module 3 drawing value.
 CAM_MOUNT_HOLE_SPACING = 21.00
 CAM_MOUNT_HOLE_DIAMETER = 2.50
 CARRIER_THICKNESS = 2.00
@@ -453,7 +459,7 @@ def make_mount() -> TopoDS_Shape:
     # the carrier board, so without this the carrier's bottom edge jams
     # against the wall tops even at zero tilt.
     wall_inner_x = wall_x - (SIDE_WALL_THICKNESS / 2)
-    notch_outer_x = (CAM_PCB_WIDTH / 2) + CARRIER_WALL_CLEARANCE
+    notch_outer_x = (CAM_HOUSING_WIDTH / 2) + CARRIER_WALL_CLEARANCE
     if notch_outer_x > wall_inner_x:
         notch_width = notch_outer_x - wall_inner_x
         notch_center_x = (notch_outer_x + wall_inner_x) / 2
@@ -508,7 +514,7 @@ def make_mount() -> TopoDS_Shape:
     relief_y_center = (relief_y_min + relief_y_max) / 2
     relief_y_span = (relief_y_max - relief_y_min) + 1.00
     shelf_relief = make_box(
-        CAM_PCB_WIDTH,
+        CAM_HOUSING_WIDTH,
         relief_y_span,
         relief_depth,
         y=relief_y_center,
@@ -591,7 +597,7 @@ def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS) -> Topo
     carrier_center_y = carrier_back_y - (CARRIER_THICKNESS / 2)
     carrier_height = ear.ear_z - MATERIAL_THICKNESS
     board_plate = make_box(
-        CAM_PCB_WIDTH,
+        CAM_HOUSING_WIDTH,
         CARRIER_THICKNESS,
         carrier_height,
         y=carrier_center_y,
@@ -766,12 +772,12 @@ def make_camera_front_cover() -> TopoDS_Shape:
     pcb_front_y = carrier_front_y - CAM_PCB_THICKNESS
     cover_back_y = pcb_front_y
     cover_center_y = cover_back_y - (COVER_THICKNESS / 2)
-    cover_bottom_z = ear.ear_z - CAM_PCB_HEIGHT
+    cover_bottom_z = ear.ear_z - CAM_HOUSING_HEIGHT
 
     cover_plate = make_box(
-        CAM_PCB_WIDTH,
+        CAM_HOUSING_WIDTH,
         COVER_THICKNESS,
-        CAM_PCB_HEIGHT,
+        CAM_HOUSING_HEIGHT,
         y=cover_center_y,
         z=cover_bottom_z,
     )
@@ -1105,7 +1111,7 @@ def make_camera_carrier_with_plate() -> TopoDS_Shape:
                 side_cut_width,
                 SUPPORT_THICKNESS + PETAL_HEIGHT + 2,
                 SUPPORT_WIDTH + 2,
-                x=sign * (CAM_PCB_WIDTH / 2 + side_cut_width / 2),
+                x=sign * (CAM_HOUSING_WIDTH / 2 + side_cut_width / 2),
                 y=carrier_back_y + (SUPPORT_THICKNESS + PETAL_HEIGHT) / 2,
                 z=boss_z - SUPPORT_WIDTH / 2 - 1,
             ),

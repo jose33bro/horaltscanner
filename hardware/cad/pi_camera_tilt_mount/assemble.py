@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Assemble the camera tilt mount from the printable STL files.
 
 Part numbers follow the user's drawing:
@@ -49,7 +49,7 @@ PARTS = {
     "wheel": (9, "wheel_crank_50mm_square_m3.stl", "#4f9dde"),
 }
 PLATE_TINT = "#f2cc8f"  # former part 5 (support plate) zone inside merged part 3
-REMOVED_STRIP_X = (28.05 - 25.0) / 2  # plate 5 overhang per side beyond the carrier
+REMOVED_STRIP_X = (28.05 - 25.5) / 2  # plate 5 overhang per side beyond the carrier
 
 # Contacts that are part of the design (not defects).
 EXPECTED = {
@@ -224,7 +224,7 @@ def main() -> int:
         f"carrier+plate: {pieces} solid, watertight {solid.is_watertight}, "
         f"width {width:.2f} mm, M3/rod holes open: {holes_open}, pilots blind: {pilots_blind}"
     )
-    bad += 0 if pieces == 1 and solid.is_watertight and holes_open and pilots_blind and width < 25.01 else 1
+    bad += 0 if pieces == 1 and solid.is_watertight and holes_open and pilots_blind and width < 25.51 else 1
 
     render(meshes, "assembly_iso_front.png", 20, -50)
     render(meshes, "assembly_iso_back.png", 20, 130)

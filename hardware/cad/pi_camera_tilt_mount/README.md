@@ -221,3 +221,22 @@ slicer.
 
 Le profil d'impression détaillé est documenté dans
 [`../../../materiel/README_support_camera_pi_pivot_reglable.md`](../../../materiel/README_support_camera_pi_pivot_reglable.md).
+
+## Cotes camera mesurees (Camera Module 3 NoIR Wide)
+
+Mesurees au pied a coulisse (constantes de `generate.py`) :
+
+| Constante | Valeur | Statut |
+|---|---|---|
+| `CAM_PCB_WIDTH` x `CAM_PCB_HEIGHT` | 25,16 x 24,16 mm | mesure |
+| `CAM_TOTAL_THICKNESS` (carte + objectif) | 10,86 mm | mesure |
+| `CAM_FIT_CLEARANCE_PER_SIDE` | 0,17 mm | jeu PLA choisi |
+| `CAM_HOUSING_WIDTH` x `CAM_HOUSING_HEIGHT` | 25,50 x 24,50 mm | calcule (PCB + 2 x jeu) |
+| `CAM_PCB_THICKNESS` (fente) | 1,20 mm | NON mesure, valeur conservee |
+| `CAM_MOUNT_HOLE_SPACING` | 21,00 mm | NON mesure, doc officielle Camera Module 3 |
+| `LENS_HOLE_DIAMETER` | 11,00 mm | objectif ~8,5 mm estime a l'oeil, non mesure |
+
+La piece fusionnee 3+5 (et le capot 4, l'encoche de la base) utilisent maintenant
+le logement 25,50 x 24,50 ; bbox fusionnee 25,50 x 8,29 x 35,00 mm. L'epaisseur totale
+10,86 mm est enregistree mais la profondeur du logement n'est pas encore verifiee contre
+le capot (non imprime).

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+﻿from dataclasses import dataclass
 from pathlib import Path
 import math
 import struct
@@ -121,7 +121,7 @@ WHEEL_HUB_M3_CLEARANCE_DIAMETER = 3.20
 # Camera carrier: holds the Pi Camera Module 3 (standard or NoIR, same PCB)
 # and provides the hinge tab that slots between the base's ears on the M3
 # pivot axle. Hole spacing/diameter match the official Camera Module 3
-# mechanical drawing (25 x 24mm PCB, 21mm square hole pattern, ÃƒËœ2.5mm holes).
+# mechanical drawing (25 x 24mm PCB, 21mm square hole pattern, ÃƒÆ’Ã‹Å“2.5mm holes).
 # Camera Module 3 NoIR Wide, measured with calipers by the user.
 CAM_PCB_WIDTH = 25.16
 CAM_PCB_HEIGHT = 24.16
@@ -277,7 +277,7 @@ COVER_RECESS_Z = 10.95  # user: square 10.95 (was 11.00)
 COVER_LENS_RISE = 0.00  # user: round window centred on the square (no offset)
 COVER_RECESS_BOTTOM_FROM_EDGE = 1.55  # user: pin-row centre (z 20.21) = square top edge (was 4.69)
 COVER_LENGTH_Z = CAM_HOUSING_HEIGHT  # 24.50: top blocks above the 3+5 plate (z>32.21) removed (user)
-LENS_RECESS_WIDTH_X = 13.66  # user: 13.59 'voir 14' mm across X (room for the lens connector)
+LENS_RECESS_WIDTH_X = 14.00  # user: 13.59 'voir 14' mm across X (room for the lens connector)
 LENS_RECESS_DEPTH = 5.62  # user; deeper than the 5.36 plate, so a front pad is added
 COVER_FRONT_PAD = LENS_RECESS_DEPTH + LENS_RECESS_FRONT_WALL - COVER_THICKNESS  # 1.46
 COVER_LENS_HOLE_DIAMETER = 8.80  # barrel 8.5 + 0.15/side; ring Z = (11 - 8.8)/2 = 1.10

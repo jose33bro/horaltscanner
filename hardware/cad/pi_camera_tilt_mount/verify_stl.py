@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Verify the printable STL files: closed manifold mesh, no degenerate
 triangles, expected bounding box and positive volume.
 
@@ -168,8 +168,8 @@ def check_lens_square() -> list[str]:
     xs = np.arange(0.0, 9.0, 0.01)
     xin = mesh.contains(np.array([[x, y0 + 3.0, zc] for x in xs]))
     half = float(xs[xin][0])
-    ok = abs(2 * half - g.LENS_RECESS_WIDTH_X) <= 0.05 and abs(2 * half - 13.66) <= 0.05
-    print(f'{"OK  " if ok else "FAIL"} lens square width X measured {2 * half:.2f} mm (13.66)')
+    ok = abs(2 * half - g.LENS_RECESS_WIDTH_X) <= 0.05 and abs(2 * half - 14.00) <= 0.05
+    print(f'{"OK  " if ok else "FAIL"} lens square width X measured {2 * half:.2f} mm (14.00)')
     if not ok:
         errs.append('square width X')
     zb = float(mesh.bounds[0][2])

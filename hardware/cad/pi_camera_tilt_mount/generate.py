@@ -75,7 +75,7 @@ CABLE_PASSAGE_HEIGHT = 5.00
 CABLE_PASSAGE_Y_OFFSET = 8.00
 
 EAR_PROJECTION = 8.70
-EAR_EXTRA_FORWARD = 2.00  # ears extended past the pivot toward the front (-y); pivot hole unchanged
+EAR_EXTRA_FORWARD = 0.00  # the ear's outer round is concentric with the pivot hole; the frozen printed carrier fixes the hole axis, so a forward extension would decentre it
 EAR_WIDTH = 8.50
 EAR_GAP = 5.33
 EAR_HEIGHT = 5.99

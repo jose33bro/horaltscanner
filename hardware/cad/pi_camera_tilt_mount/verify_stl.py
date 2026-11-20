@@ -313,6 +313,26 @@ def check_frame() -> list[str]:
     return errs
 
 
+def check_ear_concentric() -> list[str]:
+    import trimesh
+
+    base = trimesh.load(HERE / 'stl' / 'pi_camera_tilt_base.stl')
+    cz = 38.2 - 5.99 / 2
+    sec = base.section(plane_origin=[-(5.33 / 2 + 4.25), 0, 0], plane_normal=[1, 0, 0])
+    v = sec.vertices
+    near = v[(v[:, 2] > 30) & (v[:, 1] < -5)]
+    tip_y = near[:, 1].min()
+    centre_y = tip_y + 5.99 / 2
+    hole = v[(np.hypot(v[:, 1] - centre_y, v[:, 2] - cz) < 2.0)]
+    hy = (hole[:, 1].min() + hole[:, 1].max()) / 2
+    hz = (hole[:, 2].min() + hole[:, 2].max()) / 2
+    wall = tip_y - (hy - 1.7)
+    wall = (hy - 1.7) - tip_y
+    ok = abs(hy - centre_y) < 0.1 and abs(hz - cz) < 0.1 and wall > 1.2
+    print(f"{'OK  ' if ok else 'FAIL'} ear hole centre y {hy:.2f} z {hz:.2f} vs outer round centre y {centre_y:.2f} z {cz:.2f}, wall {wall:.2f} mm")
+    return [] if ok else ['ear concentricity']
+
+
 def check_assembly() -> list[str]:
     import trimesh
 
@@ -332,7 +352,7 @@ def check_assembly() -> list[str]:
 
 
 def main() -> int:
-    failed = bool(check_lens_square()) or bool(check_frame()) or bool(check_crank()) or bool(check_assembly()) or bool(check_base_thread_hole())
+    failed = bool(check_lens_square()) or bool(check_frame()) or bool(check_crank()) or bool(check_assembly()) or bool(check_base_thread_hole()) or bool(check_ear_concentric())
     for path in sorted((HERE / "stl").glob("*.stl")):
         errors = check_header(path)
         print(f"{'FAIL' if errors else 'OK  '} header {path.name}"

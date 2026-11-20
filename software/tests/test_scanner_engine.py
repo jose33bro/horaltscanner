@@ -5,6 +5,7 @@ import time
 import unittest
 from unittest import mock
 
+import cv2
 import numpy as np
 
 from software.api.scanner_engine import (
@@ -465,6 +466,36 @@ class RealScanSessionTests(unittest.TestCase):
         self.assertTrue(any("outside calibrated range" in item for item in readiness["blockers"]))
         self.assertEqual(self.cameras["pi"].calls, 1)
         self.assertEqual(self.cameras["usb"].calls, 1)
+
+    def test_poor_camera_quality_is_a_warning_not_a_blocker(self):
+        import numpy as _np
+
+        dark_frame = _np.zeros((64, 64, 3), dtype=_np.uint8)
+        ok, encoded = cv2.imencode(".jpg", dark_frame)
+        self.assertTrue(ok)
+
+        class _DarkCamera(_FakeCamera):
+            def capture_jpeg(self):
+                super().capture_jpeg()
+                return encoded.tobytes()
+
+        session = self.make_session(cameras={"pi": _DarkCamera(), "usb": _FakeCamera()})
+
+        readiness = session.readiness(probe=True)
+
+        self.assertTrue(readiness["ready"])
+        self.assertFalse(readiness["blockers"])
+        self.assertTrue(
+            any("pi" in item and "non-blocking" in item for item in readiness["warnings"])
+        )
+
+    def test_good_camera_quality_produces_no_warning(self):
+        session = self.make_session()
+
+        readiness = session.readiness(probe=True)
+
+        self.assertTrue(readiness["ready"])
+        self.assertEqual(readiness["warnings"], [])
 
     def test_missing_homing_is_an_actionable_blocker(self):
         session = self.make_session(homed=False)

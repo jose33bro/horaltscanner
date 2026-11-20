@@ -31,6 +31,8 @@ except ImportError:
     _O3D_AVAILABLE = False
     logger.warning("Open3D not available; reconstruction will return stubs")
 
+from api.camera_quality import frame_quality
+
 
 # ---------------------------------------------------------------------------
 # Point Cloud Store (accumulated during a scan)
@@ -192,7 +194,7 @@ class ScanSession:
     ) -> dict:
         """Return actionable blockers; ``probe`` may initialize sensors."""
         if self._simulation:
-            return {"ready": True, "mode": "simulation", "blockers": []}
+            return {"ready": True, "mode": "simulation", "blockers": [], "warnings": []}
         if (
             probe
             and not _allow_starting
@@ -211,6 +213,7 @@ class ScanSession:
                     "ready": False,
                     "mode": "real",
                     "blockers": ["Scanner hardware is busy with another operation"],
+                    "warnings": [],
                 }
             with self._lock:
                 self._hardware_reserved = True
@@ -220,6 +223,7 @@ class ScanSession:
                 self._release_hardware_reservation()
 
         blockers: list[str] = []
+        warnings: list[str] = []
         with self._lock:
             active = self._scanning or (self._starting and not _allow_starting)
             self._operation_threads = {
@@ -231,6 +235,7 @@ class ScanSession:
                 "ready": False,
                 "mode": "real",
                 "blockers": ["Cannot probe hardware while a scan is active"],
+                "warnings": [],
             }
         if outstanding_operations:
             blockers.append(
@@ -319,6 +324,26 @@ class ScanSession:
                             f"Camera '{name}' opened but capture failed: "
                             f"{getattr(camera, 'last_error', 'unknown error')}"
                         )
+                    else:
+                        # Informational only: a dim/blurry frame (e.g. a
+                        # camera that is connected but poorly mounted) must
+                        # never block a scan on its own — it is reported as
+                        # a non-blocking warning so the operator can decide.
+                        try:
+                            quality = frame_quality(frame)
+                        except Exception as exc:
+                            quality = None
+                            logger.debug("Camera '%s' quality check failed: %s", name, exc)
+                        if quality and quality.get("available") and not quality.get("usable"):
+                            reasons = []
+                            if quality.get("too_dark"):
+                                reasons.append("image too dark")
+                            if quality.get("too_blurry"):
+                                reasons.append("image blurry")
+                            warnings.append(
+                                f"Camera '{name}' image quality warning: "
+                                f"{', '.join(reasons)} (non-blocking, scan can still proceed)"
+                            )
                 except Exception as exc:
                     blockers.append(f"Camera '{name}' preflight capture failed: {exc}")
 
@@ -344,9 +369,10 @@ class ScanSession:
             blockers.append("TF-Luna is not connected")
 
         blockers = list(dict.fromkeys(blockers))
+        warnings = list(dict.fromkeys(warnings))
         with self._lock:
             self._last_blockers = blockers
-        return {"ready": not blockers, "mode": "real", "blockers": blockers}
+        return {"ready": not blockers, "mode": "real", "blockers": blockers, "warnings": warnings}
 
     def probe_readiness_with_reservation(self) -> dict:
         """Adopt a request reservation and quarantine timed-out probe workers."""

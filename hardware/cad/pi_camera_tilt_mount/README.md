@@ -1,4 +1,4 @@
-﻿# Support orientable pour Pi Camera V3
+# Support orientable pour Pi Camera V3
 
 Ce répertoire contient la base du support orientable de Pi Camera V3 et son
 test d'encombrement. La plaque verticale et la tablette inférieure forment un
@@ -14,11 +14,12 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
   M3 central dans le carré;
 - `stl/wheel_crank_50mm_square_m3.stl` : roue/crank de 50 mm de diamètre avec
   carré de montage et trou M3 central pour serrage sur plaque de 3 mm;
-- `stl/camera_carrier_v3_25x24_tab4.8.stl` : berceau qui porte la carte Pi
+- `stl/camera_carrier_plate_v4_onepiece.stl` : **pièces 3 + 5 en un seul
+  solide** (25,00 × 8,29 × 35,00 mm). Berceau qui porte la carte Pi
   Camera Module 3 (noir/NoIR, 25 × 24 mm, 4 trous Ø2,5 mm en carré 21 mm) et
   se clipse entre les oreilles de la base sur l'axe M3 (tenon Ø 3,40 mm), avec
-  un patin plat au dos où vient appuyer la bille de la tige d'ajustement;
-- `stl/camera_front_cover_v3_clip.stl` : cache avant (côté objectif) qui
+  au dos l'ancienne plaque-support 5 fondue dedans (voir « Fusion 3 + 5 »);
+- `stl/camera_front_cover_v3_clip_with_frame.stl` (avec cadre + volets) ou `camera_front_cover_v3_clip_no_frame.stl` (sans cadre)` : cache avant (côté objectif) qui
   tient la caméra sur le berceau sans vis — 4 pions se clipsent par
   pression dans les mêmes 4 trous Ø2,5 mm, en traversant la carte et le
   berceau, avec une ouverture centrale Ø11 mm pour l'objectif.
@@ -26,18 +27,37 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
 Les autres fichiers STL éventuellement présents dans ce répertoire ne sont pas
 générés par `generate.py`.
 
-Trois pièces annexes sont aussi générées par `generate.py` :
+Une pièce annexe est aussi générée par `generate.py` :
 
 - `stl/ball_screw_M5x40_ball6.5.stl` : vis M5 × 0,8 (ISO pas normal), 40 mm,
   tête sphérique Ø 6,5 mm, fente de tournevis 0,8 × 5 × 1,5 mm. L'ancien STL ne
-  contenait que la bille (tige absente) ;
-- `stl/camera_support_plate_28.05x7x1.stl` : plaque 28,05 × 7 × 1 mm, deux
-  trous M3 Ø 3,2 mm sur entraxe 14 mm (cote de `hardware/mechanical_specs.md`;
-  l'ancien STL utilisait 16 mm), douille Ø 6,9 mm à 4 pétales (fentes 0,8 mm,
-  lèvre Ø 6,0 mm qui verrouille la bille de 6,5 mm) et passage de tige Ø 5,3 mm;
-- `stl/fit_test_plate_slot_28.45x7.4.stl` (ex `fit_test_27.6x7.3.stl`, bloc
-  33,6 × 13,3 × 8 mm) : gabarit à poche 28,45 × 7,40 mm = plaque + 0,2 mm par
-  côté. L'ancienne poche de 27,6 mm était plus courte que la plaque (28,05 mm).
+  contenait que la bille (tige absente).
+
+Obsolètes et supprimés : `camera_carrier_v3_25x24_tab4.8.stl` (3),
+`camera_support_plate_28.05x7x1.stl` (5) et son gabarit
+`fit_test_plate_slot_28.45x7.4.stl`, remplacés par la pièce fusionnée.
+
+## Fusion 3 + 5 (berceau + plaque-support)
+
+La fusion est faite **dans la position assemblée** (repère de `assemble.py`,
+`make_camera_carrier_with_plate()` dans `generate.py`) : la plaque 5 est
+posée sur le dos du berceau (y = −10,6 mm, centrée sur l'axe M5, z = 16,2 mm),
+douille à pétales vers +Y, puis fondue.
+
+- Débord retiré : la plaque 5 faisait 28,05 mm de large pour 25,00 mm au
+  berceau, soit 1,525 mm de trop de chaque côté ; elle est rognée à 25,00 mm
+  (≈ 2 × 1,525 × 1 × 7 mm³ retirés, en rouge sur les vues `preview/`).
+- Conservés tels quels : logement/trous caméra Ø2,5, rainure de nappe, tenon
+  et trou d'axe M3 Ø3,4, (trous M3 de fixation entraxe 14 mm supprimés : 3+5 est un seul corps),
+  douille Ø6,9 / lèvre Ø6,0 / passage de tige Ø5,3 / fentes 0,8.
+- Seule modification : le patin du dos passe du rayon 6,00 à 3,50 mm (la bille
+  n'y entre que par le passage Ø5,3) pour ne pas laisser un pont de 12 mm
+  fermé sous la plaque (impression sans support dans une cavité).
+- Orientation d'impression : à plat, face PCB sur le plateau, douille vers le
+  haut (aucun support dans la douille).
+- Vues avant/après : `preview/before_*.png` (3 et 5 séparées) et
+  `preview/assembly_*.png` (fusionnée, zone ex-5 en jaune, débord retiré en
+  rouge).
 
 Chaque STL est vérifié à l'export (maillage fermé, sans triangle dégénéré) et
 `verify_stl.py` contrôle en plus l'encombrement attendu :
@@ -57,18 +77,17 @@ python3 -m pip install numpy trimesh manifold3d matplotlib
 python3 hardware/cad/pi_camera_tilt_mount/assemble.py
 ```
 
-Numérotation du plan : 1 tige, 3 berceau, 4 cache avant (clipsé sur 3),
-5 plaque-support à rotule (posée au dos de 3, bille de 1 dans sa douille),
-8 base, 9 roue (sur le carré de 1). La tige 1 traverse le trou M5 de 8, 3
+Numérotation du plan : 1 tige, 3+5 berceau et plaque-support à rotule (une
+seule pièce imprimée, bille de 1 dans sa douille), 4 cache avant (clipsé sur
+3), 8 base, 9 roue (sur le carré de 1). La tige 1 traverse le trou M5 de 8, 3
 pivote sur les oreilles de 8 (axe M3, non modélisé). Filetages réels
 M5 × 0,8 : tige à crête Ø 5,0 / noyau Ø 4,0 (thread 20 mm), trou de 8 alésé
 Ø 5,5 avec filet interne de fond Ø 4,2 ; jeu radial 0,25 mm. Recouvrement
 tige × base ≈ 0 mm³ (phase de vissage recherchée par `assemble.py`). Le carré de 1 (5 × 5 mm,
 5 mm saillants) entre dans l'empreinte carrée du moyeu de 9 (5,2 × 5,2 mm,
 6 mm de profondeur, moyeu 10 × 10 × 10 mm, vis M3 axiale Ø 3,2 mm), sans
-recouvrement. La plaque 5 est vissée à plat au dos du berceau 3 par deux
-vis M3 (entraxe 14 mm, avant-trous Ø 2,7 mm ajoutés au berceau dans
-`generate.py`) ; le contrôle vérifie contact à 0 mm et trous alignés.
+recouvrement. Le contrôle de `assemble.py` vérifie que 3+5 est un seul
+solide fermé de 25 mm de large, passage de tige ouvert et emplacements M3 (±7 mm) pleins.
 
 
 - plaque verticale : 30,45 × 38,20 × 3,20 mm;
@@ -109,7 +128,7 @@ orientée vers le bas (vers le plateau tournant) au repos, donc le sens
 disponible le plus large (-15°, qui l'incline encore plus vers le bas) est
 celui qui compte le plus.
 
-## Cotes du berceau caméra (`camera_carrier_v3_25x24_tab4.8.stl`)
+## Cotes du berceau caméra (`camera_carrier_plate_v4_onepiece.stl`, partie 3)
 
 - plaque porte-caméra : 25,00 × ~29,00 × 2,00 mm (hauteur ajustée pour
   rejoindre le bas des oreilles), espacée de 9,00 mm derrière la face avant
@@ -122,13 +141,13 @@ celui qui compte le plus.
   aligné avec celui de la base; profondeur dimensionnée pour ne chevaucher
   que la propre plaque du berceau (fusion solide), sans jamais pénétrer
   dans la plaque principale;
-- patin plat au dos (remplace l'ancienne fossette sphérique) : rayon
-  6,00 mm, profondeur 0,60 mm, où vient appuyer la bille de la tige. Une
+- patin plat au dos : rayon 6,00 mm (3,50 mm sur la pièce fusionnée 3+5),
+  profondeur 0,60 mm, où vient appuyer la bille de la tige. Une
   sphère contre un plan garde un contact valide à n'importe quel angle,
   contrairement à une fossette sphérique de même rayon que la bille, dont
   la plage utile ne dépassait que ±2,4° avant perte de contact.
 
-## Cotes du cache avant (`camera_front_cover_v3_clip.stl`)
+## Cotes du cache avant (`camera_front_cover_v3_clip_with_frame.stl` (avec cadre + volets) ou `camera_front_cover_v3_clip_no_frame.stl` (sans cadre)`)
 
 - plaque : 25,00 × 24,00 × 1,60 mm, plaquée contre la face avant de la carte
   caméra (côté objectif);
@@ -152,7 +171,7 @@ python3 hardware/cad/pi_camera_tilt_mount/generate.py
 ```
 
 Exécuter la commande depuis la racine du dépôt. Elle vérifie les solides avant
-l'export et remplace les six STL listés ci-dessus.
+l'export et remplace les STL listés ci-dessus.
 
 ## Réglages d'impression (matériau : Creality Hyper PLA blanc)
 
@@ -185,8 +204,8 @@ slicer.
    dans les filetages M5 ni les trous M3/Ø2,5 (les tiges et vis M5 sont
    imprimées debout, sans support). Retirer à la main ou à la pince fine.
 4. Poser la carte Pi Camera Module 3 contre la face avant du berceau
-   (`camera_carrier_v3_25x24_tab4.8.stl`), trous alignés.
-5. Clipser le cache avant (`camera_front_cover_v3_clip.stl`) par-dessus : les
+   (`camera_carrier_plate_v4_onepiece.stl`), trous alignés.
+5. Clipser le cache avant (`camera_front_cover_v3_clip_with_frame.stl` (avec cadre + volets) ou `camera_front_cover_v3_clip_no_frame.stl` (sans cadre)`) par-dessus : les
    4 pions traversent les trous de la carte et se bloquent par pression dans
    les trous du berceau — pas de vis ni d'écrou nécessaires.
 6. Installer le berceau (carte + cache) entre les oreilles de la base avec
@@ -202,3 +221,159 @@ slicer.
 
 Le profil d'impression détaillé est documenté dans
 [`../../../materiel/README_support_camera_pi_pivot_reglable.md`](../../../materiel/README_support_camera_pi_pivot_reglable.md).
+
+## Cotes camera mesurees (Camera Module 3 NoIR Wide)
+
+Mesurees au pied a coulisse (constantes de `generate.py`) :
+
+| Constante | Valeur | Statut |
+|---|---|---|
+| `CAM_PCB_WIDTH` x `CAM_PCB_HEIGHT` | 25,16 x 24,16 mm | mesure |
+| `CAM_TOTAL_THICKNESS` (carte + objectif) | 10,86 mm | mesure |
+| `CAM_FIT_CLEARANCE_PER_SIDE` | 0,17 mm | jeu PLA choisi |
+| `CAM_HOUSING_WIDTH` x `CAM_HOUSING_HEIGHT` | 25,50 x 24,50 mm | calcule (PCB + 2 x jeu) |
+| `CAM_PCB_THICKNESS` (fente) | 1,20 mm | NON mesure, valeur conservee |
+| `CAM_MOUNT_HOLE_SPACING` | 21,00 mm | NON mesure, doc officielle Camera Module 3 |
+| `LENS_HOLE_DIAMETER` | 11,00 mm | objectif ~8,5 mm estime a l'oeil, non mesure |
+
+La piece fusionnee 3+5 (et le capot 4, l'encoche de la base) utilisent maintenant
+le logement 25,50 x 24,50 ; bbox fusionnee 25,50 x 8,29 x 35,00 mm. L'epaisseur totale
+10,86 mm est enregistree mais la profondeur du logement n'est pas encore verifiee contre
+le capot (non imprime).
+
+### Epaisseurs camera mesurees (mise a jour)
+
+| Constante | Valeur | Statut |
+|---|---|---|
+| `CAM_PCB_BARE_THICKNESS` | 1,06 mm | mesure (PCB nue) |
+| `CAM_PCB_THICKNESS` (fente) | 1,26 mm | 1,06 + 0,20 de jeu |
+| `CAM_COMPONENT_HEIGHT` | 4,25 mm | mesure (composants cote nappe/connecteur) |
+| `CAM_TOTAL_THICKNESS` | 10,86 mm | mesure (avec objectif) |
+
+Le capot 4 passe a 4,56 mm de profondeur (fente 1,26). Le degagement composants
+(4,25 + 0,3) est une constante prevue mais pas encore sculptee dans la geometrie.
+
+### Languette nappe FFC (mesuree)
+
+`CAM_FFC_WIDTH` 7,43 mm et `CAM_FFC_THICKNESS` 0,82 mm (pied a coulisse, a cote de l'objectif ;
+interpretation "languette FFC" NON confirmee). Utilisees pour la rainure de nappe du berceau
+3+5 : largeur requise 7,43 + 0,30 = 7,73 mm (canal garde a 16 mm, impose par `CABLE_PASSAGE_WIDTH`
+de la tablette) ; profondeur `CARRIER_CABLE_CHANNEL_DEPTH` = 0,82 + 0,20 = 1,02 mm (avant 0,60).
+
+`CAM_FFC_LENGTH` 8,88 mm (+ 0,30 de jeu = 9,18 mm) : la rainure de nappe s'etend maintenant
+de 4,59 mm (= 9,18 / 2) au-dessus du centre du connecteur (avant 3,00 mm), soit +1,59 mm.
+
+`CAM_FFC_CONNECTOR_HEIGHT` 2,45 mm (hauteur du connecteur FFC cote composants, interpretation de
+"epaisseur nappe 2,45") + 0,30 = `CAM_FFC_CONNECTOR_RELIEF` 2,75 mm requis. Une fenetre traversante
+de 7,73 mm de large est ouverte dans le berceau (2 mm d'epaisseur) au droit du connecteur, de la
+fente basse jusqu'a 1 mm sous la poche de rotule (z ~ 11,7). Les 2,75 mm ne tiennent pas dans 2 mm :
+la fenetre est bornee par la plaque 5 fusionnee derriere (non creusee). Le reste des composants
+garde 4,25 mm (`CAM_COMPONENT_HEIGHT`). La mesure ~20,9 mm lue sur photo est ignoree.
+
+### Entraxe X mesure et largeur connecteur (20,87 mm)
+
+`CAM_MOUNT_HOLE_SPACING_X` = 20,87 mm (mesure, remplace 21 sur l'axe X) ; l'entraxe Z reste 21,00
+(doc officielle, non mesure). `CAM_FFC_CONNECTOR_WIDTH` = 20,87 mm est enregistre mais NON applique a
+la fente : 20,87 + 0,30 = 21,17 mm depasserait l'entraxe des trous M3 (meme cote) et les fusionnerait
+avec la fente. La fente reste a 16 mm (fenetre 7,73 mm). A confirmer : cette cote est probablement
+l'entraxe des trous et non la largeur du connecteur.
+
+### Entraxe Z mesure (12,33 mm) - remplace les mentions "Z = 21 mm" ci-dessus
+
+`CAM_MOUNT_HOLE_SPACING` = 12,33 mm (mesure approximative du user ; doc officielle : 12,5 mm).
+Le modele utilisait a tort 21 mm (motif carre) sur Z. Motif de trous : 20,87 (X) x 12,33 (Z).
+Le centre du motif est inchange, donc contour PCB, capot et nappe ne bougent pas ; seuls les
+trous/pions du berceau et du capot se rapprochent (z ~ 14,0 et 26,4).
+
+### Origine des valeurs camera (reference ; remplace les sections precedentes sur les entraxes)
+
+Decision du user : les entraxes de trous suivent la doc officielle (plus precise), pas le pied a coulisse.
+
+| Valeur | Source |
+|---|---|
+| Entraxe trous X x Z : 21,00 x 12,50 mm (`CAM_MOUNT_HOLE_SPACING_X`, `CAM_MOUNT_HOLE_SPACING`) | doc officielle |
+| Carte 25,16 x 24,16 ; epaisseur totale 10,86 ; PCB nue 1,06 ; composants 4,25 | pied a coulisse |
+| Languette FFC 7,43 x 8,88 x 0,82 ; hauteur connecteur 2,45 | pied a coulisse |
+| 20,87 mm (`CAM_FFC_CONNECTOR_WIDTH`) | pied a coulisse, enregistre seulement |
+| Jeux (0,17 / 0,20 / 0,30), fente PCB 1,26, objectif Ø11 | choix de conception / estimation |
+
+Les mentions "20,87 x 12,33" ci-dessus sont obsoletes : le motif de trous est 21,00 x 12,50 mm.
+
+### Fenetre objectif du capot 4
+
+`LENS_BARREL_SIZE` 8,50 mm (estime a l'oeil, NON mesure) + 2 x `LENS_CLEARANCE_PER_SIDE` 0,45
+= `LENS_HOLE_DIAMETER` 9,40 mm (avant : 11,00). Centre : centre du motif de trous (21 x 12,5, doc)
++ `LENS_OFFSET_X` / `LENS_OFFSET_Z` (0 / +6,15 mm ; X=0 confirme par le user : carre et optique centres entre les 2 trous cote nappe ; carre a 4,11 mm du bord nappe et 6,86 mm du bord cote trous (pied a coulisse user, controle verify_stl.py +-0,2 mm, carre 13,19 mm ; suppose rangee de trous a 2,0 mm du bord nappe) ; axe optique d'apres le dessin mecanique officiel, a la main si besoin : la position
+reelle de l'axe optique n'est pas mesuree). Hauteur totale 10,86 mm non utilisee ici.
+
+## Volets « barn doors » (pièce 4 + 2 plaques X + 2 plaques Z)
+
+**Faisabilité** : la paroi du capot (1,6 mm) est trop fine pour des rainures, et l'objectif dépasse d'environ 8,0 mm de la face avant. Les volets doivent être devant la lentille pour cadrer. Le capot reçoit donc un fourreau creux (profondeur 8,5 mm) puis un cadre à deux couches de fentes (volets gauche/droite derrière, haut/bas devant).
+
+- Constantes dans `generate.py` : `DOOR_THICKNESS` 0,9, `DOOR_SLOT_CLEARANCE` 0,2, `DOOR_TRAVEL_X` 9, `DOOR_TRAVEL_Z` 8,5, `FRAME_BORE_WIDTH/HEIGHT` 18 × 17, `HOOD_STANDOFF_DEPTH` 8,5.
+- STL séparés, à plat, sans supports : `camera_barn_door_x_x2.stl` (10 × 19 × 0,9, imprimer 2) et `camera_barn_door_z_x2.stl` (20 × 10 × 0,9, imprimer 2).
+- Capot : bbox 25,50 × 16,86 × 24,50 mm ; imprimé bout du cadre à plat, pions vers le haut.
+- Non vérifié : impression, friction des volets, ponts courts des fentes, vignettage du cadre sur les coins du champ ~120° (H 102°, V 67°). Pas de vis M3 / trous oblongs (glissement par friction seulement).
+
+### Plage de réglage des volets vs plateau Ø200 mm
+
+Donnée user : plateau Ø200 mm. **Distance caméra-plateau non mesurée : hypothèses ci-dessous.** Champ plein de l'objectif Wide : H ~102°, V ~67° (valeurs approximatives).
+
+| Distance (hypothèse) | Demi-angle pour couvrir 220 mm (plateau + 10 %) | Champ plein requis |
+|---|---|---|
+| 150 mm | 36,3° | ~73° |
+| 200 mm | 28,8° | ~58° |
+| 300 mm | 20,1° | ~40° |
+
+Un volet à L mm devant la lentille coupe à tan(demi-angle) × L du centre. Avec L ≈ 3 mm (hypothèse, plan de volet non mesuré), le bord se place à ~2-3 mm de l'axe pour 36°, soit dans la course (9 mm X, 8,5 mm Z, alésage 18 × 17 mm). La plage actuelle couvre donc ces cas ; à régler visuellement sur l'image réelle. Rien n'a été modifié dans la géométrie.
+
+### Mesures user : plateau Ø200 mm mobile (remplace les hypothèses de distance ci-dessus)
+
+Constantes `TURNTABLE_*`, `FOV_MARGIN`, `DOOR_PLANE_AHEAD_OF_LENS_MM` dans `generate.py` (valeurs approximatives, mesurées par le user).
+
+- Bord le plus proche : 125-135 mm de la caméra. Point le plus lointain : ~320 mm (avant) à ~520 mm (arrière).
+- Champ plein requis (cercle Ø200 + 10 %) : **~58,5°** au plus proche (centre à 225 mm), **~30,4°** au plus lointain (centre à 420 mm). Le champ de l'objectif (H ~102°, V ~67°) est donc à réduire d'environ 2 à 3,5 fois.
+- Bord de volet à ~1,7 mm (proche) à ~0,8 mm (loin) de l'axe, pour un plan de volet supposé 3 mm devant la lentille (**hypothèse, non mesurée**). La course actuelle (9 mm X, 8,5 mm Z, ouverture complète à ~1 mm de l'axe) couvre ces cas (assertion dans `generate.py`).
+- Le réglage reste à faire visuellement ; le plan réel des volets et la hauteur du plateau par rapport à l'axe optique ne sont pas mesurés.
+
+## Deux versions de la pièce 4
+
+- `camera_front_cover_v3_clip_no_frame.stl` : fenêtre simple Ø9,4 mm, 25,50 × 4,56 × 24,50 mm, sans volets.
+- `camera_front_cover_v3_clip_with_frame.stl` : avec fourreau + cadre à volets, 25,50 × 16,86 × 24,50 mm ; seule version compatible avec `camera_barn_door_x_x2.stl` / `camera_barn_door_z_x2.stl`.
+- L'assemblage (`assemble.py`) utilise la version choisie par `COVER_WITH_FRAME` (True par défaut) ; les previews montrent donc la version avec cadre. L'ancien `camera_front_cover_v3_clip.stl` est supprimé.
+
+
+## Correctif après impression de la pièce 3+5
+
+- Passage de nappe : **15,85 mm imprimé (16,00 dans `generate.py`) → 20,72 + 0,30 = 21,02 mm** (`CAM_FFC_SPAN`, `CAM_FFC_SPAN_CLEARANCE`). Utilisé par `CABLE_PASSAGE_WIDTH` (base 8) et `CARRIER_CABLE_WIDE_WIDTH` (fente traversante du berceau, z 3,2 → 12,2 mm, sous les trous du bas à z 13,96). Au-dessus la fente reste à 16 mm (`CARRIER_CABLE_CHANNEL_WIDTH`) entre les trous (entraxe doc 21 × 12,5 conservé).
+- Composants : poche de dégagement côté carte (`CARRIER_COMPONENT_POCKET_DEPTH` 1,40 mm sur 2,00, 16,9 mm de large, z 12,2 → 24,4 mm), + fenêtre connecteur existante. Les 4,25 mm de composants ne tiennent pas dans 2 mm : le reste du dégagement dépend de l'épaisseur du capot/entretoise, non modifiée.
+- Cohérence : carte 25,16 × 24,16, 1 solide étanche, 25,5 × 8,29 × 35,0 mm, interférence OK, `verify_stl.py` OK.
+
+
+## Bossages autour des 4 trous de fixation caméra
+
+- Constantes `CARRIER_HOLE_BOSS_DIAMETER` 4,50 mm (maximum : 21 mm d'entraxe + 4,5 = 25,5 mm de large), `CARRIER_HOLE_BOSS_HEIGHT` 3,00 mm, `CARRIER_HOLE_BOSS_END_WALL` 0,80 mm.
+- Sur la face arrière du berceau (opposée à la carte) : aucun conflit avec les composants, la nappe (21,02 mm) ni l'objectif. Les trous restent Ø2,5 mm (pions du capot ou vis M2 auto-taraudeuses), entraxe doc 21 × 12,5 mm ; ils deviennent borgnes (profondeur 5,0 mm sur 5,0 mm de matière, fond de 0,8 mm).
+- Imprimable sans supports : face PCB sur le plateau, bossages vers le haut. Pièce 3+5 : 1 solide étanche 25,5 × 8,29 × 35,0 mm.
+- Non vérifié : tenue réelle des vis M2 en PLA, pions du capot (longueur inchangée, n'atteignent pas le fond).
+
+
+### Correctifs apres impression 3+5 (sans supports)
+- Poche composants **traversante** (x 16,9 mm, z 12,2-24,4) jointe a la fente nappe 21,02 mm : plus de pont ni de support dans la fente.
+- Petales de la douille : paroi 1,2 mm (PETAL_WALL), fentes 1,0 mm, chanfrein 45 deg sous la levre (PETAL_LIP_UNDERCUT).
+- Orientation recommandee (inchangee) : a plat, face PCB sur le plateau, douille vers le haut, **sans supports**.
+- Non verifie : impression reelle, encliquetage rotule 6,5 mm, solidite des petales.
+
+
+### Pions sur le 3+5, piece 4 pleine (5,36 mm)
+- Les 4 pions (dia 2,0 mm, bout 1,2 mm, longueur 2,46 mm) sont sur la face PCB de la piece 3+5, a l'entraxe doc 21 x 12,5 mm (constantes CARRIER_PIN_*) : ils traversent les trous de la carte (fente 1,26 mm).
+- Piece 4 : plaque PLEINE de 5,36 mm (COVER_THICKNESS), 4 trous borgnes dia 2,25 x 1,4 mm (COVER_PIN_HOLE_*, jeu 0,125 mm/cote) + fenetre objectif 9,4 mm decalee de +6,15 mm en Z (axe optique sur la rangee de trous, dessin officiel ; meme repere que les pions) ; jupe d'emboitement : 2 rails lateraux 1,2 mm, jeu 0,15 mm, capot 28,2 mm de large. Pas de poche 11 x 11.
+- Impression 3+5 : pions vers le HAUT (dos sur le plateau), supports arborescents legers sous le dos seulement, bloques dans la fente, la poche composants et la douille. Impression 4 : face arriere a plat (trous vers le plateau, sans supports) ; version cadre : bout du cadre a plat, trous vers le haut.
+- Non verifie : impression, ajustement reel des pions (carte ~2,2 mm), position reelle de l'axe optique, 4,24 mm d'objectif au-dela du capot (estime).
+
+
+- Piece 3+5, arriere : capot arriere (CARRIER_REAR_HOOD_WALL 1,2 mm) ferme le haut de la poche composants (z > rotule, profondeur 3,29 mm + peau 1,2 mm), imprime dos a plat, sans supports. Restent ouverts (necessaires) : fente nappe 21,02 mm en bas, passage tige/rotule au centre, zone de poche derriere la plaque de support (z 12-19,7 : fermee par la plaque 5, profondeur utile 3,0 mm < 3,29 mm composants : a verifier sur la vraie carte).
+
+- Piece 4 REFONTE (user) : longueur Z 24,50 -> 29,13 mm (user : 'coter 29.13' ; 27,93 mesure pied a coulisse a corriger, cote 3+5 correspondante non identifiee ; plaque prolongee vers le haut, z 7,71..36,84 ; largeur 28,2), evidement carre 14,0 (X) x 11,0 (Z) mm dont le bord cote connecteur est a 4,69 mm du bord bas de la piece (z 12,40..23,40), fenetre Ø9,4 centree dessus (z 17,90) ; constantes COVER_RECESS_Z / COVER_RECESS_BOTTOM_FROM_EDGE / COVER_LENGTH_Z ; verify_stl.py mesure 4,69 / 13,44 / 11,00 sur le STL. NON APPLIQUE (ambigu) : profondeur 5,62 mm (la plaque fait 5,36 mm, 4,16 max avec paroi avant 1,2) et ressaut 3,5 mm sur 13,78 mm. Picots inchanges. Les mentions de decalage 3,71 mm ci-dessous sont obsoletes.
+- Piece 4 (ferme) : encoche nappe x +-2,6 / z>=32,2 ; largeur 28,24 (jupe 1,22) ; evidement profond 5,62 mm via plot avant +1,46 mm (paroi avant 1,20) ; fenetre Ø8,8 (anneau 1,10 ; 1,2 exigerait Ø8,6 = jeu 0,05/cote) ; reduction 3,5 mm sur 13,78 mm a partir de z=12,43 (largeur 14, lecture a confirmer). Cote 27,93 : aucune cote CAD de la 3+5 ne correspond (plaque a y=-12 : 29,01).
+- Piece 4 (ancienne correction user, obsolete) : fenetre ronde + evidement carre (14,0 x 13,59 mm) DESCENDUS de 3,71 mm (4,11 - 0,40 : il reste 0,40 mm cote connecteur, decision user ; COVER_LENS_DROP_Z, -z, meme axe x que les 4 picots, trous de picots inchanges) : centre fenetre z 22,67 -> 18,96, evidement z 15,87..29,46 -> 12,16..25,75 ; verify_stl.py ajoute le drop pour garder 4,11 / 6,86 par rapport a l'axe optique d'origine. Reste dans la piece (z min 7,71) et hors des trous de picots. - Piece 4 : evidement carre sur la face arriere autour de la fenetre (LENS_RECESS_SIZE 13,59 mm = carre user 13,19 + 2 x 0,2 ; profondeur 4,16 mm, paroi avant 1,2 mm), centre sur l'axe optique. Cotes mesurees sur le STL par verify_stl.py (repere : z du STL, bord nappe = rangee de trous basse - 2,0 mm [hypothese dessin], bord oppose = +24,16 mm) : bord du carre a 4,10 mm du bord nappe et 6,87 mm du bord cote trous (user 4,11 / 6,86, tol. 0,2). Le carre de 13,19 contredit le ~11 mm / dessin ~10,8 : choix = cotes user. Hauteur reelle du boitier non mesuree. Imprime face arriere a plat, sans supports.

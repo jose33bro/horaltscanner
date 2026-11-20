@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+﻿from dataclasses import dataclass
 from pathlib import Path
 import math
 import struct
@@ -18,7 +18,7 @@ from OCP.BRepBuilderAPI import (
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepLib import BRepLib
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
-from OCP.BRepOffsetAPI import BRepOffsetAPI_MakePipeShell
+from OCP.BRepOffsetAPI import BRepOffsetAPI_MakePipeShell, BRepOffsetAPI_ThruSections
 from OCP.BRepPrimAPI import (
     BRepPrimAPI_MakeBox,
     BRepPrimAPI_MakeCone,
@@ -28,7 +28,7 @@ from OCP.BRepPrimAPI import (
 from OCP.Geom import Geom_CylindricalSurface
 from OCP.Geom2d import Geom2d_Line
 from OCP.StlAPI import StlAPI_Writer
-from OCP.TopoDS import TopoDS_Shape
+from OCP.TopoDS import TopoDS_Shape, TopoDS_Wire
 from OCP.gp import (
     gp_Ax1,
     gp_Ax2,
@@ -66,7 +66,11 @@ LOWER_RAIL_FRONT_CUT_DEPTH = 3.00
 # constants) so the CSI ribbon continues straight down through the shelf at
 # its full width right under the carrier's through-slot, instead of necking
 # down to a narrower opening and getting pinched/bent off-axis.
-CABLE_PASSAGE_WIDTH = 16.00
+# Ribbon/connector span measured with the caliper (20.72 mm) + 0.30 mm clearance;
+# the shelf passage was 16.00 (printed 15.85), too narrow for the connector.
+CAM_FFC_SPAN = 20.72
+CAM_FFC_SPAN_CLEARANCE = 0.30
+CABLE_PASSAGE_WIDTH = CAM_FFC_SPAN + CAM_FFC_SPAN_CLEARANCE  # 21.02
 CABLE_PASSAGE_HEIGHT = 5.00
 CABLE_PASSAGE_Y_OFFSET = 8.00
 
@@ -117,10 +121,24 @@ WHEEL_HUB_M3_CLEARANCE_DIAMETER = 3.20
 # Camera carrier: holds the Pi Camera Module 3 (standard or NoIR, same PCB)
 # and provides the hinge tab that slots between the base's ears on the M3
 # pivot axle. Hole spacing/diameter match the official Camera Module 3
-# mechanical drawing (25 x 24mm PCB, 21mm square hole pattern, Ã˜2.5mm holes).
-CAM_PCB_WIDTH = 25.00
-CAM_PCB_HEIGHT = 24.00
-CAM_MOUNT_HOLE_SPACING = 21.00
+# mechanical drawing (25 x 24mm PCB, 21mm square hole pattern, ÃƒÆ’Ã‹Å“2.5mm holes).
+# Camera Module 3 NoIR Wide, measured with calipers by the user.
+CAM_PCB_WIDTH = 25.16
+CAM_PCB_HEIGHT = 24.16
+CAM_TOTAL_THICKNESS = 10.86  # PCB + lens, measured
+CAM_FIT_CLEARANCE_PER_SIDE = 0.17  # PLA clearance (0.15-0.20); housing = PCB + 2x
+CAM_HOUSING_WIDTH = CAM_PCB_WIDTH + 2 * CAM_FIT_CLEARANCE_PER_SIDE  # 25.50
+CAM_HOUSING_HEIGHT = CAM_PCB_HEIGHT + 2 * CAM_FIT_CLEARANCE_PER_SIDE  # 24.50
+
+# Hole pitch X x Z: official Camera Module 3 drawing values (user decision:
+# the datasheet is more precise than the caliper readings 20.87 / ~12.33).
+CAM_MOUNT_HOLE_SPACING_X = 21.00
+# The model used 21.00 along Z before, which was wrong.
+CAM_MOUNT_HOLE_SPACING = 12.50
+# Caliper reading 20.87 mm on the board back (connector width, interpretation
+# unconfirmed); the carrier slot stays CARRIER_CABLE_CHANNEL_WIDTH since
+# 20.87 + 0.30 would run into the M3 holes.
+CAM_FFC_CONNECTOR_WIDTH = 20.87
 CAM_MOUNT_HOLE_DIAMETER = 2.50
 CARRIER_THICKNESS = 2.00
 # Official Camera Module 3 mechanical drawing: the CSI FPC connector is on
@@ -135,8 +153,37 @@ CARRIER_THICKNESS = 2.00
 # connector down to the carrier's bottom edge, where it continues into the
 # shelf's CABLE_PASSAGE below.
 FPC_CONNECTOR_OFFSET_FROM_PCB_BOTTOM = 2.10
+# Measured on the strip next to the lens (user's photo; read as the FFC
+# tongue, interpretation not confirmed).
+CAM_FFC_WIDTH = 7.43
+CAM_FFC_THICKNESS = 0.82
+CAM_FFC_LENGTH = 8.88
+# FFC connector height on the component side (user: "epaisseur nappe 2,45").
+CAM_FFC_CONNECTOR_HEIGHT = 2.45
+CAM_FFC_CONNECTOR_RELIEF = CAM_FFC_CONNECTOR_HEIGHT + 0.30  # 2.75 needed
+CAM_FFC_LENGTH_CLEARANCE = 0.30
+CAM_FFC_WIDTH_CLEARANCE = 0.30
+CAM_FFC_THICKNESS_CLEARANCE = 0.20
+# 16 mm stays: it must match the shelf's CABLE_PASSAGE_WIDTH and is
+# far above the required 7.43 + 0.30 = 7.73 mm.
+# Narrow section (between the upper mounting holes); the lower, wide section
+# (CARRIER_CABLE_WIDE_WIDTH) sits below the lower mounting holes.
 CARRIER_CABLE_CHANNEL_WIDTH = 16.00
-CARRIER_CABLE_CHANNEL_DEPTH = 0.60
+CARRIER_CABLE_WIDE_WIDTH = CAM_FFC_SPAN + CAM_FFC_SPAN_CLEARANCE  # 21.02
+CARRIER_CABLE_WIDE_HOLE_MARGIN = 0.50  # solid left under the lower holes
+# Rear component relief pocket (front face of the carrier, PCB side).
+# Through window (no blind pocket => no bridge/support needed printing face down):
+# the back-face components (4.25 mm incl. PCB) sink into the open 9 mm gap behind.
+CARRIER_COMPONENT_POCKET_WALL_X = 0.80  # solid left around the M3 holes
+# Thicker rims (bosses) around the 4 camera mounting holes, on the carrier back
+# face (away from the PCB/components, so no clash with them, the ribbon or lens).
+# The 2.5 mm holes take the cover pins / M2 self-tapping screws.
+CARRIER_REAR_HOOD_WALL = 1.20  # rear hood walls/skin closing the component pocket
+CARRIER_HOLE_BOSS_DIAMETER = 4.50  # max: 25.5 mm carrier width limits it
+CARRIER_HOLE_BOSS_HEIGHT = 3.00  # extra thickness behind the 2.00 mm carrier
+CARRIER_HOLE_BOSS_END_WALL = 0.80  # blind hole: closed end, no support needed
+assert CARRIER_CABLE_CHANNEL_WIDTH >= CAM_FFC_WIDTH + CAM_FFC_WIDTH_CLEARANCE
+CARRIER_CABLE_CHANNEL_DEPTH = CAM_FFC_THICKNESS + CAM_FFC_THICKNESS_CLEARANCE  # 1.02
 CARRIER_CABLE_CHANNEL_MARGIN_ABOVE_CONNECTOR = 3.00
 # How far below the ball-socket pocket's lower edge the full through-slot
 # (see CARRIER_CABLE_CHANNEL_* below) must stop, leaving solid wall so the
@@ -170,17 +217,132 @@ BALL_SOCKET_DEPTH = 0.60
 # mounting holes instead of screws/nuts. Four printed pins push through the
 # PCB holes and into the carrier's holes (friction/press fit); a central
 # opening clears the lens.
-CAM_PCB_THICKNESS = 1.20
-COVER_THICKNESS = 1.60
-LENS_HOLE_DIAMETER = 11.00
+# Measured: bare PCB 1.06, board with components (connector side) 4.25,
+# total with lens 10.86 (CAM_TOTAL_THICKNESS).
+CAM_PCB_BARE_THICKNESS = 1.06
+CAM_PCB_SLOT_CLEARANCE = 0.20
+CAM_PCB_THICKNESS = CAM_PCB_BARE_THICKNESS + CAM_PCB_SLOT_CLEARANCE  # 1.26 slot
+CAM_COMPONENT_HEIGHT = 4.25  # board + components, connector side (measured)
+CAM_COMPONENT_CLEARANCE_DEPTH = CAM_COMPONENT_HEIGHT + 0.3  # rear relief budget
+# Part 4 is a solid plate 5.36 mm thick (user), with 4 blind pin holes.
+COVER_THICKNESS = 5.36
+# Skirt (rim) on the cover's rear side wrapping the carrier board so 3+5 and 4 nest:
+# inner opening = board + 2 x 0.15 mm, wall 1.2 mm, no supports (vertical walls).
+COVER_SKIRT_CLEARANCE = 0.15
+COVER_SKIRT_WALL = 1.22  # cover width 28.24 (user)
+COVER_RAIL_MIN_Z = 9.70  # above the base shelf lip (top at z 9.4)
+# Camera pins now live on the carrier (3+5); the cover only has blind holes.
+COVER_PIN_HOLE_DIAMETER = 2.25  # carrier pin 2.00 + 0.25: 0.125 mm/side insertion clearance
+COVER_PIN_ENGAGEMENT = 1.20  # pin length inside the cover
+COVER_PIN_HOLE_DEPTH = COVER_PIN_ENGAGEMENT + 0.20
+# Lens window of the cover (part 4). Barrel ~8.5 mm is a VISUAL estimate (not
+# measured); window = barrel + 2 x 0.45 clearance. Offsets are relative to the
+# hole-pattern centre (+X right, +Z up; +Z = side away from the FPC connector).
+# Single reference: official Camera Module 3 mechanical drawing (PDF vector
+# data): holes 21 x 12.5, lens axis centred in X and 14.5 mm from the connector
+# edge = on the far hole row, i.e. 12.5/2 - 0.1 = 6.15 mm above pattern centre.
+# Which PCB edge is 'up' in the print is an assumption (connector at bottom).
+LENS_BARREL_SIZE = 8.50
+LENS_CLEARANCE_PER_SIDE = 0.45
+LENS_HOLE_DIAMETER = LENS_BARREL_SIZE + 2 * LENS_CLEARANCE_PER_SIDE  # 9.40
+# X: user observation - lens square and optic are centred between the two holes
+# on the ribbon (connector) side, i.e. on the pattern centre line (x = 0).
+LENS_OFFSET_X = 0.0
+assert LENS_OFFSET_X == 0.0
+# User caliper: lens square sits 4.11 mm from the connector-side PCB edge and
+# 6.86 mm from the opposite (hole-side) edge => square = 24.16 - 4.11 - 6.86
+# = 13.19 mm along Z, centred in X between the connector-side holes.
+# Near hole row is assumed 2.0 mm from the connector edge (drawing, not
+# certain). The earlier drawing reading (14.5 mm) CONTRADICTS this.
+LENS_SQUARE_EDGE_FROM_CONNECTOR = 4.11
+LENS_SQUARE_EDGE_FROM_HOLE_SIDE = 6.86
+LENS_SQUARE_SIZE = (CAM_PCB_HEIGHT - LENS_SQUARE_EDGE_FROM_CONNECTOR
+                    - LENS_SQUARE_EDGE_FROM_HOLE_SIDE)
+CAM_HOLE_ROW_FROM_CONNECTOR_EDGE = 2.00
+LENS_OFFSET_Z = (LENS_SQUARE_EDGE_FROM_CONNECTOR + LENS_SQUARE_SIZE / 2
+                 - CAM_HOLE_ROW_FROM_CONNECTOR_EDGE - CAM_MOUNT_HOLE_SPACING / 2)
+# Square recess on the cover's back face for the lens housing. The housing is
+# the user's caliper square (13.19 mm along Z, see below); the recess adds a
+# clearance per side so the housing edges stay at 4.11 / 6.86 mm from the PCB
+# edges (measured and checked on the STL by verify_stl.py). Depth is capped by
+# the front wall (>= 1.2 mm around the round window).
+LENS_HOUSING_SIZE = LENS_SQUARE_SIZE
+LENS_HOUSING_CLEARANCE = 0.20
+LENS_RECESS_SIZE = LENS_HOUSING_SIZE + 2 * LENS_HOUSING_CLEARANCE  # 13.59
+LENS_RECESS_FRONT_WALL = 1.20
+# Cover redesign (user): square recess 11 mm along Z, its connector-side edge
+# 4.69 mm from the cover's connector-side (bottom) edge; the round window is
+# centred on it. Pin holes unchanged. Cover length 29.13 mm (was 24.50).
+COVER_RECESS_Z = 11.20  # user: 10.86 after print + 0.34 compensation
+COVER_LENS_RISE = 0.00  # user: round window centred on the square (no offset)
+COVER_RECESS_BOTTOM_FROM_EDGE = 1.30  # user: pin-row centre (z 20.21) = square top edge (was 4.69)
+COVER_LENGTH_Z = CAM_HOUSING_HEIGHT  # 24.50: top blocks above the 3+5 plate (z>32.21) removed (user)
+LENS_RECESS_WIDTH_X = 14.00  # user: 13.59 'voir 14' mm across X (room for the lens connector)
+LENS_RECESS_DEPTH = 5.62  # user; deeper than the 5.36 plate, so a front pad is added
+COVER_FRONT_PAD = LENS_RECESS_DEPTH + LENS_RECESS_FRONT_WALL - COVER_THICKNESS  # 1.46
+COVER_LENS_HOLE_DIAMETER = 8.80  # barrel 8.5 + 0.15/side; ring Z = (11 - 8.8)/2 = 1.10
+COVER_RELIEF_START = 12.43  # user, from the cover bottom edge
+COVER_RELIEF_LENGTH = 13.78
+COVER_RELIEF_DEPTH = 3.50
+COVER_NOTCH_HALF_WIDTH = CARRIER_TAB_WIDTH / 2 + 0.20
+COVER_NOTCH_Z_MIN = 32.20
+
+# Barn doors (part 4 hood). The doors must sit IN FRONT of the lens glass, so
+# a hollow standoff lifts the door frame above the barrel; the frame holds two
+# guide layers (X doors behind, Z doors in front). Doors are flat plates that
+# slide in slots open on the sides (friction fit, no screws).
+LENS_PROTRUSION = (
+    CAM_TOTAL_THICKNESS - CAM_PCB_BARE_THICKNESS - CAM_PCB_SLOT_CLEARANCE - COVER_THICKNESS
+)  # lens glass above the cover front face (~8.0)
+HOOD_LENS_GAP = 0.50
+HOOD_STANDOFF_DEPTH = LENS_PROTRUSION + HOOD_LENS_GAP
+HOOD_WALL = 1.60  # standoff wall thickness
+DOOR_THICKNESS = 0.90
+DOOR_SLOT_CLEARANCE = 0.20  # total, added to the slot thickness
+DOOR_SLOT_MARGIN = 0.40  # total, added to the slot's other dimension
+DOOR_RIB = 0.80  # solid layer between/in front of slots
+DOOR_LENGTH = 10.0  # sliding direction
+# Open aperture of the frame at the fully-open position. Sized so the
+# 102 x 67 deg field of view is not clipped by the frame itself.
+FRAME_BORE_WIDTH = 18.0
+FRAME_BORE_HEIGHT = 17.0
+DOOR_X_HEIGHT = FRAME_BORE_HEIGHT + 2.0  # left/right doors, Z extent
+DOOR_Z_WIDTH = FRAME_BORE_WIDTH + 2.0  # top/bottom doors, X extent
+DOOR_SLOT_DEPTH = DOOR_THICKNESS + DOOR_SLOT_CLEARANCE
+DOOR_STACK_DEPTH = 2 * DOOR_SLOT_DEPTH + 2 * DOOR_RIB
+# Closing travel: from fully open (door edge at the bore edge) to the axis.
+DOOR_TRAVEL_X = FRAME_BORE_WIDTH / 2
+DOOR_TRAVEL_Z = FRAME_BORE_HEIGHT / 2
+
+# Turntable framing (user measurements, approximate)
+TURNTABLE_DIAMETER_MM = 200.0
+TURNTABLE_NEAR_EDGE_MM = (125.0, 135.0)   # camera -> nearest turntable edge
+TURNTABLE_FAR_POINT_MM = (320.0, 520.0)   # farthest point, front..rear position
+FOV_MARGIN = 1.10
+DOOR_PLANE_AHEAD_OF_LENS_MM = 3.0         # assumed, not measured
+
+
+def required_full_fov_deg(center_distance_mm):
+    r = TURNTABLE_DIAMETER_MM / 2 * FOV_MARGIN
+    return 2 * math.degrees(math.asin(r / center_distance_mm))
+
+
+FOV_NEAR_DEG = required_full_fov_deg(TURNTABLE_NEAR_EDGE_MM[0] + TURNTABLE_DIAMETER_MM / 2)
+FOV_FAR_DEG = required_full_fov_deg(TURNTABLE_FAR_POINT_MM[1] - TURNTABLE_DIAMETER_MM / 2)
+# Door edge offset from the optical axis for each case
+DOOR_EDGE_NEAR_MM = DOOR_PLANE_AHEAD_OF_LENS_MM * math.tan(math.radians(FOV_NEAR_DEG / 2))
+DOOR_EDGE_FAR_MM = DOOR_PLANE_AHEAD_OF_LENS_MM * math.tan(math.radians(FOV_FAR_DEG / 2))
+assert DOOR_TRAVEL_X >= FRAME_BORE_WIDTH / 2 - DOOR_EDGE_FAR_MM
+assert DOOR_TRAVEL_Z >= FRAME_BORE_HEIGHT / 2 - DOOR_EDGE_FAR_MM
 # Slightly undersized vs. CAM_MOUNT_HOLE_DIAMETER (2.50mm) for a snug push
 # fit directly against the PCB's rigid holes.
-CLIP_PIN_DIAMETER = 2.30
-CLIP_PIN_TIP_DIAMETER = 1.20
-CLIP_PIN_TIP_LENGTH = 0.80
-# How far short of the carrier's back face the pins stop, so they never
-# reach into the 1mm gap in front of the main plate (ball-socket area).
-CLIP_PIN_BACK_MARGIN = 0.30
+# Pins on the carrier front face (3+5), exactly at the official 21 x 12.5 mm
+# hole pattern: thin (2.0 vs ~2.2-2.5 mm camera holes), through the PCB slot
+# then into the cover's blind holes.
+CARRIER_PIN_DIAMETER = 2.00
+CARRIER_PIN_TIP_DIAMETER = 1.20
+CARRIER_PIN_TIP_LENGTH = 0.60  # ~45 deg lead-in
+CARRIER_PIN_LENGTH = CAM_PCB_THICKNESS + COVER_PIN_ENGAGEMENT  # 2.46
 
 # Camera support plate (28.05 x 7 x 1 mm, hardware/mechanical_specs.md) and the
 # M5 x 0.8 ball screw that snaps into its 4-petal socket.
@@ -193,11 +355,14 @@ SUPPORT_SCREW_PILOT_DEPTH = 1.40  # carrier is 2 mm thick: stays closed on the P
 SUPPORT_SOCKET_DIAMETER = BALL_DIAMETER + 0.40  # 6.90 mm (spec)
 SUPPORT_LIP_DIAMETER = BALL_DIAMETER - 0.50  # rim narrower than the ball: snap
 SUPPORT_SHAFT_HOLE_DIAMETER = 5.30
-SUPPORT_COLLAR_RADIUS = (SUPPORT_SOCKET_DIAMETER / 2) + 0.80
+PETAL_WALL = 1.20  # petal wall thickness (was 0.80, a petal snapped/curled)
+SUPPORT_COLLAR_RADIUS = (SUPPORT_SOCKET_DIAMETER / 2) + PETAL_WALL
 PETAL_HEIGHT = 4.00
 PETAL_LIP_HEIGHT = 0.60
 PETAL_CHAMFER = 0.50
-PETAL_SLIT_WIDTH = 0.80
+PETAL_SLIT_WIDTH = 1.00
+# 45 deg chamfer under the lip so the socket prints with no flat overhang.
+PETAL_LIP_UNDERCUT = (SUPPORT_SOCKET_DIAMETER - SUPPORT_LIP_DIAMETER) / 2  # 0.45
 BALL_SCREW_LENGTH = 40.00
 BALL_SCREW_PITCH = 0.80  # ISO M5 coarse
 BALL_SCREW_THREAD_DEPTH = 0.50
@@ -215,6 +380,7 @@ PLATE_SLOT_DEPTH = SUPPORT_WIDTH + 0.40
 SLOT_TEST_WALL = 3.00
 SLOT_TEST_HEIGHT = 8.00
 SLOT_TEST_FLOOR = 2.00
+MERGED_BALL_POCKET_RADIUS = 3.50  # > 2.65 mm shaft-hole radius that lets the ball dip in
 
 
 def make_box(
@@ -292,15 +458,18 @@ class CameraHoleLayout:
 
 
 def camera_hole_layout(ear: EarGeometry) -> CameraHoleLayout:
-    """Shared Pi Camera V3 mounting-hole positions (21mm square pattern),
-    used by both the carrier and the front cache so pins/screws line up."""
-    hole_top_z = ear.ear_z - 1.50
-    hole_bottom_z = hole_top_z - CAM_MOUNT_HOLE_SPACING
+    """Shared Pi Camera V3 mounting-hole positions (21.00 x 12.50 mm
+    pattern), used by both the carrier and the front cache so pins/screws
+    line up. The pattern centre stays where the old 21 mm square sat, so the
+    PCB outline, cover and ribbon geometry do not move."""
+    hole_center_z = ear.ear_z - 1.50 - 10.50
+    hole_top_z = hole_center_z + CAM_MOUNT_HOLE_SPACING / 2
+    hole_bottom_z = hole_center_z - CAM_MOUNT_HOLE_SPACING / 2
     return CameraHoleLayout(
-        mount_hole_x=CAM_MOUNT_HOLE_SPACING / 2,
+        mount_hole_x=CAM_MOUNT_HOLE_SPACING_X / 2,
         hole_top_z=hole_top_z,
         hole_bottom_z=hole_bottom_z,
-        hole_center_z=(hole_top_z + hole_bottom_z) / 2,
+        hole_center_z=hole_center_z,
     )
 
 
@@ -452,7 +621,7 @@ def make_mount() -> TopoDS_Shape:
     # the carrier board, so without this the carrier's bottom edge jams
     # against the wall tops even at zero tilt.
     wall_inner_x = wall_x - (SIDE_WALL_THICKNESS / 2)
-    notch_outer_x = (CAM_PCB_WIDTH / 2) + CARRIER_WALL_CLEARANCE
+    notch_outer_x = (CAM_HOUSING_WIDTH / 2) + CARRIER_WALL_CLEARANCE
     if notch_outer_x > wall_inner_x:
         notch_width = notch_outer_x - wall_inner_x
         notch_center_x = (notch_outer_x + wall_inner_x) / 2
@@ -507,7 +676,7 @@ def make_mount() -> TopoDS_Shape:
     relief_y_center = (relief_y_min + relief_y_max) / 2
     relief_y_span = (relief_y_max - relief_y_min) + 1.00
     shelf_relief = make_box(
-        CAM_PCB_WIDTH,
+        CAM_HOUSING_WIDTH,
         relief_y_span,
         relief_depth,
         y=relief_y_center,
@@ -578,7 +747,8 @@ def make_mount() -> TopoDS_Shape:
     return fuse(cut(cut(cut(mount, pivot_hole), m5_thread_hole), csi_slot), m5_thread_ridge)
 
 
-def make_camera_carrier() -> TopoDS_Shape:
+def make_camera_carrier(ball_pad_radius: float = BALL_SOCKET_PAD_RADIUS,
+                        screw_pilots: bool = True) -> TopoDS_Shape:
     """Carries the Pi Camera Module 3 PCB (25 x 24mm, 21mm square hole
     pattern) and provides the hinge tab that slots between the base's ears
     on the M3 pivot axle, plus a dimple on the back where the adjustment
@@ -590,7 +760,7 @@ def make_camera_carrier() -> TopoDS_Shape:
     carrier_center_y = carrier_back_y - (CARRIER_THICKNESS / 2)
     carrier_height = ear.ear_z - MATERIAL_THICKNESS
     board_plate = make_box(
-        CAM_PCB_WIDTH,
+        CAM_HOUSING_WIDTH,
         CARRIER_THICKNESS,
         carrier_height,
         y=carrier_center_y,
@@ -649,7 +819,7 @@ def make_camera_carrier() -> TopoDS_Shape:
             gp_Dir(0, 1, 0),
         ),
         CAM_MOUNT_HOLE_DIAMETER / 2,
-        CARRIER_THICKNESS + 2,
+        CARRIER_THICKNESS + 1 + CARRIER_HOLE_BOSS_HEIGHT - CARRIER_HOLE_BOSS_END_WALL,
     ).Shape()
     top_right_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
@@ -657,7 +827,7 @@ def make_camera_carrier() -> TopoDS_Shape:
             gp_Dir(0, 1, 0),
         ),
         CAM_MOUNT_HOLE_DIAMETER / 2,
-        CARRIER_THICKNESS + 2,
+        CARRIER_THICKNESS + 1 + CARRIER_HOLE_BOSS_HEIGHT - CARRIER_HOLE_BOSS_END_WALL,
     ).Shape()
     bottom_left_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
@@ -665,7 +835,7 @@ def make_camera_carrier() -> TopoDS_Shape:
             gp_Dir(0, 1, 0),
         ),
         CAM_MOUNT_HOLE_DIAMETER / 2,
-        CARRIER_THICKNESS + 2,
+        CARRIER_THICKNESS + 1 + CARRIER_HOLE_BOSS_HEIGHT - CARRIER_HOLE_BOSS_END_WALL,
     ).Shape()
     bottom_right_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
@@ -673,7 +843,7 @@ def make_camera_carrier() -> TopoDS_Shape:
             gp_Dir(0, 1, 0),
         ),
         CAM_MOUNT_HOLE_DIAMETER / 2,
-        CARRIER_THICKNESS + 2,
+        CARRIER_THICKNESS + 1 + CARRIER_HOLE_BOSS_HEIGHT - CARRIER_HOLE_BOSS_END_WALL,
     ).Shape()
 
     # Shallow flat-bottomed pocket on the back face, aligned with the base's
@@ -696,7 +866,7 @@ def make_camera_carrier() -> TopoDS_Shape:
             gp_Pnt(0, carrier_back_y, adjustment_boss_z),
             gp_Dir(0, -1, 0),
         ),
-        BALL_SOCKET_PAD_RADIUS,
+        ball_pad_radius,
         BALL_SOCKET_DEPTH,
     ).Shape()
 
@@ -712,7 +882,12 @@ def make_camera_carrier() -> TopoDS_Shape:
     #     the two pockets never meet even where their Z ranges overlap.
     pcb_bottom_z = hole_bottom_z - ((CAM_PCB_HEIGHT - CAM_MOUNT_HOLE_SPACING) / 2)
     connector_center_z = pcb_bottom_z + FPC_CONNECTOR_OFFSET_FROM_PCB_BOTTOM
-    channel_top_z = connector_center_z + CARRIER_CABLE_CHANNEL_MARGIN_ABOVE_CONNECTOR
+    # The 8.88 mm tongue is centred on the connector: keep half its length
+    # (plus clearance) open above it, never less than the existing margin.
+    channel_top_z = connector_center_z + max(
+        CARRIER_CABLE_CHANNEL_MARGIN_ABOVE_CONNECTOR,
+        (CAM_FFC_LENGTH + CAM_FFC_LENGTH_CLEARANCE) / 2,
+    )
     ball_socket_bottom_z = adjustment_boss_z - BALL_SOCKET_PAD_RADIUS
     channel_through_top_z = ball_socket_bottom_z - CARRIER_CABLE_CHANNEL_CLEAR_MARGIN
     cable_channel_through = make_box(
@@ -729,14 +904,88 @@ def make_camera_carrier() -> TopoDS_Shape:
         y=carrier_front_y + (CARRIER_CABLE_CHANNEL_DEPTH / 2),
         z=channel_through_top_z,
     )
+    # Connector window: through the carrier plate (limited by its 2 mm
+    # thickness, less than CAM_FFC_CONNECTOR_RELIEF), stopping short of the
+    # ball pocket on the back face.
+    window_top_z = min(
+        channel_top_z,
+        adjustment_boss_z - ball_pad_radius - CARRIER_CABLE_CHANNEL_CLEAR_MARGIN,
+    )
+    connector_window = make_box(
+        CAM_FFC_WIDTH + CAM_FFC_WIDTH_CLEARANCE,
+        CARRIER_THICKNESS + 2,
+        window_top_z - channel_through_top_z,
+        y=carrier_center_y,
+        z=channel_through_top_z,
+    )
+
+    # Wide through-slot under the lower mounting holes: passes the 20.72 mm
+    # connector/ribbon span (the narrow 16 mm slot above stays between holes).
+    wide_top_z = (
+        hole_bottom_z - CAM_MOUNT_HOLE_DIAMETER / 2 - CARRIER_CABLE_WIDE_HOLE_MARGIN
+    )
+    cable_channel_wide = make_box(
+        CARRIER_CABLE_WIDE_WIDTH,
+        CARRIER_THICKNESS + 2,
+        wide_top_z - MATERIAL_THICKNESS,
+        y=carrier_center_y,
+        z=MATERIAL_THICKNESS,
+    )
+    # Component relief: board back components (up to 4.25 mm) cannot fit in a
+    # 2 mm carrier, so recess the PCB side between the holes as far as the
+    # wall allows (the carrier front is already pressed against the PCB).
+    pocket_half_x = mount_hole_x - CAM_MOUNT_HOLE_DIAMETER / 2 - CARRIER_COMPONENT_POCKET_WALL_X
+    pocket_bottom_z = wide_top_z
+    pocket_top_z = hole_top_z - CAM_MOUNT_HOLE_DIAMETER / 2 - CARRIER_COMPONENT_POCKET_WALL_X
+    component_pocket = make_box(
+        2 * pocket_half_x,
+        CARRIER_THICKNESS + 2,
+        pocket_top_z - pocket_bottom_z + 0.01,
+        y=carrier_center_y,
+        z=pocket_bottom_z - 0.01,
+    )
+
+    # Rear hood closing the upper part of the component pocket (above the
+    # fused support plate): walls rise from the carrier back, a skin closes
+    # the cavity at the full component depth. Printed back-down, so the
+    # cavity opens upward: no overhang, no supports.
+    hood_bottom_z = adjustment_boss_z + BALL_DIAMETER / 2 + 0.5  # clears the rod
+    hood_top_z = pocket_top_z + CARRIER_REAR_HOOD_WALL
+    hood_half_x = pocket_half_x + CARRIER_REAR_HOOD_WALL
+    cavity_depth = CAM_COMPONENT_CLEARANCE_DEPTH - CAM_PCB_THICKNESS
+    skin_back_y = carrier_front_y + cavity_depth + CARRIER_REAR_HOOD_WALL
+    hood_outer = make_box(
+        2 * hood_half_x,
+        skin_back_y - carrier_back_y + 0.1,
+        hood_top_z - hood_bottom_z,
+        y=(skin_back_y + carrier_back_y - 0.1) / 2,
+        z=hood_bottom_z,
+    )
+    hood_cavity = make_box(
+        2 * pocket_half_x,
+        cavity_depth + 1.0,
+        pocket_top_z - hood_bottom_z + 1.0,
+        y=carrier_front_y + (cavity_depth - 1.0) / 2,
+        z=hood_bottom_z - 1.0,
+    )
+    carrier = fuse(carrier, cut(hood_outer, hood_cavity))
+
+    for bx in (-mount_hole_x, mount_hole_x):
+        for bz in (hole_top_z, hole_bottom_z):
+            carrier = fuse(
+                carrier,
+                BRepPrimAPI_MakeCylinder(
+                    gp_Ax2(gp_Pnt(bx, carrier_back_y - 0.5, bz), gp_Dir(0, 1, 0)),
+                    CARRIER_HOLE_BOSS_DIAMETER / 2,
+                    CARRIER_HOLE_BOSS_HEIGHT + 0.5,
+                ).Shape(),
+            )
 
     carrier = cut(carrier, pivot_hole)
-    carrier = cut(cut(carrier, top_left_hole), top_right_hole)
-    carrier = cut(cut(carrier, bottom_left_hole), bottom_right_hole)
     carrier = cut(carrier, ball_socket)
     # Two M3 pilot holes (self-tapping in PLA) on the 14 mm centres of the
     # camera support plate, fixing it flat on the carrier back face.
-    for sign in (-1, 1):
+    for sign in ((-1, 1) if screw_pilots else ()):
         carrier = cut(
             carrier,
             BRepPrimAPI_MakeCylinder(
@@ -749,10 +998,35 @@ def make_camera_carrier() -> TopoDS_Shape:
             ).Shape(),
         )
     carrier = cut(carrier, cable_channel_through)
-    return cut(carrier, cable_channel_groove)
+    carrier = cut(carrier, cable_channel_wide)
+    carrier = cut(carrier, component_pocket)
+    carrier = cut(carrier, connector_window)
+    carrier = cut(carrier, cable_channel_groove)
+    return fuse(carrier, *camera_pins(holes, carrier_center_y - CARRIER_THICKNESS / 2))
 
 
-def make_camera_front_cover() -> TopoDS_Shape:
+def camera_pins(holes, front_y: float) -> list[TopoDS_Shape]:
+    """4 thin pins on the carrier front face (-Y), on the 21 x 12.5 pattern."""
+    shaft_length = CARRIER_PIN_LENGTH - CARRIER_PIN_TIP_LENGTH
+    pins = []
+    for x in (-holes.mount_hole_x, holes.mount_hole_x):
+        for z in (holes.hole_top_z, holes.hole_bottom_z):
+            shaft = BRepPrimAPI_MakeCylinder(
+                gp_Ax2(gp_Pnt(x, front_y + 0.2, z), gp_Dir(0, -1, 0)),
+                CARRIER_PIN_DIAMETER / 2,
+                shaft_length + 0.2,
+            ).Shape()
+            tip = BRepPrimAPI_MakeCone(
+                gp_Ax2(gp_Pnt(x, front_y - shaft_length, z), gp_Dir(0, -1, 0)),
+                CARRIER_PIN_DIAMETER / 2,
+                CARRIER_PIN_TIP_DIAMETER / 2,
+                CARRIER_PIN_TIP_LENGTH,
+            ).Shape()
+            pins.append(fuse(shaft, tip))
+    return pins
+
+
+def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     """Lens-side cache that clips onto the Pi Camera V3 through the same 4
     mounting holes used by the carrier, instead of screws/nuts. Four pins
     push through the PCB's holes and into the carrier's holes (press/
@@ -765,56 +1039,188 @@ def make_camera_front_cover() -> TopoDS_Shape:
     pcb_front_y = carrier_front_y - CAM_PCB_THICKNESS
     cover_back_y = pcb_front_y
     cover_center_y = cover_back_y - (COVER_THICKNESS / 2)
-    cover_bottom_z = ear.ear_z - CAM_PCB_HEIGHT
+    cover_bottom_z = ear.ear_z - CAM_HOUSING_HEIGHT
 
     cover_plate = make_box(
-        CAM_PCB_WIDTH,
+        CAM_HOUSING_WIDTH,
         COVER_THICKNESS,
-        CAM_PCB_HEIGHT,
+        CAM_HOUSING_HEIGHT,
         y=cover_center_y,
         z=cover_bottom_z,
     )
+    # Side rails (left/right) wrap the carrier board edges; they start above
+    # the base shelf lip (COVER_RAIL_MIN_Z) and the carrier is wider than the
+    # camera at the bottom/top, so no top/bottom rails.
+    rail_z0 = COVER_RAIL_MIN_Z
+    rail_h = cover_bottom_z + CAM_HOUSING_HEIGHT - rail_z0
+    skirt_depth = CAM_PCB_THICKNESS + 1.50
+    rails = []
+    for sign in (-1, 1):
+        x_in = CAM_HOUSING_WIDTH / 2 + COVER_SKIRT_CLEARANCE
+        x_out = x_in + COVER_SKIRT_WALL
+        wing_in = CAM_HOUSING_WIDTH / 2 - 0.2
+        rails.append(
+            make_box(
+                x_out - x_in,
+                skirt_depth + 0.1,
+                rail_h,
+                x=sign * (x_in + x_out) / 2,
+                y=cover_back_y + (skirt_depth - 0.1) / 2,
+                z=rail_z0,
+            )
+        )
+        rails.append(
+            make_box(
+                x_out - wing_in,
+                COVER_THICKNESS,
+                rail_h,
+                x=sign * (wing_in + x_out) / 2,
+                y=cover_center_y,
+                z=rail_z0,
+            )
+        )
+    cover_plate = fuse(cover_plate, *rails)
+    if COVER_LENGTH_Z > CAM_HOUSING_HEIGHT:
+      cover_plate = fuse(
+        cover_plate,
+        make_box(
+            CAM_HOUSING_WIDTH,
+            COVER_THICKNESS,
+            COVER_LENGTH_Z - CAM_HOUSING_HEIGHT,
+            y=cover_center_y,
+            z=cover_bottom_z + CAM_HOUSING_HEIGHT,
+        ),
+    )
 
     cover_front_y = cover_back_y - COVER_THICKNESS
+    cover_plate = fuse(
+        cover_plate,
+        make_box(
+            LENS_RECESS_WIDTH_X + 2 * LENS_RECESS_FRONT_WALL,
+            COVER_FRONT_PAD,
+            COVER_RECESS_Z + 2 * LENS_RECESS_FRONT_WALL,
+            y=cover_front_y - COVER_FRONT_PAD / 2,
+            z=cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE - LENS_RECESS_FRONT_WALL,
+        ),
+    )
     lens_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(0, cover_front_y - 1, holes.hole_center_z),
+            gp_Pnt(LENS_OFFSET_X, cover_front_y - COVER_FRONT_PAD - 1, cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE + COVER_RECESS_Z / 2 + COVER_LENS_RISE),
             gp_Dir(0, 1, 0),
         ),
-        LENS_HOLE_DIAMETER / 2,
-        COVER_THICKNESS + 2,
+        COVER_LENS_HOLE_DIAMETER / 2,
+        COVER_THICKNESS + COVER_FRONT_PAD + 2,
     ).Shape()
 
-    # Pins span the PCB thickness plus most of the carrier thickness,
-    # stopping short of the carrier's back face (ball-socket side).
-    engagement_length = (
-        CAM_PCB_THICKNESS + CARRIER_THICKNESS - CLIP_PIN_BACK_MARGIN
-    )
-    shaft_length = engagement_length - CLIP_PIN_TIP_LENGTH
-
-    def clip_pin(x: float, z: float) -> TopoDS_Shape:
-        shaft = BRepPrimAPI_MakeCylinder(
-            gp_Ax2(gp_Pnt(x, cover_back_y, z), gp_Dir(0, 1, 0)),
-            CLIP_PIN_DIAMETER / 2,
-            shaft_length,
+    pin_holes = [
+        BRepPrimAPI_MakeCylinder(
+            gp_Ax2(gp_Pnt(sx * holes.mount_hole_x, cover_back_y - COVER_PIN_HOLE_DEPTH, pz), gp_Dir(0, 1, 0)),
+            COVER_PIN_HOLE_DIAMETER / 2,
+            COVER_PIN_HOLE_DEPTH + 0.5,
         ).Shape()
-        tip = BRepPrimAPI_MakeCone(
-            gp_Ax2(gp_Pnt(x, cover_back_y + shaft_length, z), gp_Dir(0, 1, 0)),
-            CLIP_PIN_DIAMETER / 2,
-            CLIP_PIN_TIP_DIAMETER / 2,
-            CLIP_PIN_TIP_LENGTH,
-        ).Shape()
-        return fuse(shaft, tip)
-
-    pins = [
-        clip_pin(-holes.mount_hole_x, holes.hole_top_z),
-        clip_pin(holes.mount_hole_x, holes.hole_top_z),
-        clip_pin(-holes.mount_hole_x, holes.hole_bottom_z),
-        clip_pin(holes.mount_hole_x, holes.hole_bottom_z),
+        for sx in (-1, 1)
+        for pz in (holes.hole_top_z, holes.hole_bottom_z)
     ]
+    cover = cover_plate
+    for pin_hole in pin_holes:
+        cover = cut(cover, pin_hole)
+    cover = cut(cover, lens_hole)
+    lens_recess = make_box(
+        LENS_RECESS_WIDTH_X,
+        LENS_RECESS_DEPTH + 0.5,
+        COVER_RECESS_Z,
+        x=LENS_OFFSET_X,
+        y=cover_back_y - LENS_RECESS_DEPTH / 2 + 0.25,
+        z=cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE,
+    )
+    cover = cut(cover, lens_recess)
+    relief = make_box(
+        LENS_RECESS_WIDTH_X,
+        COVER_RELIEF_DEPTH + 0.5,
+        COVER_RELIEF_LENGTH,
+        x=LENS_OFFSET_X,
+        y=cover_back_y - COVER_RELIEF_DEPTH / 2 + 0.25,
+        z=cover_bottom_z + COVER_RELIEF_START,
+    )
+    cover = cut(cover, relief)
+    notch = make_box(
+        2 * COVER_NOTCH_HALF_WIDTH,
+        COVER_THICKNESS + COVER_FRONT_PAD + 4,
+        COVER_LENGTH_Z,
+        x=0,
+        y=cover_center_y - COVER_FRONT_PAD / 2,
+        z=COVER_NOTCH_Z_MIN,
+    )
+    cover = cut(cover, notch)
+    if not with_frame:
+        return cover
 
-    cover = fuse(cover_plate, *pins)
-    return cut(cover, lens_hole)
+    axis_x = LENS_OFFSET_X
+    axis_z = cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE + COVER_RECESS_Z / 2 + COVER_LENS_RISE
+    cover_center_z = cover_bottom_z + CAM_HOUSING_HEIGHT / 2
+    standoff = cut(
+        make_box(
+            CAM_HOUSING_WIDTH,
+            HOOD_STANDOFF_DEPTH,
+            CAM_HOUSING_HEIGHT,
+            y=cover_front_y - HOOD_STANDOFF_DEPTH / 2,
+            z=cover_bottom_z,
+        ),
+        make_box(
+            CAM_HOUSING_WIDTH - 2 * HOOD_WALL,
+            HOOD_STANDOFF_DEPTH + 2,
+            CAM_HOUSING_HEIGHT - 2 * HOOD_WALL,
+            y=cover_front_y - HOOD_STANDOFF_DEPTH / 2,
+            z=cover_bottom_z + HOOD_WALL,
+        ),
+    )
+
+    stack_y0 = cover_front_y - HOOD_STANDOFF_DEPTH
+    stack = make_box(
+        CAM_HOUSING_WIDTH,
+        DOOR_STACK_DEPTH,
+        CAM_HOUSING_HEIGHT,
+        y=stack_y0 - DOOR_STACK_DEPTH / 2,
+        z=cover_bottom_z,
+    )
+    bore = make_box(
+        FRAME_BORE_WIDTH,
+        DOOR_STACK_DEPTH + 2,
+        FRAME_BORE_HEIGHT,
+        x=axis_x,
+        y=stack_y0 - DOOR_STACK_DEPTH / 2,
+        z=axis_z - FRAME_BORE_HEIGHT / 2,
+    )
+    # Rear layer: X doors (left/right), slot open through both sides.
+    slot_x_doors = make_box(
+        CAM_HOUSING_WIDTH + 2,
+        DOOR_SLOT_DEPTH,
+        DOOR_X_HEIGHT + DOOR_SLOT_MARGIN,
+        y=stack_y0 - DOOR_SLOT_DEPTH / 2,
+        z=axis_z - (DOOR_X_HEIGHT + DOOR_SLOT_MARGIN) / 2,
+    )
+    # Front layer: Z doors (top/bottom), slot open through top and bottom.
+    slot_z_y = stack_y0 - DOOR_SLOT_DEPTH - DOOR_RIB
+    slot_z_doors = make_box(
+        DOOR_Z_WIDTH + DOOR_SLOT_MARGIN,
+        DOOR_SLOT_DEPTH,
+        CAM_HOUSING_HEIGHT + 2,
+        x=axis_x,
+        y=slot_z_y - DOOR_SLOT_DEPTH / 2,
+        z=cover_bottom_z - 1,
+    )
+    stack = cut(cut(cut(stack, bore), slot_x_doors), slot_z_doors)
+    return fuse(cover, standoff, stack)
+
+
+def make_barn_door_x() -> TopoDS_Shape:
+    """Left/right door (print 2x), flat: X = sliding length, Y = height."""
+    return make_box(DOOR_LENGTH, DOOR_X_HEIGHT, DOOR_THICKNESS, z=0)
+
+
+def make_barn_door_z() -> TopoDS_Shape:
+    """Top/bottom door (print 2x), flat: X = width, Y = sliding length."""
+    return make_box(DOOR_Z_WIDTH, DOOR_LENGTH, DOOR_THICKNESS, z=0)
 
 
 def make_ball(center: gp_Pnt, radius: float) -> TopoDS_Shape:
@@ -1017,7 +1423,7 @@ def make_ball_screw() -> TopoDS_Shape:
     return cut(fuse(shaft, thread, ball), driver_slot)
 
 
-def make_camera_support_plate() -> TopoDS_Shape:
+def make_camera_support_plate(screw_holes: bool = True) -> TopoDS_Shape:
     """28.05 x 7 x 1 mm plate with a 4-petal snap-fit socket for the ball."""
     plate = make_box(SUPPORT_LENGTH, SUPPORT_WIDTH, SUPPORT_THICKNESS)
     collar = make_cylinder_z(
@@ -1025,9 +1431,18 @@ def make_camera_support_plate() -> TopoDS_Shape:
     )
     body = fuse(plate, collar)
     top = SUPPORT_THICKNESS + PETAL_HEIGHT
+    lip_z = top - PETAL_LIP_HEIGHT
     bore = make_cylinder_z(
-        SUPPORT_SOCKET_DIAMETER / 2, SUPPORT_THICKNESS, PETAL_HEIGHT + 1
+        SUPPORT_SOCKET_DIAMETER / 2,
+        SUPPORT_THICKNESS,
+        lip_z - PETAL_LIP_UNDERCUT - SUPPORT_THICKNESS,
     )
+    under_chamfer = BRepPrimAPI_MakeCone(
+        gp_Ax2(gp_Pnt(0, 0, lip_z - PETAL_LIP_UNDERCUT), gp_Dir(0, 0, 1)),
+        SUPPORT_SOCKET_DIAMETER / 2,
+        SUPPORT_LIP_DIAMETER / 2,
+        PETAL_LIP_UNDERCUT,
+    ).Shape()
     lip_hole = make_cylinder_z(
         SUPPORT_LIP_DIAMETER / 2, top - PETAL_LIP_HEIGHT, PETAL_LIP_HEIGHT + 1
     )
@@ -1053,12 +1468,13 @@ def make_camera_support_plate() -> TopoDS_Shape:
         z=SUPPORT_THICKNESS,
     )
     body = cut(body, bore)
+    body = cut(body, under_chamfer)
     body = cut(body, lip_hole)
     body = cut(body, chamfer)
     body = cut(body, shaft_hole)
     body = cut(body, slit_x)
     body = cut(body, slit_y)
-    for sign in (-1, 1):
+    for sign in ((-1, 1) if screw_holes else ()):
         body = cut(
             body,
             BRepPrimAPI_MakeCylinder(
@@ -1071,6 +1487,45 @@ def make_camera_support_plate() -> TopoDS_Shape:
             ).Shape(),
         )
     return body
+
+
+def make_camera_carrier_with_plate() -> TopoDS_Shape:
+    """Parts 3 + 5 in one printable solid, built in the assembled frame.
+
+    The support plate (5) is placed exactly as assemble.py does (Rx(-90),
+    base on the carrier back face, petals toward +Y), then trimmed to the
+    carrier width so nothing hangs out at the sides (the 28.05 mm plate
+    overhung the 25 mm carrier by 1.525 mm per side), and fused to the
+    carrier. The ball pad pocket is narrowed to a 3.5 mm radius: the ball only
+    dips into it through the 5.3 mm shaft hole, and a 12 mm wide pocket under
+    the fused plate would be an unsupported bridge with enclosed supports."""
+    ear = ear_geometry()
+    carrier_back_y = ear.plate_front_y - CARRIER_STANDOFF_GAP
+    boss_z = PLATE_HEIGHT - M5_THREAD_HOLE_OFFSET_FROM_TOP
+
+    carrier = make_camera_carrier(ball_pad_radius=MERGED_BALL_POCKET_RADIUS, screw_pilots=False)
+
+    rotate = gp_Trsf()
+    rotate.SetRotation(gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(1, 0, 0)), -math.pi / 2)
+    move = gp_Trsf()
+    move.SetTranslation(gp_Vec(0, carrier_back_y, boss_z))
+    plate = BRepBuilderAPI_Transform(make_camera_support_plate(screw_holes=False), rotate, True).Shape()
+    plate = BRepBuilderAPI_Transform(plate, move, True).Shape()
+
+    side_cut_width = SUPPORT_LENGTH
+    for sign in (-1, 1):
+        plate = cut(
+            plate,
+            make_box(
+                side_cut_width,
+                SUPPORT_THICKNESS + PETAL_HEIGHT + 2,
+                SUPPORT_WIDTH + 2,
+                x=sign * (CAM_HOUSING_WIDTH / 2 + side_cut_width / 2),
+                y=carrier_back_y + (SUPPORT_THICKNESS + PETAL_HEIGHT) / 2,
+                z=boss_z - SUPPORT_WIDTH / 2 - 1,
+            ),
+        )
+    return fuse(carrier, plate)
 
 
 def repair_stl(path: Path, tolerance: float = 0.02) -> None:
@@ -1171,11 +1626,12 @@ if __name__ == "__main__":
     export_model(make_fit_test(), "fit_test_rear_cavity_30.45x38.2.stl")
     export_model(make_adjustment_rod(), "adjustment_rod_M5x50_ball6.5_square_m3.stl")
     export_model(make_wheel_crank(), "wheel_crank_50mm_square_m3.stl")
-    export_model(make_camera_carrier(), "camera_carrier_v3_25x24_tab4.8.stl")
-    export_model(make_camera_front_cover(), "camera_front_cover_v3_clip.stl")
+    export_model(make_camera_carrier_with_plate(), "camera_carrier_plate_v4_onepiece.stl")
+    export_model(make_camera_front_cover(False), "camera_front_cover_v3_clip_no_frame.stl")
+    export_model(make_camera_front_cover(True), "camera_front_cover_v3_clip_with_frame.stl")
+    export_model(make_barn_door_x(), "camera_barn_door_x_x2.stl")
+    export_model(make_barn_door_z(), "camera_barn_door_z_x2.stl")
     export_model(make_ball_screw(), "ball_screw_M5x40_ball6.5.stl")
-    export_model(make_camera_support_plate(), "camera_support_plate_28.05x7x1.stl")
-    export_model(make_plate_slot_fit_test(), "fit_test_plate_slot_28.45x7.4.stl")
     from stamp_stl_settings import stamp_all
 
     stamp_all()

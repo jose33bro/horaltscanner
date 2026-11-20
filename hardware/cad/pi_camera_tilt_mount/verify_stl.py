@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Verify the printable STL files: closed manifold mesh, no degenerate
 triangles, expected bounding box and positive volume.
 
@@ -28,11 +28,12 @@ EXPECTED_EXTENTS = {
     HERE / "stl" / "fit_test_rear_cavity_30.45x38.2.stl": (30.45, 3.20, 38.20),
     HERE / "stl" / "adjustment_rod_M5x50_ball6.5_square_m3.stl": (6.50, 6.50, 60.50),
     HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 11.00),
-    HERE / "stl" / "camera_carrier_v3_25x24_tab4.8.stl": (25.00, 8.29, 35.00),
-    HERE / "stl" / "camera_front_cover_v3_clip.stl": (25.00, 4.50, 24.00),
+    HERE / "stl" / "camera_carrier_plate_v4_onepiece.stl": (25.50, 10.75, 35.00),
+    HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl": (28.24, 9.58, 24.50),
+    HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.24, 16.66, 24.50),
+    HERE / "stl" / "camera_barn_door_x_x2.stl": (10.00, 19.00, 0.90),
+    HERE / "stl" / "camera_barn_door_z_x2.stl": (20.00, 10.00, 0.90),
     HERE / "stl" / "ball_screw_M5x40_ball6.5.stl": (6.50, 6.50, 42.50),
-    HERE / "stl" / "camera_support_plate_28.05x7x1.stl": (28.05, 8.50, 5.00),
-    HERE / "stl" / "fit_test_plate_slot_28.45x7.4.stl": (34.45, 13.40, 8.00),
 }
 
 
@@ -107,8 +108,127 @@ def check_header(path: Path) -> list[str]:
     return errors
 
 
+def check_lens_square() -> list[str]:
+    import generate as g
+
+    import trimesh
+
+    # Measured on the no_frame cover STL (z up, front face = min y). Reference:
+    # PCB connector edge = lower pin-hole row z - 2.0 mm (drawing assumption),
+    # far (hole-side) edge = connector edge + 24.16 mm.
+    mesh = trimesh.load(HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl")
+    y0 = float(mesh.bounds[0][1])
+    zs = np.arange(mesh.bounds[0][2] + 0.01, mesh.bounds[1][2], 0.01)
+
+    def empty_runs(x: float, y: float) -> list[tuple[float, float]]:
+        inside = mesh.contains(np.array([[x, y, z] for z in zs]))
+        runs, start = [], None
+        for z, solid in zip(zs, inside):
+            if not solid and start is None:
+                start = z
+            elif solid and start is not None:
+                runs.append((start, z))
+                start = None
+        return runs
+
+    hole_runs = [r for r in empty_runs(10.5, y0 + g.COVER_THICKNESS + g.COVER_FRONT_PAD - 0.5)
+                 if r[1] - r[0] < 4.0]
+    if len(hole_runs) != 2:
+        print(f"FAIL cannot find the 2 pin holes at x=10.5: {hole_runs}")
+        return ["pin holes"]
+    conn_edge_z = (hole_runs[0][0] + hole_runs[0][1]) / 2 - g.CAM_HOLE_ROW_FROM_CONNECTOR_EDGE
+    far_edge_z = conn_edge_z + g.CAM_PCB_HEIGHT
+    recess = [r for r in empty_runs(g.LENS_HOLE_DIAMETER / 2 + 0.6, y0 + 3.0)
+              if r[1] - r[0] > 5.0]
+    if len(recess) != 1:
+        print(f"FAIL cannot isolate the square recess: {recess}")
+        return ["recess"]
+    conn = recess[0][0] - float(mesh.bounds[0][2])  # from the cover's connector-side (bottom) edge
+    far = float(mesh.bounds[1][2]) - recess[0][1]
+    if not (mesh.bounds[0][2] + 1.0 < recess[0][0] and recess[0][1] < mesh.bounds[1][2]):
+        print('FAIL recess leaves the cover')
+        return ['recess bounds']
+    print(f"     recess z {recess[0][0]:.2f}..{recess[0][1]:.2f} (size "
+          f"{recess[0][1] - recess[0][0]:.2f}), PCB edges z {conn_edge_z:.2f}/{far_edge_z:.2f}")
+    errs = []
+    wall = g.COVER_THICKNESS + g.COVER_FRONT_PAD - g.LENS_RECESS_DEPTH
+    ring = g.COVER_RECESS_Z / 2 - g.COVER_LENS_HOLE_DIAMETER / 2 - g.COVER_LENS_RISE
+    for name, got, want in (("front wall", wall, 1.2), ("lateral ring", ring, 0.0)):
+        ok = got >= want - 1e-6 and (name != "lateral ring" or got > 0)
+        print(f"{'OK  ' if ok else 'FAIL'} cover {name}: {got:.2f} mm (min {want})")
+        if not ok:
+            errs.append(name)
+    for name, got, want in (("connector edge", conn, g.COVER_RECESS_BOTTOM_FROM_EDGE), ("far edge", far, g.COVER_LENGTH_Z - g.COVER_RECESS_BOTTOM_FROM_EDGE - g.COVER_RECESS_Z), ("recess size Z", recess[0][1] - recess[0][0], g.COVER_RECESS_Z)):
+        ok = abs(got - want) <= 0.2
+        print(f"{'OK  ' if ok else 'FAIL'} lens square {name}: {got:.2f} mm (user {want})")
+        if not ok:
+            errs.append(name)
+    back = y0 + g.COVER_THICKNESS + g.COVER_FRONT_PAD
+    zc = (recess[0][0] + recess[0][1]) / 2
+    xs = np.arange(0.0, 9.0, 0.01)
+    xin = mesh.contains(np.array([[x, y0 + 3.0, zc] for x in xs]))
+    half = float(xs[xin][0])
+    ok = abs(2 * half - g.LENS_RECESS_WIDTH_X) <= 0.05 and abs(2 * half - 14.00) <= 0.05
+    print(f'{"OK  " if ok else "FAIL"} lens square width X measured {2 * half:.2f} mm (14.00)')
+    if not ok:
+        errs.append('square width X')
+    zb = float(mesh.bounds[0][2])
+    probes = (
+        ('notch empty (x0,z34,front wall)', (0.0, y0 + 0.6, zb + 26.5), False),
+        ('notch empty (x+2.4,z34,mid)', (2.4, y0 + 3.0, zb + 26.5), False),
+        ('beside notch solid (x3.5,z30)', (3.5, y0 + 3.0, zb + 22.5), True),
+        ('recess depth 5.62 (back-5.5 empty)', (5.0, back - 5.5, zb + 8.0), False),
+        ('front wall solid (back-5.7)', (5.0, back - 5.7, zb + 8.0), True),
+        ('relief 3.5 deep empty (z 20)', (0.0, back - 3.4, zb + 20.0), False),
+        ('relief floor solid (z 20)', (0.0, back - 3.6, zb + 20.0), True),
+    )
+    for name, p, want in probes:
+        got = bool(mesh.contains(np.array([p]))[0])
+        ok = got == want
+        print(f'{"OK  " if ok else "FAIL"} cover {name}')
+        if not ok:
+            errs.append(name)
+    wz = np.arange(recess[0][0] - 0.5, recess[0][1] + 0.5, 0.01)
+    wi = mesh.contains(np.array([[0.0, y0 + 0.5, z] for z in wz]))
+    hz = wz[~wi]
+    wx = np.arange(-8.0, 8.0, 0.01)
+    xi = mesh.contains(np.array([[x, y0 + 0.5, (hz.min() + hz.max()) / 2] for x in wx]))
+    hx = wx[~xi]
+    dz = (hz.min() + hz.max()) / 2 - zc
+    dx = (hx.min() + hx.max()) / 2
+    ring = min(hz.min() - recess[0][0], recess[0][1] - hz.max(), 6.83 - (hx.max() - hx.min()) / 2 if False else 9)
+    ok = abs(dz) <= 0.03 and abs(dx) <= 0.03
+    print(f'{"OK  " if ok else "FAIL"} lens window centre x {dx:.2f}, z {(hz.min() + hz.max()) / 2:.2f} vs square z {zc:.2f}; dia {hx.max() - hx.min():.2f}; Z ring {min(hz.min() - recess[0][0], recess[0][1] - hz.max()):.2f}')
+    if not ok:
+        errs.append('window centred')
+    width = float(mesh.extents[0])
+    ok = abs(width - 28.24) <= 0.01
+    print(f'{"OK  " if ok else "FAIL"} cover width {width:.2f} mm (28.24)')
+    if not ok:
+        errs.append('width')
+    return errs
+
+
+def check_assembly() -> list[str]:
+    import trimesh
+
+    car = trimesh.load(HERE / 'stl' / 'camera_carrier_plate_v4_onepiece.stl')
+    errs = []
+    for name in ('no_frame', 'with_frame'):
+        cov = trimesh.load(HERE / 'stl' / f'camera_front_cover_v3_clip_{name}.stl')
+        lo, hi = cov.bounds
+        pts = car.sample(60000)
+        pts = pts[np.all((pts > lo) & (pts < hi), axis=1)]
+        hit = int(cov.contains(pts).sum()) if len(pts) else 0
+        ok = hit == 0
+        print(f'{"OK  " if ok else "FAIL"} assembly 3+5 vs cover {name}: {hit} carrier sample points inside the cover')
+        if not ok:
+            errs.append(name)
+    return errs
+
+
 def main() -> int:
-    failed = False
+    failed = bool(check_lens_square()) or bool(check_assembly())
     for path in sorted((HERE / "stl").glob("*.stl")):
         errors = check_header(path)
         print(f"{'FAIL' if errors else 'OK  '} header {path.name}"

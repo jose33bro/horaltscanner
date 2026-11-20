@@ -65,27 +65,60 @@
       "tolerances": "empreinte carree 5,2x5,2 mm pour le carre 5x5 mm de la tige; trou M3 axial 3,2 mm",
       "header_orientation": "a plat;carre en haut"
     },
-    "camera_carrier_v3_25x24_tab4.8.stl": {
-      "layer_height_mm": 0.16,
+    "camera_carrier_plate_v4_onepiece.stl": {
+      "layer_height_mm": 0.12,
       "infill_percent": 30,
       "infill_pattern": "gyroid",
       "walls": 4,
-      "speed_mm_s": 50,
-      "supports": "oui si necessaire - ARBORESCENTS (tree) legers, surplomb 55 deg, appuis plateau uniquement (pas sur le tenon, les trous 2,5/2,7 mm), densite 8 %, interface 1 couche a 10 %, distance Z 0,18 mm, retrait facile",
-      "orientation": "patin plat du dos sur le plateau; verifier l'orientation en tranches avant impression",
-      "tolerances": "tenon pivot 3,40 mm pour axe M3; 4 trous 2,5 mm entraxe 21 mm; avant-trous M3 2,7 mm pour la plaque-support",
-      "header_orientation": "dos a plat;sup arbre"
+      "speed_mm_s": 40,
+      "supports": "arborescents LEGERS uniquement sous le dos du berceau et les bossages (appui plateau); BLOQUER dans la fente nappe, la poche composants, la douille a petales et autour des pions; pions 2,0 mm sans support (45 deg)",
+      "orientation": "pions camera vers le HAUT (face PCB en haut), dos/plaque-support vers le plateau; recommande car les 4 pions de 2,0 mm sont sur la face PCB",
+      "tolerances": "tenon pivot 3,40 mm pour axe M3; 4 PIONS dia 2,0 mm (bout 1,2 mm), longueur 2,46 mm, face PCB, entraxe 21 x 12,5 mm (bossages dia 4,5 x 3 mm au dos) entraxe 21 x 12,5 mm; aucun trou M3 de fixation (3+5 fusionnees); douille 6,9 mm, levre 6,0 mm pour bille 6,5 mm, petales paroi 1,2 mm, fentes 1,0 mm; poche composants traversante x 16,9 mm, fente nappe 21,02 mm; passage de tige 5,3 mm; plaque 5 rognee a 25 mm de large",
+      "header_orientation": "pions haut;sup limites"
     },
-    "camera_front_cover_v3_clip.stl": {
+    "camera_front_cover_v3_clip_no_frame.stl": {
       "layer_height_mm": 0.12,
       "infill_percent": 40,
       "infill_pattern": "gyroid",
       "walls": 4,
       "speed_mm_s": 40,
       "supports": "non",
-      "orientation": "face arriere a plat, 4 pions clips vers le haut",
-      "tolerances": "4 pions pour trous 2,5 mm (clip par friction); ouverture objectif 11 mm",
-      "header_orientation": "pions en haut;sans sup"
+      "orientation": "face arriere a plat (trous de pions vers le plateau), sans supports",
+      "tolerances": "plaque pleine 5,36 mm + 4 trous borgnes dia 2,25 x 1,4 mm (jeu 0,125 mm/cote) pour les pions dia 2,0 du 3+5; fenetre objectif 9,4 mm; sans cadre",
+      "header_orientation": "arriere a plat;sans sup"
+    },
+    "camera_front_cover_v3_clip_with_frame.stl": {
+      "layer_height_mm": 0.12,
+      "infill_percent": 40,
+      "infill_pattern": "gyroid",
+      "walls": 4,
+      "speed_mm_s": 40,
+      "supports": "non",
+      "orientation": "bout du cadre a volets (avant) a plat sur le plateau, trous de pions vers le haut, sans supports",
+      "tolerances": "plaque pleine 5,36 mm + 4 trous borgnes dia 2,25 x 1,4 mm (jeu 0,125 mm/cote) pour les pions dia 2,0 du 3+5; fenetre objectif 9,4 mm; fentes volets 1,1 mm; ponts courts a verifier a l impression",
+      "header_orientation": "cadre plat;sans sup"
+    },
+    "camera_barn_door_x_x2.stl": {
+      "layer_height_mm": 0.12,
+      "infill_percent": 100,
+      "infill_pattern": "lines",
+      "walls": 3,
+      "speed_mm_s": 40,
+      "supports": "non",
+      "orientation": "a plat, imprimer 2 exemplaires (volets gauche/droite)",
+      "tolerances": "epaisseur 0,9 mm pour fente 1,1 mm",
+      "header_orientation": "a plat x2;sans sup"
+    },
+    "camera_barn_door_z_x2.stl": {
+      "layer_height_mm": 0.12,
+      "infill_percent": 100,
+      "infill_pattern": "lines",
+      "walls": 3,
+      "speed_mm_s": 40,
+      "supports": "non",
+      "orientation": "a plat, imprimer 2 exemplaires (volets haut/bas)",
+      "tolerances": "epaisseur 0,9 mm pour fente 1,1 mm",
+      "header_orientation": "a plat x2;sans sup"
     },
     "ball_screw_M5x40_ball6.5.stl": {
       "layer_height_mm": 0.12,
@@ -97,28 +130,6 @@
       "orientation": "debout, extremite filetee sur le plateau, tete Z+",
       "tolerances": "filet M5x0,8; bille 6,5 mm pour douille a levres 6,0 mm; fente tournevis 0,8x5x1,5 mm",
       "header_orientation": "debout;sans sup"
-    },
-    "camera_support_plate_28.05x7x1.stl": {
-      "layer_height_mm": 0.12,
-      "infill_percent": 100,
-      "infill_pattern": "lines",
-      "walls": 4,
-      "speed_mm_s": 35,
-      "supports": "non; si la levre de douille l'exige : ARBORESCENTS (tree) legers, densite 8 %, interface 1 couche a 10 %, distance Z 0,16 mm, retrait facile",
-      "orientation": "a plat, face de la plaque sur le plateau, douille a 4 petales vers le haut",
-      "tolerances": "trous M3 3,2 mm entraxe 14 mm; passage de tige 5,3 mm; levre 6,0 mm pour bille 6,5 mm; fentes 0,8 mm",
-      "header_orientation": "a plat;douille haut"
-    },
-    "fit_test_plate_slot_28.45x7.4.stl": {
-      "layer_height_mm": 0.12,
-      "infill_percent": 15,
-      "infill_pattern": "grid",
-      "walls": 2,
-      "speed_mm_s": 50,
-      "supports": "non",
-      "orientation": "a plat, poche vers le haut",
-      "tolerances": "poche 28,45x7,40 mm = plaque + 0,2 mm par cote; couches fines pour precision",
-      "header_orientation": "a plat;poche haut"
     },
     "assembly_pi_camera_tilt_mount.stl": {
       "printable": false,

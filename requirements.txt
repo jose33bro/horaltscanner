@@ -8,7 +8,7 @@ gpiozero>=1.6.0
 RPi.GPIO>=0.7.0
 
 # Vision par ordinateur
-opencv-python>=4.5.0
+opencv-python>=5.0.0.93
 opencv-contrib-python>=5.0.0.93
 
 # Calcul scientifique

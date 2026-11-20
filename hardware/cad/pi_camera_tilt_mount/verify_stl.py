@@ -164,6 +164,14 @@ def check_lens_square() -> list[str]:
         if not ok:
             errs.append(name)
     back = y0 + g.COVER_THICKNESS + g.COVER_FRONT_PAD
+    zc = (recess[0][0] + recess[0][1]) / 2
+    xs = np.arange(0.0, 9.0, 0.01)
+    xin = mesh.contains(np.array([[x, y0 + 3.0, zc] for x in xs]))
+    half = float(xs[xin][0])
+    ok = abs(2 * half - g.LENS_RECESS_WIDTH_X) <= 0.05 and abs(2 * half - 13.66) <= 0.05
+    print(f'{"OK  " if ok else "FAIL"} lens square width X measured {2 * half:.2f} mm (13.66)')
+    if not ok:
+        errs.append('square width X')
     zb = float(mesh.bounds[0][2])
     probes = (
         ('notch empty (x0,z34,front wall)', (0.0, y0 + 0.6, zb + 26.5), False),

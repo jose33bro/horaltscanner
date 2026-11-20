@@ -277,7 +277,7 @@ COVER_RECESS_Z = 10.95  # user: square 10.95 (was 11.00)
 COVER_LENS_RISE = 0.50  # user: round window raised 0.5 mm
 COVER_RECESS_BOTTOM_FROM_EDGE = 1.55  # user: pin-row centre (z 20.21) = square top edge (was 4.69)
 COVER_LENGTH_Z = CAM_HOUSING_HEIGHT  # 24.50: top blocks above the 3+5 plate (z>32.21) removed (user)
-LENS_RECESS_WIDTH_X = 14.00  # user: 13.59 'voir 14' mm across X (room for the lens connector)
+LENS_RECESS_WIDTH_X = 13.66  # user: 13.59 'voir 14' mm across X (room for the lens connector)
 LENS_RECESS_DEPTH = 5.62  # user; deeper than the 5.36 plate, so a front pad is added
 COVER_FRONT_PAD = LENS_RECESS_DEPTH + LENS_RECESS_FRONT_WALL - COVER_THICKNESS  # 1.46
 COVER_LENS_HOLE_DIAMETER = 8.80  # barrel 8.5 + 0.15/side; ring Z = (11 - 8.8)/2 = 1.10

@@ -274,7 +274,7 @@ LENS_RECESS_FRONT_WALL = 1.20
 # 4.69 mm from the cover's connector-side (bottom) edge; the round window is
 # centred on it. Pin holes unchanged. Cover length 29.13 mm (was 24.50).
 COVER_RECESS_Z = 11.00
-COVER_RECESS_BOTTOM_FROM_EDGE = 4.69
+COVER_RECESS_BOTTOM_FROM_EDGE = 1.50  # user: pin-row centre (z 20.21) = square top edge (was 4.69)
 COVER_LENGTH_Z = 29.13  # user: 'coter 29.13' (27.93 was a caliper reading to correct)
 LENS_RECESS_WIDTH_X = 14.00  # user: 13.59 'voir 14' mm across X (room for the lens connector)
 LENS_RECESS_DEPTH = 5.62  # user; deeper than the 5.36 plate, so a front pad is added

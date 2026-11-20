@@ -48,4 +48,4 @@ gunicorn>=22.0.0
 gevent>=23.9.0
 
 # HTTP client (Moonraker)
-requests>=2.31.0
+requests>=2.34.2

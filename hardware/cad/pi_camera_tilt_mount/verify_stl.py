@@ -29,8 +29,8 @@ EXPECTED_EXTENTS = {
     HERE / "stl" / "adjustment_rod_M5x50_ball6.5_square_m3.stl": (6.50, 6.50, 60.50),
     HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 11.00),
     HERE / "stl" / "camera_carrier_plate_v4_onepiece.stl": (25.50, 10.75, 35.00),
-    HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl": (28.20, 8.12, 24.50),
-    HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.20, 16.66, 24.50),
+    HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl": (28.20, 8.12, 29.13),
+    HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.20, 16.66, 29.13),
     HERE / "stl" / "camera_barn_door_x_x2.stl": (10.00, 19.00, 0.90),
     HERE / "stl" / "camera_barn_door_z_x2.stl": (20.00, 10.00, 0.90),
     HERE / "stl" / "ball_screw_M5x40_ball6.5.stl": (6.50, 6.50, 42.50),
@@ -143,9 +143,8 @@ def check_lens_square() -> list[str]:
     if len(recess) != 1:
         print(f"FAIL cannot isolate the square recess: {recess}")
         return ["recess"]
-    c = g.LENS_HOUSING_CLEARANCE
-    conn = recess[0][0] + c - conn_edge_z
-    far = far_edge_z - (recess[0][1] - c)
+    conn = recess[0][0] - float(mesh.bounds[0][2])  # from the cover's connector-side (bottom) edge
+    far = float(mesh.bounds[1][2]) - recess[0][1]
     if not (mesh.bounds[0][2] + 1.0 < recess[0][0] and recess[0][1] < mesh.bounds[1][2]):
         print('FAIL recess leaves the cover')
         return ['recess bounds']
@@ -153,13 +152,13 @@ def check_lens_square() -> list[str]:
           f"{recess[0][1] - recess[0][0]:.2f}), PCB edges z {conn_edge_z:.2f}/{far_edge_z:.2f}")
     errs = []
     wall = g.COVER_THICKNESS - g.LENS_RECESS_DEPTH
-    ring = g.LENS_RECESS_SIZE / 2 - g.LENS_HOLE_DIAMETER / 2
+    ring = g.COVER_RECESS_Z / 2 - g.LENS_HOLE_DIAMETER / 2
     for name, got, want in (("front wall", wall, 1.2), ("lateral ring", ring, 0.0)):
         ok = got >= want - 1e-6 and (name != "lateral ring" or got > 0)
         print(f"{'OK  ' if ok else 'FAIL'} cover {name}: {got:.2f} mm (min {want})")
         if not ok:
             errs.append(name)
-    for name, got, want in (("connector edge", conn, 4.11 - g.COVER_LENS_DROP_Z), ("hole-side edge", far, 6.86 + g.COVER_LENS_DROP_Z)):
+    for name, got, want in (("connector edge", conn, g.COVER_RECESS_BOTTOM_FROM_EDGE), ("far edge", far, g.COVER_LENGTH_Z - g.COVER_RECESS_BOTTOM_FROM_EDGE - g.COVER_RECESS_Z), ("recess size Z", recess[0][1] - recess[0][0], g.COVER_RECESS_Z)):
         ok = abs(got - want) <= 0.2
         print(f"{'OK  ' if ok else 'FAIL'} lens square {name}: {got:.2f} mm (user {want})")
         if not ok:

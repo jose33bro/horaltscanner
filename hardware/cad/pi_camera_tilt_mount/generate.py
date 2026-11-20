@@ -270,7 +270,12 @@ LENS_HOUSING_SIZE = LENS_SQUARE_SIZE
 LENS_HOUSING_CLEARANCE = 0.20
 LENS_RECESS_SIZE = LENS_HOUSING_SIZE + 2 * LENS_HOUSING_CLEARANCE  # 13.59
 LENS_RECESS_FRONT_WALL = 1.20
-COVER_LENS_DROP_Z = 3.71  # = 4.11 - 0.40: 0.40 mm (one nozzle line) left at the connector side (-z), same x axis as the pin holes
+# Cover redesign (user): square recess 11 mm along Z, its connector-side edge
+# 4.69 mm from the cover's connector-side (bottom) edge; the round window is
+# centred on it. Pin holes unchanged. Cover length 29.13 mm (was 24.50).
+COVER_RECESS_Z = 11.00
+COVER_RECESS_BOTTOM_FROM_EDGE = 4.69
+COVER_LENGTH_Z = 29.13
 LENS_RECESS_WIDTH_X = 14.00  # user: 13.59 'voir 14' mm across X (room for the lens connector)
 LENS_RECESS_DEPTH = COVER_THICKNESS - LENS_RECESS_FRONT_WALL  # 4.16
 
@@ -1067,11 +1072,21 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
             )
         )
     cover_plate = fuse(cover_plate, *rails)
+    cover_plate = fuse(
+        cover_plate,
+        make_box(
+            CAM_HOUSING_WIDTH,
+            COVER_THICKNESS,
+            COVER_LENGTH_Z - CAM_HOUSING_HEIGHT,
+            y=cover_center_y,
+            z=cover_bottom_z + CAM_HOUSING_HEIGHT,
+        ),
+    )
 
     cover_front_y = cover_back_y - COVER_THICKNESS
     lens_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(LENS_OFFSET_X, cover_front_y - 1, holes.hole_center_z + LENS_OFFSET_Z - COVER_LENS_DROP_Z),
+            gp_Pnt(LENS_OFFSET_X, cover_front_y - 1, cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE + COVER_RECESS_Z / 2),
             gp_Dir(0, 1, 0),
         ),
         LENS_HOLE_DIAMETER / 2,
@@ -1094,17 +1109,17 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     lens_recess = make_box(
         LENS_RECESS_WIDTH_X,
         LENS_RECESS_DEPTH + 0.5,
-        LENS_RECESS_SIZE,
+        COVER_RECESS_Z,
         x=LENS_OFFSET_X,
         y=cover_back_y - LENS_RECESS_DEPTH / 2 + 0.25,
-        z=holes.hole_center_z + LENS_OFFSET_Z - COVER_LENS_DROP_Z - LENS_RECESS_SIZE / 2,
+        z=cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE,
     )
     cover = cut(cover, lens_recess)
     if not with_frame:
         return cover
 
     axis_x = LENS_OFFSET_X
-    axis_z = holes.hole_center_z + LENS_OFFSET_Z - COVER_LENS_DROP_Z
+    axis_z = cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE + COVER_RECESS_Z / 2
     cover_center_z = cover_bottom_z + CAM_HOUSING_HEIGHT / 2
     standoff = cut(
         make_box(

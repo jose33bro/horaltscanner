@@ -275,7 +275,7 @@ LENS_RECESS_FRONT_WALL = 1.20
 # centred on it. Pin holes unchanged. Cover length 29.13 mm (was 24.50).
 COVER_RECESS_Z = 11.00
 COVER_RECESS_BOTTOM_FROM_EDGE = 4.69
-COVER_LENGTH_Z = 27.93  # user caliper on the real camera (was 29.13)
+COVER_LENGTH_Z = 29.13  # user: 'coter 29.13' (27.93 was a caliper reading to correct)
 LENS_RECESS_WIDTH_X = 14.00  # user: 13.59 'voir 14' mm across X (room for the lens connector)
 LENS_RECESS_DEPTH = COVER_THICKNESS - LENS_RECESS_FRONT_WALL  # 4.16
 

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Verify the printable STL files: closed manifold mesh, no degenerate
 triangles, expected bounding box and positive volume.
 
@@ -26,7 +26,7 @@ BBOX_TOLERANCE_MM = 0.05
 EXPECTED_EXTENTS = {
     HERE / "stl" / "pi_camera_tilt_base.stl": (30.45, 27.20, 43.20),
     HERE / "stl" / "fit_test_rear_cavity_30.45x38.2.stl": (30.45, 3.20, 38.20),
-    HERE / "stl" / "adjustment_rod_M5x50_ball6.5_square_m3.stl": (6.50, 6.50, 60.50),
+    HERE / "stl" / "adjustment_rod_M10x50_ball6.5_square_m3.stl": (10.00, 10.00, 60.50),
     HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 11.00),
     HERE / "stl" / "camera_carrier_plate_v4_onepiece.stl": (25.50, 10.75, 35.00),
     HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl": (28.24, 9.58, 24.50),
@@ -209,6 +209,25 @@ def check_lens_square() -> list[str]:
     return errs
 
 
+def check_base_thread_hole() -> list[str]:
+    import trimesh
+
+    base = trimesh.load(HERE / "stl" / "pi_camera_tilt_base.stl")
+    z0 = 38.2 - 22.0
+    sec = base.section(plane_origin=[0, -0.5, 0], plane_normal=[0, 1, 0])
+    pts = sec.vertices
+    r = np.hypot(pts[:, 0], pts[:, 2] - z0)
+    r_min = r[r < 7].min()
+    printed_dia = 2 * r_min * 0.976
+    errs = []
+    if abs(2 * r_min - 8.4) > 0.1:
+        errs.append(f"base thread hole crest dia {2 * r_min:.2f} != 8.40")
+    if printed_dia < 6.5 + 0.4:
+        errs.append(f"base hole {printed_dia:.2f} mm after shrink < 6.9 (ball 6.5 + 0.4)")
+    print(f"{'OK  ' if not errs else 'FAIL'} base M10 hole crest dia {2 * r_min:.2f} mm ({printed_dia:.2f} printed)")
+    return errs
+
+
 def check_assembly() -> list[str]:
     import trimesh
 
@@ -228,7 +247,7 @@ def check_assembly() -> list[str]:
 
 
 def main() -> int:
-    failed = bool(check_lens_square()) or bool(check_assembly())
+    failed = bool(check_lens_square()) or bool(check_assembly()) or bool(check_base_thread_hole())
     for path in sorted((HERE / "stl").glob("*.stl")):
         errors = check_header(path)
         print(f"{'FAIL' if errors else 'OK  '} header {path.name}"

@@ -9,7 +9,7 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
 - `stl/pi_camera_tilt_base.stl` : base orientable définitive;
 - `stl/fit_test_rear_cavity_30.45x38.2.stl` : test d'encombrement à imprimer
   avant la base;
-- `stl/adjustment_rod_M5x50_ball6.5_square_m3.stl` : tige d'ajustement M5
+- `stl/adjustment_rod_M10x50_ball6.5_square_m3.stl` : tige d'ajustement M10 × 1,5
   sur 50 mm, bille Ø 6,5 mm côté caméra et carré côté roue/plateau, avec trou
   M3 central dans le carré;
 - `stl/wheel_crank_50mm_square_m3.stl` : roue/crank de 50 mm de diamètre avec
@@ -79,10 +79,10 @@ python3 hardware/cad/pi_camera_tilt_mount/assemble.py
 
 Numérotation du plan : 1 tige, 3+5 berceau et plaque-support à rotule (une
 seule pièce imprimée, bille de 1 dans sa douille), 4 cache avant (clipsé sur
-3), 8 base, 9 roue (sur le carré de 1). La tige 1 traverse le trou M5 de 8, 3
+3), 8 base, 9 roue (sur le carré de 1). La tige 1 traverse le trou M10 × 1,5 de 8, 3
 pivote sur les oreilles de 8 (axe M3, non modélisé). Filetages réels
-M5 × 0,8 : tige à crête Ø 5,0 / noyau Ø 4,0 (thread 20 mm), trou de 8 alésé
-Ø 5,5 avec filet interne de fond Ø 4,2 ; jeu radial 0,25 mm. Recouvrement
+M10 × 1,5 (choisi car le fond de filet imprimé du trou doit laisser passer la bille Ø 6,5 : M8 × 1,25 donnerait ~6,5 mm imprimé, trop juste) : tige à crête Ø 10,0 / noyau Ø 8,16 (thread 20 mm), trou de 8 alésé
+Ø 10,5 avec filet interne de fond Ø 8,4 (≈ 8,2 mm après retrait 2,4 %, bille 6,5 passe avec ≥ 1,7 mm de jeu) ; jeu radial 0,25 mm. Recouvrement
 tige × base ≈ 0 mm³ (phase de vissage recherchée par `assemble.py`). Le carré de 1 (5 × 5 mm,
 5 mm saillants) entre dans l'empreinte carrée du moyeu de 9 (5,2 × 5,2 mm,
 6 mm de profondeur, moyeu 10 × 10 × 10 mm, vis M3 axiale Ø 3,2 mm), sans
@@ -101,7 +101,7 @@ solide fermé de 25 mm de large, passage de tige ouvert et emplacements M3 (±7 
 - oreilles : projection 8,70 mm, largeur 8,50 mm, hauteur 5,99 mm et espace
   central 5,33 mm;
 - trou d'axe traversant : Ø 3,40 mm;
-- trou de fixation M5 sur la plaque verticale, centré entre les oreilles et à 22,00 mm du haut;
+- trou de fixation M10 × 1,5 sur la plaque verticale, centré entre les oreilles et à 22,00 mm du haut;
 - fenêtre CSI dans la plaque verticale : 18,00 × 9,56 mm, centrée en bas et décalée vers l'avant;
 - encoches de dégagement dans les parois latérales de la tablette (côté
   intérieur) là où la carte caméra (25,00 mm de large) est plus large que
@@ -210,7 +210,7 @@ slicer.
    les trous du berceau — pas de vis ni d'écrou nécessaires.
 6. Installer le berceau (carte + cache) entre les oreilles de la base avec
    l'axe M3 (pivot), sans le bloquer serré pour qu'il puisse encore pivoter.
-7. Visser la tige d'ajustement (`adjustment_rod_M5x50_ball6.5_square_m3.stl`)
+7. Visser la tige d'ajustement (`adjustment_rod_M10x50_ball6.5_square_m3.stl`)
    dans le bossage taraudé M5 au dos de la plaque, bille côté caméra, jusqu'à
    ce qu'elle appuie contre le patin plat au dos du berceau.
 8. Clipser la roue (`wheel_crank_50mm_square_m3.stl`) sur le carré de la tige

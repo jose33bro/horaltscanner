@@ -49,7 +49,7 @@ PARTS = {
     "base": (8, "pi_camera_tilt_base.stl", "#9aa5b1"),
     "carrier": (3, "camera_carrier_plate_v4_onepiece.stl", "#e07a5f"),
     "cover": (4, COVER_STL, "#3d405b"),
-    "rod": (1, "adjustment_rod_M5x50_ball6.5_square_m3.stl", "#81b29a"),
+    "rod": (1, "adjustment_rod_M10x50_ball6.5_square_m3.stl", "#81b29a"),
     "wheel": (9, "wheel_crank_50mm_square_m3.stl", "#4f9dde"),
 }
 PLATE_TINT = "#f2cc8f"  # former part 5 (support plate) zone inside merged part 3
@@ -60,7 +60,7 @@ EXPECTED = {
     frozenset({"rod", "base"}): "thread flank overlap above limit",
     frozenset({"carrier", "cover"}): "cover pin holes receive the carrier pins",
 }
-THREAD_PITCH = 0.8
+THREAD_PITCH = 1.5
 THREAD_OVERLAP_LIMIT = 0.5  # mm3, tessellation noise only
 
 

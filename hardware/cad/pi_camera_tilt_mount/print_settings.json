@@ -16,7 +16,7 @@
     "notes": [
       "Hyper PLA : plage fabricant ~190-230 C, 215 C retenu (210-220 C demandes); le sechage n'est pas necessaire sauf stockage humide.",
       "Pas de G-code genere : ces valeurs sont des recommandations a reporter dans le slicer.",
-      "Filets M5x0,8 : jeu radial 0,25 mm deja modelise; tarauder/passer un M5 a la main si serre apres impression.",
+      "Filets M10x1,5 : jeu radial 0,25 mm deja modelise; passer un M10 a la main si serre apres impression.",
       "Emboitements/clips : jeu 0,2 mm modelise; pas de compensation XY supplementaire dans le slicer."
     ]
   },
@@ -29,7 +29,7 @@
       "speed_mm_s": 60,
       "supports": "oui - ARBORESCENTS (tree) legers, partout, surplomb 55 deg, appuis sur le plateau de preference, jamais dans les filets/trous M5-M3; densite 8-10 %, interface 1 couche fine a 10 %, distance Z 0,22 mm, branches 2 parois max, retrait facile a la main",
       "orientation": "grand dos de la plaque contre le plateau",
-      "tolerances": "trou M5 de la tige a fond de filet interne 4,2 mm; avant-trous M3 2,7 mm; ne pas agrandir",
+      "tolerances": "trou M10x1,5 de la tige a fond de filet interne 8,4 mm (bille 6,5 doit passer); avant-trous M3 2,7 mm; ne pas agrandir",
       "header_orientation": "dos a plat;sup arbre"
     },
     "fit_test_rear_cavity_30.45x38.2.stl": {
@@ -43,7 +43,7 @@
       "tolerances": "gabarit d'encombrement, a imprimer avant la base",
       "header_orientation": "a plat;sans sup"
     },
-    "adjustment_rod_M5x50_ball6.5_square_m3.stl": {
+    "adjustment_rod_M10x50_ball6.5_square_m3.stl": {
       "layer_height_mm": 0.12,
       "infill_percent": 100,
       "infill_pattern": "lines",
@@ -51,7 +51,7 @@
       "speed_mm_s": 35,
       "supports": "non (bille en haut, surplomb <= 45 deg)",
       "orientation": "debout, carre sur le plateau, bille Z+ (axe M5 vertical)",
-      "tolerances": "filet M5x0,8 crete 5,0 / noyau 4,0 mm, jeu radial 0,25 mm; trou M3 central 3,2 mm; verifier la phase de vissage avec la base",
+      "tolerances": "filet M10x1,5 crete 10,0 / noyau 8,16 mm, jeu radial 0,25 mm; trou M3 central 3,2 mm; verifier la phase de vissage avec la base",
       "header_orientation": "debout;sans sup"
     },
     "wheel_crank_50mm_square_m3.stl": {

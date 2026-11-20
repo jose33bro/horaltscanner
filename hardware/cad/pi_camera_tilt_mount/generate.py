@@ -1,4 +1,4 @@
-﻿from dataclasses import dataclass
+from dataclasses import dataclass
 from pathlib import Path
 import math
 import struct
@@ -83,14 +83,14 @@ PIVOT_CLEARANCE_DIAMETER = 3.40
 # screw). The base carries a modelled internal thread; the printed hole is
 # sized for FDM: minor diameter 4.20 (nominal 4.13), bored to a 5.50 major
 # diameter so the rod's 5.00 crest has 0.25 mm radial clearance.
-THREAD_MAJOR_DIAMETER = 5.00
-THREAD_PITCH = 0.80
-THREAD_DEPTH = 0.50  # radial height of the triangular thread profile
+THREAD_MAJOR_DIAMETER = 10.00  # M10 x 1.5: base hole crest stays >= 8.2 mm after ~2.4 % shrink so the 6.5 mm ball passes
+THREAD_PITCH = 1.50
+THREAD_DEPTH = 0.92  # radial height of the triangular thread profile (ISO 0.6134 x pitch)
 THREAD_MINOR_DIAMETER = THREAD_MAJOR_DIAMETER - (2 * THREAD_DEPTH)
 THREAD_LENGTH = 20.00
-M5_HOLE_MINOR_DIAMETER = 4.20
-M5_HOLE_MAJOR_DIAMETER = 5.50
-M5_HOLE_RIDGE_DEPTH = 0.65  # ridge tip radius 2.75 - 0.65 = 2.10
+THREAD_HOLE_MINOR_DIAMETER = 8.40
+THREAD_HOLE_MAJOR_DIAMETER = 10.50
+THREAD_HOLE_RIDGE_DEPTH = 1.05  # ridge tip radius 5.25 - 1.05 = 4.20
 M3_TAP_PILOT_DIAMETER = 2.70  # self-tapping M3 pilot in PLA
 M5_THREAD_HOLE_OFFSET_FROM_TOP = 22.00
 
@@ -714,17 +714,17 @@ def make_mount() -> TopoDS_Shape:
             gp_Pnt(0, plate_front_y - 1, PLATE_HEIGHT - M5_THREAD_HOLE_OFFSET_FROM_TOP),
             gp_Dir(0, 1, 0),
         ),
-        M5_HOLE_MAJOR_DIAMETER / 2,
+        THREAD_HOLE_MAJOR_DIAMETER / 2,
         MATERIAL_THICKNESS + 2,
     ).Shape()
-    # Internal M5 x 0.8 thread: the hole is bored to the major diameter and a
+    # Internal M10 x 1.5 thread: the hole is bored to the major diameter and a
     # helical ridge (same helix as the rod's external thread, pointing
     # inward) is fused back into the wall. A swept solid used as a cutting
     # tool made the OCC boolean return an unchanged plate, so it is added.
     ridge = make_external_thread(
-        M5_HOLE_MAJOR_DIAMETER / 2,
+        THREAD_HOLE_MAJOR_DIAMETER / 2,
         THREAD_PITCH,
-        M5_HOLE_RIDGE_DEPTH,
+        THREAD_HOLE_RIDGE_DEPTH,
         MATERIAL_THICKNESS,
         0.0,
         inward=True,
@@ -1624,7 +1624,7 @@ def export_model(model: TopoDS_Shape, filename: str) -> None:
 if __name__ == "__main__":
     export_model(make_mount(), "pi_camera_tilt_base.stl")
     export_model(make_fit_test(), "fit_test_rear_cavity_30.45x38.2.stl")
-    export_model(make_adjustment_rod(), "adjustment_rod_M5x50_ball6.5_square_m3.stl")
+    export_model(make_adjustment_rod(), "adjustment_rod_M10x50_ball6.5_square_m3.stl")
     export_model(make_wheel_crank(), "wheel_crank_50mm_square_m3.stl")
     export_model(make_camera_carrier_with_plate(), "camera_carrier_plate_v4_onepiece.stl")
     export_model(make_camera_front_cover(False), "camera_front_cover_v3_clip_no_frame.stl")

@@ -1,4 +1,4 @@
-﻿from dataclasses import dataclass
+from dataclasses import dataclass
 from pathlib import Path
 import math
 import struct
@@ -1176,12 +1176,19 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     )
 
     stack_y0 = cover_front_y - HOOD_STANDOFF_DEPTH
+    # The bore is centred on the lens window, so the door stack must reach below
+    # the cover far enough to keep a wall under the X-door slot.
+    stack_bottom_z = min(
+        cover_bottom_z,
+        axis_z - (DOOR_X_HEIGHT + DOOR_SLOT_MARGIN) / 2 - CARRIER_REAR_HOOD_WALL,
+    )
+    stack_height = cover_bottom_z + CAM_HOUSING_HEIGHT - stack_bottom_z
     stack = make_box(
         CAM_HOUSING_WIDTH,
         DOOR_STACK_DEPTH,
-        CAM_HOUSING_HEIGHT,
+        stack_height,
         y=stack_y0 - DOOR_STACK_DEPTH / 2,
-        z=cover_bottom_z,
+        z=stack_bottom_z,
     )
     bore = make_box(
         FRAME_BORE_WIDTH,
@@ -1204,10 +1211,10 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     slot_z_doors = make_box(
         DOOR_Z_WIDTH + DOOR_SLOT_MARGIN,
         DOOR_SLOT_DEPTH,
-        CAM_HOUSING_HEIGHT + 2,
+        stack_height + 2,
         x=axis_x,
         y=slot_z_y - DOOR_SLOT_DEPTH / 2,
-        z=cover_bottom_z - 1,
+        z=stack_bottom_z - 1,
     )
     stack = cut(cut(cut(stack, bore), slot_x_doors), slot_z_doors)
     return fuse(cover, standoff, stack)

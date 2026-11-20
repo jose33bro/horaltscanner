@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Verify the printable STL files: closed manifold mesh, no degenerate
 triangles, expected bounding box and positive volume.
 
@@ -30,7 +30,7 @@ EXPECTED_EXTENTS = {
     HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 11.00),
     HERE / "stl" / "camera_carrier_plate_v4_onepiece.stl": (25.50, 10.75, 35.00),
     HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl": (28.24, 9.58, 24.50),
-    HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.24, 16.66, 24.50),
+    HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.24, 16.66, 28.50),
     HERE / "stl" / "camera_barn_door_x_x2.stl": (10.00, 19.00, 0.90),
     HERE / "stl" / "camera_barn_door_z_x2.stl": (20.00, 10.00, 0.90),
     HERE / "stl" / "ball_screw_M5x40_ball6.5.stl": (6.50, 6.50, 42.50),
@@ -196,7 +196,6 @@ def check_lens_square() -> list[str]:
     hx = wx[~xi]
     dz = (hz.min() + hz.max()) / 2 - zc
     dx = (hx.min() + hx.max()) / 2
-    ring = min(hz.min() - recess[0][0], recess[0][1] - hz.max(), 6.83 - (hx.max() - hx.min()) / 2 if False else 9)
     ok = abs(dz) <= 0.03 and abs(dx) <= 0.03
     print(f'{"OK  " if ok else "FAIL"} lens window centre x {dx:.2f}, z {(hz.min() + hz.max()) / 2:.2f} vs square z {zc:.2f}; dia {hx.max() - hx.min():.2f}; Z ring {min(hz.min() - recess[0][0], recess[0][1] - hz.max()):.2f}')
     if not ok:
@@ -206,6 +205,47 @@ def check_lens_square() -> list[str]:
     print(f'{"OK  " if ok else "FAIL"} cover width {width:.2f} mm (28.24)')
     if not ok:
         errs.append('width')
+    return errs
+
+
+def check_frame() -> list[str]:
+    import trimesh
+
+    nof = trimesh.load(HERE / 'stl' / 'camera_front_cover_v3_clip_no_frame.stl')
+    fr = trimesh.load(HERE / 'stl' / 'camera_front_cover_v3_clip_with_frame.stl')
+    errs = []
+
+    def is_open(x, z):
+        hits, _, _ = fr.ray.intersects_location([[x, -40, z]], [[0, 1, 0]])
+        return len(hits) == 0 or not np.any(hits[:, 1] < -24.5)
+
+
+    zc = float(nof.bounds[0][2] + 1.30 + 11.20 / 2)
+    zc_probe = zc
+    z = zc_probe
+    while is_open(0, z - 0.05):
+        z -= 0.05
+    zlo = z
+    z = zc_probe
+    while is_open(0, z + 0.05):
+        z += 0.05
+    zhi = z
+    xlo = xhi = 0.0
+    while is_open(xlo - 0.05, zc_probe):
+        xlo -= 0.05
+    while is_open(xhi + 0.05, zc_probe):
+        xhi += 0.05
+    cz = (zlo + zhi) / 2
+    ok = abs(cz - zc) <= 0.1 and abs(zhi - zlo - 17.0) <= 0.15 and abs(xhi - xlo - 18.0) <= 0.15 and abs((xlo + xhi) / 2) <= 0.1
+    print(f'{"OK  " if ok else "FAIL"} frame bore {xhi - xlo:.2f} x {zhi - zlo:.2f}, centre x {(xlo + xhi) / 2:.2f} z {cz:.2f} vs lens window z {zc:.2f}')
+    if not ok:
+        errs.append('frame bore')
+    below = zlo - float(fr.bounds[0][2])
+    top = float(fr.bounds[1][2])
+    ok = below >= 2.0 and abs(top - float(nof.bounds[1][2])) <= 0.01
+    print(f'{"OK  " if ok else "FAIL"} frame wall under bore {below:.2f} mm (>=2.0), z max {top:.2f} = cover z max')
+    if not ok:
+        errs.append('frame walls')
     return errs
 
 
@@ -228,7 +268,7 @@ def check_assembly() -> list[str]:
 
 
 def main() -> int:
-    failed = bool(check_lens_square()) or bool(check_assembly())
+    failed = bool(check_lens_square()) or bool(check_frame()) or bool(check_assembly())
     for path in sorted((HERE / "stl").glob("*.stl")):
         errors = check_header(path)
         print(f"{'FAIL' if errors else 'OK  '} header {path.name}"

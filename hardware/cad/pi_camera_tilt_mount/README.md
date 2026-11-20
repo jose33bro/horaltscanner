@@ -312,7 +312,7 @@ reelle de l'axe optique n'est pas mesuree). Hauteur totale 10,86 mm non utilisee
 
 - Constantes dans `generate.py` : `DOOR_THICKNESS` 0,9, `DOOR_SLOT_CLEARANCE` 0,2, `DOOR_TRAVEL_X` 9, `DOOR_TRAVEL_Z` 8,5, `FRAME_BORE_WIDTH/HEIGHT` 18 × 17, `HOOD_STANDOFF_DEPTH` 8,5.
 - STL séparés, à plat, sans supports : `camera_barn_door_x_x2.stl` (10 × 19 × 0,9, imprimer 2) et `camera_barn_door_z_x2.stl` (20 × 10 × 0,9, imprimer 2).
-- Capot : bbox 25,50 × 16,86 × 24,50 mm ; imprimé bout du cadre à plat, pions vers le haut.
+- Capot : bbox 28,24 × 16,66 × 28,50 mm (cadre/alésage 18 × 17 centré sur le rond optique, z 14,61 ; la pile de volets descend à z 3,71 pour garder 2,45 mm de paroi sous l'alésage, z max 32,21 inchangé) ; imprimé bout du cadre à plat, pions vers le haut.
 - Non vérifié : impression, friction des volets, ponts courts des fentes, vignettage du cadre sur les coins du champ ~120° (H 102°, V 67°). Pas de vis M3 / trous oblongs (glissement par friction seulement).
 
 ### Plage de réglage des volets vs plateau Ø200 mm
@@ -339,7 +339,7 @@ Constantes `TURNTABLE_*`, `FOV_MARGIN`, `DOOR_PLANE_AHEAD_OF_LENS_MM` dans `gene
 ## Deux versions de la pièce 4
 
 - `camera_front_cover_v3_clip_no_frame.stl` : fenêtre simple Ø9,4 mm, 25,50 × 4,56 × 24,50 mm, sans volets.
-- `camera_front_cover_v3_clip_with_frame.stl` : avec fourreau + cadre à volets, 25,50 × 16,86 × 24,50 mm ; seule version compatible avec `camera_barn_door_x_x2.stl` / `camera_barn_door_z_x2.stl`.
+- `camera_front_cover_v3_clip_with_frame.stl` : avec fourreau + cadre à volets, 28,24 × 16,66 × 28,50 mm (cadre/alésage 18 × 17 centré sur le rond optique, z 14,61 ; la pile de volets descend à z 3,71 pour garder 2,45 mm de paroi sous l'alésage, z max 32,21 inchangé) ; seule version compatible avec `camera_barn_door_x_x2.stl` / `camera_barn_door_z_x2.stl`.
 - L'assemblage (`assemble.py`) utilise la version choisie par `COVER_WITH_FRAME` (True par défaut) ; les previews montrent donc la version avec cadre. L'ancien `camera_front_cover_v3_clip.stl` est supprimé.
 
 

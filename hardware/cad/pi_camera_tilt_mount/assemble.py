@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Assemble the camera tilt mount from the printable STL files.
 
 Part numbers follow the user's drawing:
@@ -49,7 +49,7 @@ PARTS = {
     "base": (8, "pi_camera_tilt_base.stl", "#9aa5b1"),
     "carrier": (3, "camera_carrier_plate_v4_onepiece.stl", "#e07a5f"),
     "cover": (4, COVER_STL, "#3d405b"),
-    "rod": (1, "adjustment_rod_M5x50_ball6.5_square_m3.stl", "#81b29a"),
+    "rod": (1, "adjustment_rod_M10x50_ball6.5_square_m3.stl", "#81b29a"),
     "wheel": (9, "wheel_crank_50mm_square_m3.stl", "#4f9dde"),
 }
 PLATE_TINT = "#f2cc8f"  # former part 5 (support plate) zone inside merged part 3
@@ -60,7 +60,7 @@ EXPECTED = {
     frozenset({"rod", "base"}): "thread flank overlap above limit",
     frozenset({"carrier", "cover"}): "cover pin holes receive the carrier pins",
 }
-THREAD_PITCH = 0.8
+THREAD_PITCH = 1.5
 THREAD_OVERLAP_LIMIT = 0.5  # mm3, tessellation noise only
 
 
@@ -80,8 +80,8 @@ def build() -> dict[str, trimesh.Trimesh]:
     ) @ rot_x(90)
     meshes["rod"].apply_transform(rod_tf)
 
-    # Wheel: hub face against the rod's stem end, square inside the socket.
-    wheel_y = rod_origin_y - ROD_STEM_END_LOCAL_Z + 5.0
+    # Wheel: free face against the rod's stem end, square inside the recessed socket.
+    wheel_y = rod_origin_y - ROD_STEM_END_LOCAL_Z
     wheel_tf = trimesh.transformations.translation_matrix(
         [0, wheel_y, M5_HOLE_Z]
     ) @ rot_x(-90)

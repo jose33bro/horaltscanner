@@ -1,4 +1,4 @@
-﻿from dataclasses import dataclass
+from dataclasses import dataclass
 from pathlib import Path
 import math
 import struct
@@ -75,6 +75,7 @@ CABLE_PASSAGE_HEIGHT = 5.00
 CABLE_PASSAGE_Y_OFFSET = 8.00
 
 EAR_PROJECTION = 8.70
+EAR_EXTRA_FORWARD = 2.00  # ears extended past the pivot toward the front (-y); pivot hole unchanged
 EAR_WIDTH = 8.50
 EAR_GAP = 5.33
 EAR_HEIGHT = 5.99
@@ -83,14 +84,16 @@ PIVOT_CLEARANCE_DIAMETER = 3.40
 # screw). The base carries a modelled internal thread; the printed hole is
 # sized for FDM: minor diameter 4.20 (nominal 4.13), bored to a 5.50 major
 # diameter so the rod's 5.00 crest has 0.25 mm radial clearance.
-THREAD_MAJOR_DIAMETER = 5.00
-THREAD_PITCH = 0.80
-THREAD_DEPTH = 0.50  # radial height of the triangular thread profile
+THREAD_MAJOR_DIAMETER = 10.00  # M10 x 1.5: base hole crest stays >= 8.2 mm after ~2.4 % shrink so the 6.5 mm ball passes
+THREAD_PITCH = 1.50
+THREAD_DEPTH = 0.92  # radial height of the triangular thread profile (ISO 0.6134 x pitch)
 THREAD_MINOR_DIAMETER = THREAD_MAJOR_DIAMETER - (2 * THREAD_DEPTH)
 THREAD_LENGTH = 20.00
-M5_HOLE_MINOR_DIAMETER = 4.20
-M5_HOLE_MAJOR_DIAMETER = 5.50
-M5_HOLE_RIDGE_DEPTH = 0.65  # ridge tip radius 2.75 - 0.65 = 2.10
+THREAD_HOLE_MINOR_DIAMETER = 8.40
+THREAD_HOLE_MAJOR_DIAMETER = 10.50
+THREAD_HOLE_RIDGE_DEPTH = 1.05  # ridge tip radius 5.25 - 1.05 = 4.20
+NUT_SIZE = 15.00  # square nut side (2.25 mm wall around the 10.5 mm bore)
+NUT_THICKNESS = 6.00  # along the hole axis, added behind the plate (+y)
 M3_TAP_PILOT_DIAMETER = 2.70  # self-tapping M3 pilot in PLA
 M5_THREAD_HOLE_OFFSET_FROM_TOP = 22.00
 
@@ -111,12 +114,11 @@ DRIVE_SQUARE_WIDTH = 5.00
 DRIVE_SQUARE_LENGTH = 10.00
 M3_CLEARANCE_DIAMETER = 3.20
 WHEEL_DIAMETER = 50.00
-WHEEL_THICKNESS = 6.00
-WHEEL_HUB_WIDTH = 10.00
-WHEEL_HUB_LENGTH = 10.00
+WHEEL_THICKNESS = 10.00  # square socket is recessed inside the wheel, nothing protrudes
 WHEEL_SOCKET_WIDTH = DRIVE_SQUARE_WIDTH + 0.20
 WHEEL_SOCKET_DEPTH = 6.00  # 5 mm of protruding square + 1 mm slack
 WHEEL_HUB_M3_CLEARANCE_DIAMETER = 3.20
+WHEEL_SET_SCREW_Z = DRIVE_SQUARE_WIDTH / 2  # radial M3 pilot, mid-length of the square
 
 # Camera carrier: holds the Pi Camera Module 3 (standard or NoIR, same PCB)
 # and provides the hinge tab that slots between the base's ears on the M3
@@ -570,23 +572,23 @@ def make_mount() -> TopoDS_Shape:
     ear_center_z = ear.ear_center_z
     left_ear_body = make_box(
         EAR_WIDTH,
-        ear_box_depth,
+        ear_box_depth + EAR_EXTRA_FORWARD,
         EAR_HEIGHT,
         x=-ear_x,
-        y=ear_body_y,
+        y=ear_body_y - (EAR_EXTRA_FORWARD / 2),
         z=ear_z,
     )
     right_ear_body = make_box(
         EAR_WIDTH,
-        ear_box_depth,
+        ear_box_depth + EAR_EXTRA_FORWARD,
         EAR_HEIGHT,
         x=ear_x,
-        y=ear_body_y,
+        y=ear_body_y - (EAR_EXTRA_FORWARD / 2),
         z=ear_z,
     )
     left_ear_round = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(-ear_x - (EAR_WIDTH / 2), ear_tip_y, ear_center_z),
+            gp_Pnt(-ear_x - (EAR_WIDTH / 2), ear_tip_y - EAR_EXTRA_FORWARD, ear_center_z),
             gp_Dir(1, 0, 0),
         ),
         ear_radius,
@@ -594,7 +596,7 @@ def make_mount() -> TopoDS_Shape:
     ).Shape()
     right_ear_round = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(ear_x - (EAR_WIDTH / 2), ear_tip_y, ear_center_z),
+            gp_Pnt(ear_x - (EAR_WIDTH / 2), ear_tip_y - EAR_EXTRA_FORWARD, ear_center_z),
             gp_Dir(1, 0, 0),
         ),
         ear_radius,
@@ -714,18 +716,18 @@ def make_mount() -> TopoDS_Shape:
             gp_Pnt(0, plate_front_y - 1, PLATE_HEIGHT - M5_THREAD_HOLE_OFFSET_FROM_TOP),
             gp_Dir(0, 1, 0),
         ),
-        M5_HOLE_MAJOR_DIAMETER / 2,
-        MATERIAL_THICKNESS + 2,
+        THREAD_HOLE_MAJOR_DIAMETER / 2,
+        MATERIAL_THICKNESS + NUT_THICKNESS + 2,
     ).Shape()
-    # Internal M5 x 0.8 thread: the hole is bored to the major diameter and a
+    # Internal M10 x 1.5 thread: the hole is bored to the major diameter and a
     # helical ridge (same helix as the rod's external thread, pointing
     # inward) is fused back into the wall. A swept solid used as a cutting
     # tool made the OCC boolean return an unchanged plate, so it is added.
     ridge = make_external_thread(
-        M5_HOLE_MAJOR_DIAMETER / 2,
+        THREAD_HOLE_MAJOR_DIAMETER / 2,
         THREAD_PITCH,
-        M5_HOLE_RIDGE_DEPTH,
-        MATERIAL_THICKNESS,
+        THREAD_HOLE_RIDGE_DEPTH,
+        MATERIAL_THICKNESS + NUT_THICKNESS,
         0.0,
         inward=True,
     )
@@ -744,6 +746,15 @@ def make_mount() -> TopoDS_Shape:
         y=CSI_SLOT_FRONT_OFFSET,
         z=CSI_SLOT_BOTTOM + (CSI_SLOT_HEIGHT / 2),
     )
+    nut_depth = NUT_THICKNESS + 0.20
+    nut = make_box(
+        NUT_SIZE,
+        nut_depth,
+        NUT_SIZE,
+        y=(MATERIAL_THICKNESS / 2) - 0.20 + (nut_depth / 2),
+        z=PLATE_HEIGHT - M5_THREAD_HOLE_OFFSET_FROM_TOP - (NUT_SIZE / 2),
+    )
+    mount = fuse(mount, nut)
     return fuse(cut(cut(cut(mount, pivot_hole), m5_thread_hole), csi_slot), m5_thread_ridge)
 
 
@@ -1176,12 +1187,19 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     )
 
     stack_y0 = cover_front_y - HOOD_STANDOFF_DEPTH
+    # The bore is centred on the lens window, so the door stack must reach below
+    # the cover far enough to keep a wall under the X-door slot.
+    stack_bottom_z = min(
+        cover_bottom_z,
+        axis_z - (DOOR_X_HEIGHT + DOOR_SLOT_MARGIN) / 2 - CARRIER_REAR_HOOD_WALL,
+    )
+    stack_height = cover_bottom_z + CAM_HOUSING_HEIGHT - stack_bottom_z
     stack = make_box(
         CAM_HOUSING_WIDTH,
         DOOR_STACK_DEPTH,
-        CAM_HOUSING_HEIGHT,
+        stack_height,
         y=stack_y0 - DOOR_STACK_DEPTH / 2,
-        z=cover_bottom_z,
+        z=stack_bottom_z,
     )
     bore = make_box(
         FRAME_BORE_WIDTH,
@@ -1204,10 +1222,10 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     slot_z_doors = make_box(
         DOOR_Z_WIDTH + DOOR_SLOT_MARGIN,
         DOOR_SLOT_DEPTH,
-        CAM_HOUSING_HEIGHT + 2,
+        stack_height + 2,
         x=axis_x,
         y=slot_z_y - DOOR_SLOT_DEPTH / 2,
-        z=cover_bottom_z - 1,
+        z=stack_bottom_z - 1,
     )
     stack = cut(cut(cut(stack, bore), slot_x_doors), slot_z_doors)
     return fuse(cover, standoff, stack)
@@ -1349,29 +1367,27 @@ def make_wheel_crank() -> TopoDS_Shape:
         WHEEL_DIAMETER / 2,
         WHEEL_THICKNESS,
     ).Shape()
-    hub = make_box(
-        WHEEL_HUB_WIDTH,
-        WHEEL_HUB_WIDTH,
-        WHEEL_HUB_LENGTH,
-        z=-(WHEEL_HUB_LENGTH / 2),
-    )
-    hub_hole = BRepPrimAPI_MakeCylinder(
-        gp_Ax2(
-            gp_Pnt(0, 0, -(WHEEL_HUB_LENGTH / 2)),
-            gp_Dir(0, 0, 1),
-        ),
+    axial_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(gp_Pnt(0, 0, -1), gp_Dir(0, 0, 1)),
         WHEEL_HUB_M3_CLEARANCE_DIAMETER / 2,
-        WHEEL_HUB_LENGTH + 2,
+        WHEEL_THICKNESS + 2,
     ).Shape()
-    # Square socket for the rod's drive square (5 mm + 0.2 mm clearance),
-    # open on the hub's free face.
+    # Square socket recessed in the wheel (5 mm square + 0.2 mm clearance),
+    # open on the free face z=0; nothing protrudes.
     socket = make_box(
         WHEEL_SOCKET_WIDTH,
         WHEEL_SOCKET_WIDTH,
         WHEEL_SOCKET_DEPTH + 1,
-        z=-(WHEEL_HUB_LENGTH / 2) - 1,
+        z=-1,
     )
-    return cut(cut(fuse(wheel, hub), hub_hole), socket)
+    # Radial M3 pilot (self-tapping) from the rim into the socket, to clamp
+    # the rod's square with a set screw.
+    set_screw_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(gp_Pnt(0, 0, WHEEL_SET_SCREW_Z), gp_Dir(1, 0, 0)),
+        M3_TAP_PILOT_DIAMETER / 2,
+        WHEEL_DIAMETER / 2 + 1,
+    ).Shape()
+    return cut(cut(cut(wheel, axial_hole), socket), set_screw_hole)
 
 
 def make_fit_test() -> TopoDS_Shape:
@@ -1624,7 +1640,7 @@ def export_model(model: TopoDS_Shape, filename: str) -> None:
 if __name__ == "__main__":
     export_model(make_mount(), "pi_camera_tilt_base.stl")
     export_model(make_fit_test(), "fit_test_rear_cavity_30.45x38.2.stl")
-    export_model(make_adjustment_rod(), "adjustment_rod_M5x50_ball6.5_square_m3.stl")
+    export_model(make_adjustment_rod(), "adjustment_rod_M10x50_ball6.5_square_m3.stl")
     export_model(make_wheel_crank(), "wheel_crank_50mm_square_m3.stl")
     export_model(make_camera_carrier_with_plate(), "camera_carrier_plate_v4_onepiece.stl")
     export_model(make_camera_front_cover(False), "camera_front_cover_v3_clip_no_frame.stl")

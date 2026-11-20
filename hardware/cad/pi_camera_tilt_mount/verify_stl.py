@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Verify the printable STL files: closed manifold mesh, no degenerate
 triangles, expected bounding box and positive volume.
 
@@ -24,13 +24,13 @@ BBOX_TOLERANCE_MM = 0.05
 
 # filename -> expected bounding box extents (x, y, z) in mm
 EXPECTED_EXTENTS = {
-    HERE / "stl" / "pi_camera_tilt_base.stl": (30.45, 27.20, 43.20),
+    HERE / "stl" / "pi_camera_tilt_base.stl": (30.45, 33.20, 43.20),
     HERE / "stl" / "fit_test_rear_cavity_30.45x38.2.stl": (30.45, 3.20, 38.20),
-    HERE / "stl" / "adjustment_rod_M5x50_ball6.5_square_m3.stl": (6.50, 6.50, 60.50),
-    HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 11.00),
+    HERE / "stl" / "adjustment_rod_M10x50_ball6.5_square_m3.stl": (10.00, 10.00, 60.50),
+    HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 10.00),
     HERE / "stl" / "camera_carrier_plate_v4_onepiece.stl": (25.50, 10.75, 35.00),
     HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl": (28.24, 9.58, 24.50),
-    HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.24, 16.66, 24.50),
+    HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.24, 16.66, 28.50),
     HERE / "stl" / "camera_barn_door_x_x2.stl": (10.00, 19.00, 0.90),
     HERE / "stl" / "camera_barn_door_z_x2.stl": (20.00, 10.00, 0.90),
     HERE / "stl" / "ball_screw_M5x40_ball6.5.stl": (6.50, 6.50, 42.50),
@@ -196,7 +196,6 @@ def check_lens_square() -> list[str]:
     hx = wx[~xi]
     dz = (hz.min() + hz.max()) / 2 - zc
     dx = (hx.min() + hx.max()) / 2
-    ring = min(hz.min() - recess[0][0], recess[0][1] - hz.max(), 6.83 - (hx.max() - hx.min()) / 2 if False else 9)
     ok = abs(dz) <= 0.03 and abs(dx) <= 0.03
     print(f'{"OK  " if ok else "FAIL"} lens window centre x {dx:.2f}, z {(hz.min() + hz.max()) / 2:.2f} vs square z {zc:.2f}; dia {hx.max() - hx.min():.2f}; Z ring {min(hz.min() - recess[0][0], recess[0][1] - hz.max()):.2f}')
     if not ok:
@@ -206,6 +205,111 @@ def check_lens_square() -> list[str]:
     print(f'{"OK  " if ok else "FAIL"} cover width {width:.2f} mm (28.24)')
     if not ok:
         errs.append('width')
+    return errs
+
+
+def check_base_thread_hole() -> list[str]:
+    import trimesh
+
+    base = trimesh.load(HERE / "stl" / "pi_camera_tilt_base.stl")
+    z0 = 38.2 - 22.0
+    sec = base.section(plane_origin=[0, -0.5, 0], plane_normal=[0, 1, 0])
+    pts = sec.vertices
+    r = np.hypot(pts[:, 0], pts[:, 2] - z0)
+    r_min = r[r < 7].min()
+    printed_dia = 2 * r_min * 0.976
+    errs = []
+    if abs(2 * r_min - 8.4) > 0.1:
+        errs.append(f"base thread hole crest dia {2 * r_min:.2f} != 8.40")
+    if printed_dia < 6.5 + 0.4:
+        errs.append(f"base hole {printed_dia:.2f} mm after shrink < 6.9 (ball 6.5 + 0.4)")
+    # square nut: 6.0 mm behind the plate back face (y=1.6), 15 mm side, centred on the hole
+    probe = [[7.3, 4.6, z0], [-7.3, 4.6, z0], [0, 4.6, z0 + 7.3], [0, 4.6, z0 - 7.3], [7.3, 7.4, z0 + 7.3]]
+    if not all(base.contains(probe)):
+        errs.append("square nut corners/walls missing")
+    if base.contains([[7.7, 4.6, z0], [0, 8.0, z0 + 7.0]]).any():
+        errs.append("nut larger than 15 mm or thicker than 6 mm")
+    nut_max_y = base.vertices[:, 1].max()
+    if abs(nut_max_y - 7.6) > 0.05:
+        errs.append(f"nut back face y {nut_max_y:.2f} != 7.60")
+    sec2 = base.section(plane_origin=[0, 5.0, 0], plane_normal=[0, 1, 0])
+    r2 = np.hypot(sec2.vertices[:, 0], sec2.vertices[:, 2] - z0)
+    if not (4.2 < r2[r2 < 7].min() < 5.0) or base.contains([[0, 5.0, z0]])[0]:
+        errs.append("bore/thread not continued through nut")
+    print(f"nut max y {nut_max_y:.2f}, wall {7.5 - 5.25:.2f} mm")
+    print(f"{'OK  ' if not errs else 'FAIL'} base M10 hole crest dia {2 * r_min:.2f} mm ({printed_dia:.2f} printed)")
+    return errs
+
+
+def check_crank() -> list[str]:
+    import trimesh
+
+    wheel = trimesh.load(HERE / 'stl' / 'wheel_crank_50mm_square_m3.stl')
+    errs = []
+
+    def solid(x, y, z):
+        return bool(wheel.contains([[x, y, z]])[0])
+
+    lo, hi = wheel.bounds
+    ok = abs(lo[2]) <= 0.01 and abs(hi[2] - 10.0) <= 0.01 and wheel.is_watertight and wheel.body_count == 1
+    print(f'{"OK  " if ok else "FAIL"} crank z {lo[2]:.2f}..{hi[2]:.2f}, one closed solid: nothing protrudes beyond the wheel faces')
+    if not ok:
+        errs.append('crank protrusion')
+    # square socket recessed in the wheel: measure half-width and depth on the STL (y=1.0 avoids the pilot)
+    half = next((x for x in np.arange(0.0, 5.0, 0.02) if solid(x, 1.0, 5.2)), 0.0)
+    depth = max((z for z in np.arange(0.05, 9.95, 0.05) if not solid(2.0, 2.0, z)), default=0.0)
+    ok = abs(2 * half - 5.2) <= 0.1 and abs(depth - 6.0) <= 0.1 and solid(2.0, 2.0, 6.3)
+    print(f'{"OK  " if ok else "FAIL"} crank square socket {2 * half:.2f} mm wide (5.2 = 5.0 + clearance), {depth:.2f} mm deep (6.0), floor solid')
+    if not ok:
+        errs.append('crank socket')
+    # radial M3 pilot along +x at z 2.5: open from the socket to the rim, 2.7 mm wide
+    open_run = all(not solid(x, 0.0, 2.5) for x in np.arange(3.0, 24.9, 0.25))
+    dia = 2 * next((d for d in np.arange(0.0, 3.0, 0.05) if solid(10.0, d, 2.5)), 0.0)
+    ok = open_run and abs(dia - 2.7) <= 0.15
+    print(f'{"OK  " if ok else "FAIL"} crank radial M3 pilot dia {dia:.2f} mm (2.7), open socket to rim at z 2.5')
+    if not ok:
+        errs.append('crank M3')
+    return errs
+
+
+def check_frame() -> list[str]:
+    import trimesh
+
+    nof = trimesh.load(HERE / 'stl' / 'camera_front_cover_v3_clip_no_frame.stl')
+    fr = trimesh.load(HERE / 'stl' / 'camera_front_cover_v3_clip_with_frame.stl')
+    errs = []
+
+    def is_open(x, z):
+        hits, _, _ = fr.ray.intersects_location([[x, -40, z]], [[0, 1, 0]])
+        return len(hits) == 0 or not np.any(hits[:, 1] < -24.5)
+
+
+    zc = float(nof.bounds[0][2] + 1.30 + 11.20 / 2)
+    zc_probe = zc
+    z = zc_probe
+    while is_open(0, z - 0.05):
+        z -= 0.05
+    zlo = z
+    z = zc_probe
+    while is_open(0, z + 0.05):
+        z += 0.05
+    zhi = z
+    xlo = xhi = 0.0
+    while is_open(xlo - 0.05, zc_probe):
+        xlo -= 0.05
+    while is_open(xhi + 0.05, zc_probe):
+        xhi += 0.05
+    cz = (zlo + zhi) / 2
+    ok = abs(cz - zc) <= 0.1 and abs(zhi - zlo - 17.0) <= 0.15 and abs(xhi - xlo - 18.0) <= 0.15 and abs((xlo + xhi) / 2) <= 0.1
+    print(f'{"OK  " if ok else "FAIL"} frame bore {xhi - xlo:.2f} x {zhi - zlo:.2f}, centre x {(xlo + xhi) / 2:.2f} z {cz:.2f} vs lens window z {zc:.2f}')
+    if not ok:
+        errs.append('frame bore')
+    below = zlo - float(fr.bounds[0][2])
+    top = float(fr.bounds[1][2])
+    ok = below >= 2.0 and abs(top - float(nof.bounds[1][2])) <= 0.01
+    print(f'{"OK  " if ok else "FAIL"} frame wall under bore {below:.2f} mm (>=2.0), z max {top:.2f} = cover z max')
+    if not ok:
+        errs.append('frame walls')
     return errs
 
 
@@ -228,7 +332,7 @@ def check_assembly() -> list[str]:
 
 
 def main() -> int:
-    failed = bool(check_lens_square()) or bool(check_assembly())
+    failed = bool(check_lens_square()) or bool(check_frame()) or bool(check_crank()) or bool(check_assembly()) or bool(check_base_thread_hole())
     for path in sorted((HERE / "stl").glob("*.stl")):
         errors = check_header(path)
         print(f"{'FAIL' if errors else 'OK  '} header {path.name}"

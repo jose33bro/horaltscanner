@@ -275,7 +275,7 @@ LENS_RECESS_FRONT_WALL = 1.20
 # centred on it. Pin holes unchanged. Cover length 29.13 mm (was 24.50).
 COVER_RECESS_Z = 11.00
 COVER_RECESS_BOTTOM_FROM_EDGE = 1.50  # user: pin-row centre (z 20.21) = square top edge (was 4.69)
-COVER_LENGTH_Z = 29.13  # user: 'coter 29.13' (27.93 was a caliper reading to correct)
+COVER_LENGTH_Z = CAM_HOUSING_HEIGHT  # 24.50: top blocks above the 3+5 plate (z>32.21) removed (user)
 LENS_RECESS_WIDTH_X = 14.00  # user: 13.59 'voir 14' mm across X (room for the lens connector)
 LENS_RECESS_DEPTH = 5.62  # user; deeper than the 5.36 plate, so a front pad is added
 COVER_FRONT_PAD = LENS_RECESS_DEPTH + LENS_RECESS_FRONT_WALL - COVER_THICKNESS  # 1.46
@@ -1079,7 +1079,8 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
             )
         )
     cover_plate = fuse(cover_plate, *rails)
-    cover_plate = fuse(
+    if COVER_LENGTH_Z > CAM_HOUSING_HEIGHT:
+      cover_plate = fuse(
         cover_plate,
         make_box(
             CAM_HOUSING_WIDTH,

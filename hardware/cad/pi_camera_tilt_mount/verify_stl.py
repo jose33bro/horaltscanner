@@ -24,7 +24,7 @@ BBOX_TOLERANCE_MM = 0.05
 
 # filename -> expected bounding box extents (x, y, z) in mm
 EXPECTED_EXTENTS = {
-    HERE / "stl" / "pi_camera_tilt_base.stl": (30.45, 27.20, 43.20),
+    HERE / "stl" / "pi_camera_tilt_base.stl": (30.45, 33.20, 43.20),
     HERE / "stl" / "fit_test_rear_cavity_30.45x38.2.stl": (30.45, 3.20, 38.20),
     HERE / "stl" / "adjustment_rod_M10x50_ball6.5_square_m3.stl": (10.00, 10.00, 60.50),
     HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 11.00),
@@ -224,6 +224,20 @@ def check_base_thread_hole() -> list[str]:
         errs.append(f"base thread hole crest dia {2 * r_min:.2f} != 8.40")
     if printed_dia < 6.5 + 0.4:
         errs.append(f"base hole {printed_dia:.2f} mm after shrink < 6.9 (ball 6.5 + 0.4)")
+    # square nut: 6.0 mm behind the plate back face (y=1.6), 15 mm side, centred on the hole
+    probe = [[7.3, 4.6, z0], [-7.3, 4.6, z0], [0, 4.6, z0 + 7.3], [0, 4.6, z0 - 7.3], [7.3, 7.4, z0 + 7.3]]
+    if not all(base.contains(probe)):
+        errs.append("square nut corners/walls missing")
+    if base.contains([[7.7, 4.6, z0], [0, 8.0, z0 + 7.0]]).any():
+        errs.append("nut larger than 15 mm or thicker than 6 mm")
+    nut_max_y = base.vertices[:, 1].max()
+    if abs(nut_max_y - 7.6) > 0.05:
+        errs.append(f"nut back face y {nut_max_y:.2f} != 7.60")
+    sec2 = base.section(plane_origin=[0, 5.0, 0], plane_normal=[0, 1, 0])
+    r2 = np.hypot(sec2.vertices[:, 0], sec2.vertices[:, 2] - z0)
+    if not (4.2 < r2[r2 < 7].min() < 5.0) or base.contains([[0, 5.0, z0]])[0]:
+        errs.append("bore/thread not continued through nut")
+    print(f"nut max y {nut_max_y:.2f}, wall {7.5 - 5.25:.2f} mm")
     print(f"{'OK  ' if not errs else 'FAIL'} base M10 hole crest dia {2 * r_min:.2f} mm ({printed_dia:.2f} printed)")
     return errs
 

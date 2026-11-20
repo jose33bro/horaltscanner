@@ -75,6 +75,7 @@ CABLE_PASSAGE_HEIGHT = 5.00
 CABLE_PASSAGE_Y_OFFSET = 8.00
 
 EAR_PROJECTION = 8.70
+EAR_EXTRA_FORWARD = 2.00  # ears extended past the pivot toward the front (-y); pivot hole unchanged
 EAR_WIDTH = 8.50
 EAR_GAP = 5.33
 EAR_HEIGHT = 5.99
@@ -91,6 +92,8 @@ THREAD_LENGTH = 20.00
 THREAD_HOLE_MINOR_DIAMETER = 8.40
 THREAD_HOLE_MAJOR_DIAMETER = 10.50
 THREAD_HOLE_RIDGE_DEPTH = 1.05  # ridge tip radius 5.25 - 1.05 = 4.20
+NUT_SIZE = 15.00  # square nut side (2.25 mm wall around the 10.5 mm bore)
+NUT_THICKNESS = 6.00  # along the hole axis, added behind the plate (+y)
 M3_TAP_PILOT_DIAMETER = 2.70  # self-tapping M3 pilot in PLA
 M5_THREAD_HOLE_OFFSET_FROM_TOP = 22.00
 
@@ -570,23 +573,23 @@ def make_mount() -> TopoDS_Shape:
     ear_center_z = ear.ear_center_z
     left_ear_body = make_box(
         EAR_WIDTH,
-        ear_box_depth,
+        ear_box_depth + EAR_EXTRA_FORWARD,
         EAR_HEIGHT,
         x=-ear_x,
-        y=ear_body_y,
+        y=ear_body_y - (EAR_EXTRA_FORWARD / 2),
         z=ear_z,
     )
     right_ear_body = make_box(
         EAR_WIDTH,
-        ear_box_depth,
+        ear_box_depth + EAR_EXTRA_FORWARD,
         EAR_HEIGHT,
         x=ear_x,
-        y=ear_body_y,
+        y=ear_body_y - (EAR_EXTRA_FORWARD / 2),
         z=ear_z,
     )
     left_ear_round = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(-ear_x - (EAR_WIDTH / 2), ear_tip_y, ear_center_z),
+            gp_Pnt(-ear_x - (EAR_WIDTH / 2), ear_tip_y - EAR_EXTRA_FORWARD, ear_center_z),
             gp_Dir(1, 0, 0),
         ),
         ear_radius,
@@ -594,7 +597,7 @@ def make_mount() -> TopoDS_Shape:
     ).Shape()
     right_ear_round = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(ear_x - (EAR_WIDTH / 2), ear_tip_y, ear_center_z),
+            gp_Pnt(ear_x - (EAR_WIDTH / 2), ear_tip_y - EAR_EXTRA_FORWARD, ear_center_z),
             gp_Dir(1, 0, 0),
         ),
         ear_radius,
@@ -715,7 +718,7 @@ def make_mount() -> TopoDS_Shape:
             gp_Dir(0, 1, 0),
         ),
         THREAD_HOLE_MAJOR_DIAMETER / 2,
-        MATERIAL_THICKNESS + 2,
+        MATERIAL_THICKNESS + NUT_THICKNESS + 2,
     ).Shape()
     # Internal M10 x 1.5 thread: the hole is bored to the major diameter and a
     # helical ridge (same helix as the rod's external thread, pointing
@@ -725,7 +728,7 @@ def make_mount() -> TopoDS_Shape:
         THREAD_HOLE_MAJOR_DIAMETER / 2,
         THREAD_PITCH,
         THREAD_HOLE_RIDGE_DEPTH,
-        MATERIAL_THICKNESS,
+        MATERIAL_THICKNESS + NUT_THICKNESS,
         0.0,
         inward=True,
     )
@@ -744,6 +747,15 @@ def make_mount() -> TopoDS_Shape:
         y=CSI_SLOT_FRONT_OFFSET,
         z=CSI_SLOT_BOTTOM + (CSI_SLOT_HEIGHT / 2),
     )
+    nut_depth = NUT_THICKNESS + 0.20
+    nut = make_box(
+        NUT_SIZE,
+        nut_depth,
+        NUT_SIZE,
+        y=(MATERIAL_THICKNESS / 2) - 0.20 + (nut_depth / 2),
+        z=PLATE_HEIGHT - M5_THREAD_HOLE_OFFSET_FROM_TOP - (NUT_SIZE / 2),
+    )
+    mount = fuse(mount, nut)
     return fuse(cut(cut(cut(mount, pivot_hole), m5_thread_hole), csi_slot), m5_thread_ridge)
 
 

@@ -27,7 +27,7 @@ EXPECTED_EXTENTS = {
     HERE / "stl" / "pi_camera_tilt_base.stl": (30.45, 33.20, 43.20),
     HERE / "stl" / "fit_test_rear_cavity_30.45x38.2.stl": (30.45, 3.20, 38.20),
     HERE / "stl" / "adjustment_rod_M10x50_ball6.5_square_m3.stl": (10.00, 10.00, 60.50),
-    HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 11.00),
+    HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 10.00),
     HERE / "stl" / "camera_carrier_plate_v4_onepiece.stl": (25.50, 10.75, 35.00),
     HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl": (28.24, 9.58, 24.50),
     HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.24, 16.66, 24.50),
@@ -242,6 +242,37 @@ def check_base_thread_hole() -> list[str]:
     return errs
 
 
+def check_crank() -> list[str]:
+    import trimesh
+
+    wheel = trimesh.load(HERE / 'stl' / 'wheel_crank_50mm_square_m3.stl')
+    errs = []
+
+    def solid(x, y, z):
+        return bool(wheel.contains([[x, y, z]])[0])
+
+    lo, hi = wheel.bounds
+    ok = abs(lo[2]) <= 0.01 and abs(hi[2] - 10.0) <= 0.01 and wheel.is_watertight and wheel.body_count == 1
+    print(f'{"OK  " if ok else "FAIL"} crank z {lo[2]:.2f}..{hi[2]:.2f}, one closed solid: nothing protrudes beyond the wheel faces')
+    if not ok:
+        errs.append('crank protrusion')
+    # square socket recessed in the wheel: measure half-width and depth on the STL (y=1.0 avoids the pilot)
+    half = next((x for x in np.arange(0.0, 5.0, 0.02) if solid(x, 1.0, 5.2)), 0.0)
+    depth = max((z for z in np.arange(0.05, 9.95, 0.05) if not solid(2.0, 2.0, z)), default=0.0)
+    ok = abs(2 * half - 5.2) <= 0.1 and abs(depth - 6.0) <= 0.1 and solid(2.0, 2.0, 6.3)
+    print(f'{"OK  " if ok else "FAIL"} crank square socket {2 * half:.2f} mm wide (5.2 = 5.0 + clearance), {depth:.2f} mm deep (6.0), floor solid')
+    if not ok:
+        errs.append('crank socket')
+    # radial M3 pilot along +x at z 2.5: open from the socket to the rim, 2.7 mm wide
+    open_run = all(not solid(x, 0.0, 2.5) for x in np.arange(3.0, 24.9, 0.25))
+    dia = 2 * next((d for d in np.arange(0.0, 3.0, 0.05) if solid(10.0, d, 2.5)), 0.0)
+    ok = open_run and abs(dia - 2.7) <= 0.15
+    print(f'{"OK  " if ok else "FAIL"} crank radial M3 pilot dia {dia:.2f} mm (2.7), open socket to rim at z 2.5')
+    if not ok:
+        errs.append('crank M3')
+    return errs
+
+
 def check_assembly() -> list[str]:
     import trimesh
 
@@ -261,7 +292,7 @@ def check_assembly() -> list[str]:
 
 
 def main() -> int:
-    failed = bool(check_lens_square()) or bool(check_assembly()) or bool(check_base_thread_hole())
+    failed = bool(check_lens_square()) or bool(check_crank()) or bool(check_assembly()) or bool(check_base_thread_hole())
     for path in sorted((HERE / "stl").glob("*.stl")):
         errors = check_header(path)
         print(f"{'FAIL' if errors else 'OK  '} header {path.name}"

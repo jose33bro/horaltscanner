@@ -114,12 +114,11 @@ DRIVE_SQUARE_WIDTH = 5.00
 DRIVE_SQUARE_LENGTH = 10.00
 M3_CLEARANCE_DIAMETER = 3.20
 WHEEL_DIAMETER = 50.00
-WHEEL_THICKNESS = 6.00
-WHEEL_HUB_WIDTH = 10.00
-WHEEL_HUB_LENGTH = 10.00
+WHEEL_THICKNESS = 10.00  # square socket is recessed inside the wheel, nothing protrudes
 WHEEL_SOCKET_WIDTH = DRIVE_SQUARE_WIDTH + 0.20
 WHEEL_SOCKET_DEPTH = 6.00  # 5 mm of protruding square + 1 mm slack
 WHEEL_HUB_M3_CLEARANCE_DIAMETER = 3.20
+WHEEL_SET_SCREW_Z = DRIVE_SQUARE_WIDTH / 2  # radial M3 pilot, mid-length of the square
 
 # Camera carrier: holds the Pi Camera Module 3 (standard or NoIR, same PCB)
 # and provides the hinge tab that slots between the base's ears on the M3
@@ -1361,29 +1360,27 @@ def make_wheel_crank() -> TopoDS_Shape:
         WHEEL_DIAMETER / 2,
         WHEEL_THICKNESS,
     ).Shape()
-    hub = make_box(
-        WHEEL_HUB_WIDTH,
-        WHEEL_HUB_WIDTH,
-        WHEEL_HUB_LENGTH,
-        z=-(WHEEL_HUB_LENGTH / 2),
-    )
-    hub_hole = BRepPrimAPI_MakeCylinder(
-        gp_Ax2(
-            gp_Pnt(0, 0, -(WHEEL_HUB_LENGTH / 2)),
-            gp_Dir(0, 0, 1),
-        ),
+    axial_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(gp_Pnt(0, 0, -1), gp_Dir(0, 0, 1)),
         WHEEL_HUB_M3_CLEARANCE_DIAMETER / 2,
-        WHEEL_HUB_LENGTH + 2,
+        WHEEL_THICKNESS + 2,
     ).Shape()
-    # Square socket for the rod's drive square (5 mm + 0.2 mm clearance),
-    # open on the hub's free face.
+    # Square socket recessed in the wheel (5 mm square + 0.2 mm clearance),
+    # open on the free face z=0; nothing protrudes.
     socket = make_box(
         WHEEL_SOCKET_WIDTH,
         WHEEL_SOCKET_WIDTH,
         WHEEL_SOCKET_DEPTH + 1,
-        z=-(WHEEL_HUB_LENGTH / 2) - 1,
+        z=-1,
     )
-    return cut(cut(fuse(wheel, hub), hub_hole), socket)
+    # Radial M3 pilot (self-tapping) from the rim into the socket, to clamp
+    # the rod's square with a set screw.
+    set_screw_hole = BRepPrimAPI_MakeCylinder(
+        gp_Ax2(gp_Pnt(0, 0, WHEEL_SET_SCREW_Z), gp_Dir(1, 0, 0)),
+        M3_TAP_PILOT_DIAMETER / 2,
+        WHEEL_DIAMETER / 2 + 1,
+    ).Shape()
+    return cut(cut(cut(wheel, axial_hole), socket), set_screw_hole)
 
 
 def make_fit_test() -> TopoDS_Shape:

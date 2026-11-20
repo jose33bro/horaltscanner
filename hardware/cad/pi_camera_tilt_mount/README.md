@@ -13,7 +13,7 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
   sur 50 mm, bille Ø 6,5 mm côté caméra et carré côté roue/plateau, avec trou
   M3 central dans le carré;
 - `stl/wheel_crank_50mm_square_m3.stl` : roue/crank de 50 mm de diamètre avec
-  carré de montage et trou M3 central pour serrage sur plaque de 3 mm;
+  logement carré en creux 5,2 × 5,2 × 6 mm (le carré de la tige s'emboîte, rien ne dépasse), épaisseur 10 mm (6 mm avant), trou central Ø3,2 et trou radial M3 (pilote taraudant Ø2,7, z 2,5) depuis la jante pour bloquer la tige;
 - `stl/camera_carrier_plate_v4_onepiece.stl` : **pièces 3 + 5 en un seul
   solide** (25,00 × 8,29 × 35,00 mm). Berceau qui porte la carte Pi
   Camera Module 3 (noir/NoIR, 25 × 24 mm, 4 trous Ø2,5 mm en carré 21 mm) et

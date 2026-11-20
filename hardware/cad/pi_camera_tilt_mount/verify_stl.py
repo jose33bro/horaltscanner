@@ -188,6 +188,19 @@ def check_lens_square() -> list[str]:
         print(f'{"OK  " if ok else "FAIL"} cover {name}')
         if not ok:
             errs.append(name)
+    wz = np.arange(recess[0][0] - 0.5, recess[0][1] + 0.5, 0.01)
+    wi = mesh.contains(np.array([[0.0, y0 + 0.5, z] for z in wz]))
+    hz = wz[~wi]
+    wx = np.arange(-8.0, 8.0, 0.01)
+    xi = mesh.contains(np.array([[x, y0 + 0.5, (hz.min() + hz.max()) / 2] for x in wx]))
+    hx = wx[~xi]
+    dz = (hz.min() + hz.max()) / 2 - zc
+    dx = (hx.min() + hx.max()) / 2
+    ring = min(hz.min() - recess[0][0], recess[0][1] - hz.max(), 6.83 - (hx.max() - hx.min()) / 2 if False else 9)
+    ok = abs(dz) <= 0.03 and abs(dx) <= 0.03
+    print(f'{"OK  " if ok else "FAIL"} lens window centre x {dx:.2f}, z {(hz.min() + hz.max()) / 2:.2f} vs square z {zc:.2f}; dia {hx.max() - hx.min():.2f}; Z ring {min(hz.min() - recess[0][0], recess[0][1] - hz.max()):.2f}')
+    if not ok:
+        errs.append('window centred')
     width = float(mesh.extents[0])
     ok = abs(width - 28.24) <= 0.01
     print(f'{"OK  " if ok else "FAIL"} cover width {width:.2f} mm (28.24)')

@@ -274,7 +274,7 @@ LENS_RECESS_FRONT_WALL = 1.20
 # 4.69 mm from the cover's connector-side (bottom) edge; the round window is
 # centred on it. Pin holes unchanged. Cover length 29.13 mm (was 24.50).
 COVER_RECESS_Z = 10.95  # user: square 10.95 (was 11.00)
-COVER_LENS_RISE = 0.50  # user: round window raised 0.5 mm
+COVER_LENS_RISE = 0.00  # user: round window centred on the square (no offset)
 COVER_RECESS_BOTTOM_FROM_EDGE = 1.55  # user: pin-row centre (z 20.21) = square top edge (was 4.69)
 COVER_LENGTH_Z = CAM_HOUSING_HEIGHT  # 24.50: top blocks above the 3+5 plate (z>32.21) removed (user)
 LENS_RECESS_WIDTH_X = 13.66  # user: 13.59 'voir 14' mm across X (room for the lens connector)

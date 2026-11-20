@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Assemble the camera tilt mount from the printable STL files.
 
 Part numbers follow the user's drawing:
@@ -80,8 +80,8 @@ def build() -> dict[str, trimesh.Trimesh]:
     ) @ rot_x(90)
     meshes["rod"].apply_transform(rod_tf)
 
-    # Wheel: hub face against the rod's stem end, square inside the socket.
-    wheel_y = rod_origin_y - ROD_STEM_END_LOCAL_Z + 5.0
+    # Wheel: free face against the rod's stem end, square inside the recessed socket.
+    wheel_y = rod_origin_y - ROD_STEM_END_LOCAL_Z
     wheel_tf = trimesh.transformations.translation_matrix(
         [0, wheel_y, M5_HOLE_Z]
     ) @ rot_x(-90)

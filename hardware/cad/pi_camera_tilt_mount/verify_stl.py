@@ -29,8 +29,8 @@ EXPECTED_EXTENTS = {
     HERE / "stl" / "adjustment_rod_M5x50_ball6.5_square_m3.stl": (6.50, 6.50, 60.50),
     HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 11.00),
     HERE / "stl" / "camera_carrier_plate_v4_onepiece.stl": (25.50, 10.75, 35.00),
-    HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl": (28.20, 8.12, 29.13),
-    HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.20, 16.66, 29.13),
+    HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl": (28.20, 8.12, 27.93),
+    HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.20, 16.66, 27.93),
     HERE / "stl" / "camera_barn_door_x_x2.stl": (10.00, 19.00, 0.90),
     HERE / "stl" / "camera_barn_door_z_x2.stl": (20.00, 10.00, 0.90),
     HERE / "stl" / "ball_screw_M5x40_ball6.5.stl": (6.50, 6.50, 42.50),
@@ -166,8 +166,26 @@ def check_lens_square() -> list[str]:
     return errs
 
 
+def check_assembly() -> list[str]:
+    import trimesh
+
+    car = trimesh.load(HERE / 'stl' / 'camera_carrier_plate_v4_onepiece.stl')
+    errs = []
+    for name in ('no_frame', 'with_frame'):
+        cov = trimesh.load(HERE / 'stl' / f'camera_front_cover_v3_clip_{name}.stl')
+        lo, hi = cov.bounds
+        pts = car.sample(60000)
+        pts = pts[np.all((pts > lo) & (pts < hi), axis=1)]
+        hit = int(cov.contains(pts).sum()) if len(pts) else 0
+        ok = hit == 0
+        print(f'{"OK  " if ok else "FAIL"} assembly 3+5 vs cover {name}: {hit} carrier sample points inside the cover')
+        if not ok:
+            errs.append(name)
+    return errs
+
+
 def main() -> int:
-    failed = bool(check_lens_square())
+    failed = bool(check_lens_square()) or bool(check_assembly())
     for path in sorted((HERE / "stl").glob("*.stl")):
         errors = check_header(path)
         print(f"{'FAIL' if errors else 'OK  '} header {path.name}"

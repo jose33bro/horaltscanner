@@ -29,8 +29,8 @@ EXPECTED_EXTENTS = {
     HERE / "stl" / "adjustment_rod_M5x50_ball6.5_square_m3.stl": (6.50, 6.50, 60.50),
     HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 11.00),
     HERE / "stl" / "camera_carrier_plate_v4_onepiece.stl": (25.50, 10.75, 35.00),
-    HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl": (28.20, 8.12, 29.13),
-    HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.20, 16.66, 29.13),
+    HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl": (28.24, 9.58, 29.13),
+    HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.24, 16.66, 29.13),
     HERE / "stl" / "camera_barn_door_x_x2.stl": (10.00, 19.00, 0.90),
     HERE / "stl" / "camera_barn_door_z_x2.stl": (20.00, 10.00, 0.90),
     HERE / "stl" / "ball_screw_M5x40_ball6.5.stl": (6.50, 6.50, 42.50),
@@ -131,7 +131,7 @@ def check_lens_square() -> list[str]:
                 start = None
         return runs
 
-    hole_runs = [r for r in empty_runs(10.5, y0 + g.COVER_THICKNESS - 0.5)
+    hole_runs = [r for r in empty_runs(10.5, y0 + g.COVER_THICKNESS + g.COVER_FRONT_PAD - 0.5)
                  if r[1] - r[0] < 4.0]
     if len(hole_runs) != 2:
         print(f"FAIL cannot find the 2 pin holes at x=10.5: {hole_runs}")
@@ -151,8 +151,8 @@ def check_lens_square() -> list[str]:
     print(f"     recess z {recess[0][0]:.2f}..{recess[0][1]:.2f} (size "
           f"{recess[0][1] - recess[0][0]:.2f}), PCB edges z {conn_edge_z:.2f}/{far_edge_z:.2f}")
     errs = []
-    wall = g.COVER_THICKNESS - g.LENS_RECESS_DEPTH
-    ring = g.COVER_RECESS_Z / 2 - g.LENS_HOLE_DIAMETER / 2
+    wall = g.COVER_THICKNESS + g.COVER_FRONT_PAD - g.LENS_RECESS_DEPTH
+    ring = g.COVER_RECESS_Z / 2 - g.COVER_LENS_HOLE_DIAMETER / 2
     for name, got, want in (("front wall", wall, 1.2), ("lateral ring", ring, 0.0)):
         ok = got >= want - 1e-6 and (name != "lateral ring" or got > 0)
         print(f"{'OK  ' if ok else 'FAIL'} cover {name}: {got:.2f} mm (min {want})")
@@ -163,6 +163,28 @@ def check_lens_square() -> list[str]:
         print(f"{'OK  ' if ok else 'FAIL'} lens square {name}: {got:.2f} mm (user {want})")
         if not ok:
             errs.append(name)
+    back = y0 + g.COVER_THICKNESS + g.COVER_FRONT_PAD
+    zb = float(mesh.bounds[0][2])
+    probes = (
+        ('notch empty (x0,z34,front wall)', (0.0, y0 + 0.6, zb + 26.5), False),
+        ('notch empty (x+2.4,z34,mid)', (2.4, y0 + 3.0, zb + 26.5), False),
+        ('beside notch solid (x3.5,z34)', (3.5, y0 + 3.0, zb + 26.5), True),
+        ('recess depth 5.62 (back-5.5 empty)', (5.0, back - 5.5, zb + 8.0), False),
+        ('front wall solid (back-5.7)', (5.0, back - 5.7, zb + 8.0), True),
+        ('relief 3.5 deep empty (z 20)', (0.0, back - 3.4, zb + 20.0), False),
+        ('relief floor solid (z 20)', (0.0, back - 3.6, zb + 20.0), True),
+    )
+    for name, p, want in probes:
+        got = bool(mesh.contains(np.array([p]))[0])
+        ok = got == want
+        print(f'{"OK  " if ok else "FAIL"} cover {name}')
+        if not ok:
+            errs.append(name)
+    width = float(mesh.extents[0])
+    ok = abs(width - 28.24) <= 0.01
+    print(f'{"OK  " if ok else "FAIL"} cover width {width:.2f} mm (28.24)')
+    if not ok:
+        errs.append('width')
     return errs
 
 

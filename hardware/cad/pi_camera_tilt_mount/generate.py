@@ -229,7 +229,7 @@ COVER_THICKNESS = 5.36
 # Skirt (rim) on the cover's rear side wrapping the carrier board so 3+5 and 4 nest:
 # inner opening = board + 2 x 0.15 mm, wall 1.2 mm, no supports (vertical walls).
 COVER_SKIRT_CLEARANCE = 0.15
-COVER_SKIRT_WALL = 1.20
+COVER_SKIRT_WALL = 1.22  # cover width 28.24 (user)
 COVER_RAIL_MIN_Z = 9.70  # above the base shelf lip (top at z 9.4)
 # Camera pins now live on the carrier (3+5); the cover only has blind holes.
 COVER_PIN_HOLE_DIAMETER = 2.25  # carrier pin 2.00 + 0.25: 0.125 mm/side insertion clearance
@@ -277,7 +277,14 @@ COVER_RECESS_Z = 11.00
 COVER_RECESS_BOTTOM_FROM_EDGE = 4.69
 COVER_LENGTH_Z = 29.13  # user: 'coter 29.13' (27.93 was a caliper reading to correct)
 LENS_RECESS_WIDTH_X = 14.00  # user: 13.59 'voir 14' mm across X (room for the lens connector)
-LENS_RECESS_DEPTH = COVER_THICKNESS - LENS_RECESS_FRONT_WALL  # 4.16
+LENS_RECESS_DEPTH = 5.62  # user; deeper than the 5.36 plate, so a front pad is added
+COVER_FRONT_PAD = LENS_RECESS_DEPTH + LENS_RECESS_FRONT_WALL - COVER_THICKNESS  # 1.46
+COVER_LENS_HOLE_DIAMETER = 8.80  # barrel 8.5 + 0.15/side; ring Z = (11 - 8.8)/2 = 1.10
+COVER_RELIEF_START = 12.43  # user, from the cover bottom edge
+COVER_RELIEF_LENGTH = 13.78
+COVER_RELIEF_DEPTH = 3.50
+COVER_NOTCH_HALF_WIDTH = CARRIER_TAB_WIDTH / 2 + 0.20
+COVER_NOTCH_Z_MIN = 32.20
 
 # Barn doors (part 4 hood). The doors must sit IN FRONT of the lens glass, so
 # a hollow standoff lifts the door frame above the barrel; the frame holds two
@@ -1084,13 +1091,23 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     )
 
     cover_front_y = cover_back_y - COVER_THICKNESS
+    cover_plate = fuse(
+        cover_plate,
+        make_box(
+            LENS_RECESS_WIDTH_X + 2 * LENS_RECESS_FRONT_WALL,
+            COVER_FRONT_PAD,
+            COVER_RECESS_Z + 2 * LENS_RECESS_FRONT_WALL,
+            y=cover_front_y - COVER_FRONT_PAD / 2,
+            z=cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE - LENS_RECESS_FRONT_WALL,
+        ),
+    )
     lens_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(LENS_OFFSET_X, cover_front_y - 1, cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE + COVER_RECESS_Z / 2),
+            gp_Pnt(LENS_OFFSET_X, cover_front_y - COVER_FRONT_PAD - 1, cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE + COVER_RECESS_Z / 2),
             gp_Dir(0, 1, 0),
         ),
-        LENS_HOLE_DIAMETER / 2,
-        COVER_THICKNESS + 2,
+        COVER_LENS_HOLE_DIAMETER / 2,
+        COVER_THICKNESS + COVER_FRONT_PAD + 2,
     ).Shape()
 
     pin_holes = [
@@ -1115,6 +1132,24 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
         z=cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE,
     )
     cover = cut(cover, lens_recess)
+    relief = make_box(
+        LENS_RECESS_WIDTH_X,
+        COVER_RELIEF_DEPTH + 0.5,
+        COVER_RELIEF_LENGTH,
+        x=LENS_OFFSET_X,
+        y=cover_back_y - COVER_RELIEF_DEPTH / 2 + 0.25,
+        z=cover_bottom_z + COVER_RELIEF_START,
+    )
+    cover = cut(cover, relief)
+    notch = make_box(
+        2 * COVER_NOTCH_HALF_WIDTH,
+        COVER_THICKNESS + COVER_FRONT_PAD + 4,
+        COVER_LENGTH_Z,
+        x=0,
+        y=cover_center_y - COVER_FRONT_PAD / 2,
+        z=COVER_NOTCH_Z_MIN,
+    )
+    cover = cut(cover, notch)
     if not with_frame:
         return cover
 

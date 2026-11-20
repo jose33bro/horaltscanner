@@ -110,7 +110,7 @@ BALL_DIAMETER = 6.50
 # fuse cannot merge into one watertight body).
 BALL_OVERLAP = 1.00
 # Ball end is for the camera side; the square end is for the wheel/plate mount.
-DRIVE_SQUARE_WIDTH = 5.00
+DRIVE_SQUARE_WIDTH = 9.00  # wider print base (was 5): bigger bed contact when printed standing
 DRIVE_SQUARE_LENGTH = 10.00
 M3_CLEARANCE_DIAMETER = 3.20
 WHEEL_DIAMETER = 50.00
@@ -118,7 +118,7 @@ WHEEL_THICKNESS = 10.00  # square socket is recessed inside the wheel, nothing p
 WHEEL_SOCKET_WIDTH = DRIVE_SQUARE_WIDTH + 0.20
 WHEEL_SOCKET_DEPTH = 6.00  # 5 mm of protruding square + 1 mm slack
 WHEEL_HUB_M3_CLEARANCE_DIAMETER = 3.20
-WHEEL_SET_SCREW_Z = DRIVE_SQUARE_WIDTH / 2  # radial M3 pilot, mid-length of the square
+WHEEL_SET_SCREW_Z = DRIVE_SQUARE_LENGTH / 4  # radial M3 pilot, mid-height of the 5 mm of square inside the socket
 
 # Camera carrier: holds the Pi Camera Module 3 (standard or NoIR, same PCB)
 # and provides the hinge tab that slots between the base's ears on the M3
@@ -1372,7 +1372,7 @@ def make_wheel_crank() -> TopoDS_Shape:
         WHEEL_HUB_M3_CLEARANCE_DIAMETER / 2,
         WHEEL_THICKNESS + 2,
     ).Shape()
-    # Square socket recessed in the wheel (5 mm square + 0.2 mm clearance),
+    # Square socket recessed in the wheel (9 mm square + 0.2 mm clearance),
     # open on the free face z=0; nothing protrudes.
     socket = make_box(
         WHEEL_SOCKET_WIDTH,

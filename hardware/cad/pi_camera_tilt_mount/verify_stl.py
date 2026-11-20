@@ -152,7 +152,7 @@ def check_lens_square() -> list[str]:
           f"{recess[0][1] - recess[0][0]:.2f}), PCB edges z {conn_edge_z:.2f}/{far_edge_z:.2f}")
     errs = []
     wall = g.COVER_THICKNESS + g.COVER_FRONT_PAD - g.LENS_RECESS_DEPTH
-    ring = g.COVER_RECESS_Z / 2 - g.COVER_LENS_HOLE_DIAMETER / 2
+    ring = g.COVER_RECESS_Z / 2 - g.COVER_LENS_HOLE_DIAMETER / 2 - g.COVER_LENS_RISE
     for name, got, want in (("front wall", wall, 1.2), ("lateral ring", ring, 0.0)):
         ok = got >= want - 1e-6 and (name != "lateral ring" or got > 0)
         print(f"{'OK  ' if ok else 'FAIL'} cover {name}: {got:.2f} mm (min {want})")

@@ -273,8 +273,9 @@ LENS_RECESS_FRONT_WALL = 1.20
 # Cover redesign (user): square recess 11 mm along Z, its connector-side edge
 # 4.69 mm from the cover's connector-side (bottom) edge; the round window is
 # centred on it. Pin holes unchanged. Cover length 29.13 mm (was 24.50).
-COVER_RECESS_Z = 11.00
-COVER_RECESS_BOTTOM_FROM_EDGE = 1.50  # user: pin-row centre (z 20.21) = square top edge (was 4.69)
+COVER_RECESS_Z = 10.95  # user: square 10.95 (was 11.00)
+COVER_LENS_RISE = 0.50  # user: round window raised 0.5 mm
+COVER_RECESS_BOTTOM_FROM_EDGE = 1.55  # user: pin-row centre (z 20.21) = square top edge (was 4.69)
 COVER_LENGTH_Z = CAM_HOUSING_HEIGHT  # 24.50: top blocks above the 3+5 plate (z>32.21) removed (user)
 LENS_RECESS_WIDTH_X = 14.00  # user: 13.59 'voir 14' mm across X (room for the lens connector)
 LENS_RECESS_DEPTH = 5.62  # user; deeper than the 5.36 plate, so a front pad is added
@@ -1104,7 +1105,7 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     )
     lens_hole = BRepPrimAPI_MakeCylinder(
         gp_Ax2(
-            gp_Pnt(LENS_OFFSET_X, cover_front_y - COVER_FRONT_PAD - 1, cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE + COVER_RECESS_Z / 2),
+            gp_Pnt(LENS_OFFSET_X, cover_front_y - COVER_FRONT_PAD - 1, cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE + COVER_RECESS_Z / 2 + COVER_LENS_RISE),
             gp_Dir(0, 1, 0),
         ),
         COVER_LENS_HOLE_DIAMETER / 2,
@@ -1155,7 +1156,7 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
         return cover
 
     axis_x = LENS_OFFSET_X
-    axis_z = cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE + COVER_RECESS_Z / 2
+    axis_z = cover_bottom_z + COVER_RECESS_BOTTOM_FROM_EDGE + COVER_RECESS_Z / 2 + COVER_LENS_RISE
     cover_center_z = cover_bottom_z + CAM_HOUSING_HEIGHT / 2
     standoff = cut(
         make_box(

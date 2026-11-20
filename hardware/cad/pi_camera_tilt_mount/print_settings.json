@@ -61,8 +61,8 @@
       "walls": 3,
       "speed_mm_s": 60,
       "supports": "non",
-      "orientation": "a plat, empreinte carree 5,2 mm orientee vers le haut (pas de pont)",
-      "tolerances": "empreinte carree 5,2x5,2 mm pour le carre 5x5 mm de la tige; trou M3 axial 3,2 mm",
+      "orientation": "a plat, empreinte carree 9,2 mm orientee vers le haut (pas de pont)",
+      "tolerances": "empreinte carree 9,2x9,2 mm pour le carre 9x9 mm de la tige; trou M3 axial 3,2 mm",
       "header_orientation": "a plat;carre en haut"
     },
     "camera_carrier_plate_v4_onepiece.stl": {

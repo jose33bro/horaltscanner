@@ -256,14 +256,14 @@ def check_crank() -> list[str]:
     if not ok:
         errs.append('crank protrusion')
     # square socket recessed in the wheel: measure half-width and depth on the STL (y=1.0 avoids the pilot)
-    half = next((x for x in np.arange(0.0, 5.0, 0.02) if solid(x, 1.0, 5.2)), 0.0)
+    half = next((x for x in np.arange(0.0, 8.0, 0.02) if solid(x, 1.0, 5.2)), 0.0)
     depth = max((z for z in np.arange(0.05, 9.95, 0.05) if not solid(2.0, 2.0, z)), default=0.0)
-    ok = abs(2 * half - 5.2) <= 0.1 and abs(depth - 6.0) <= 0.1 and solid(2.0, 2.0, 6.3)
-    print(f'{"OK  " if ok else "FAIL"} crank square socket {2 * half:.2f} mm wide (5.2 = 5.0 + clearance), {depth:.2f} mm deep (6.0), floor solid')
+    ok = abs(2 * half - 9.2) <= 0.1 and abs(depth - 6.0) <= 0.1 and solid(2.0, 2.0, 6.3)
+    print(f'{"OK  " if ok else "FAIL"} crank square socket {2 * half:.2f} mm wide (9.2 = 9.0 + clearance), {depth:.2f} mm deep (6.0), floor solid')
     if not ok:
         errs.append('crank socket')
     # radial M3 pilot along +x at z 2.5: open from the socket to the rim, 2.7 mm wide
-    open_run = all(not solid(x, 0.0, 2.5) for x in np.arange(3.0, 24.9, 0.25))
+    open_run = all(not solid(x, 0.0, 2.5) for x in np.arange(5.0, 24.9, 0.25))
     dia = 2 * next((d for d in np.arange(0.0, 3.0, 0.05) if solid(10.0, d, 2.5)), 0.0)
     ok = open_run and abs(dia - 2.7) <= 0.15
     print(f'{"OK  " if ok else "FAIL"} crank radial M3 pilot dia {dia:.2f} mm (2.7), open socket to rim at z 2.5')

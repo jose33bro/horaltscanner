@@ -13,7 +13,7 @@ support en L; les deux oreilles supérieures reçoivent l'axe M3 de la caméra.
   sur 50 mm, bille Ø 6,5 mm côté caméra et carré côté roue/plateau, avec trou
   M3 central dans le carré;
 - `stl/wheel_crank_50mm_square_m3.stl` : roue/crank de 50 mm de diamètre avec
-  logement carré en creux 5,2 × 5,2 × 6 mm (le carré de la tige s'emboîte, rien ne dépasse), épaisseur 10 mm (6 mm avant), trou central Ø3,2 et trou radial M3 (pilote taraudant Ø2,7, z 2,5) depuis la jante pour bloquer la tige;
+  logement carré en creux 9,2 × 9,2 × 6 mm (le carré de la tige s'emboîte, rien ne dépasse), épaisseur 10 mm (6 mm avant), trou central Ø3,2 et trou radial M3 (pilote taraudant Ø2,7, z 2,5) depuis la jante pour bloquer la tige;
 - `stl/camera_carrier_plate_v4_onepiece.stl` : **pièces 3 + 5 en un seul
   solide** (25,00 × 8,29 × 35,00 mm). Berceau qui porte la carte Pi
   Camera Module 3 (noir/NoIR, 25 × 24 mm, 4 trous Ø2,5 mm en carré 21 mm) et
@@ -83,8 +83,8 @@ seule pièce imprimée, bille de 1 dans sa douille), 4 cache avant (clipsé sur
 pivote sur les oreilles de 8 (axe M3, non modélisé). Filetages réels
 M10 × 1,5 (choisi car le fond de filet imprimé du trou doit laisser passer la bille Ø 6,5 : M8 × 1,25 donnerait ~6,5 mm imprimé, trop juste) : tige à crête Ø 10,0 / noyau Ø 8,16 (thread 20 mm), trou de 8 alésé
 Ø 10,5 avec filet interne de fond Ø 8,4 (≈ 8,2 mm après retrait 2,4 %, bille 6,5 passe avec ≥ 1,7 mm de jeu) ; jeu radial 0,25 mm. Recouvrement
-tige × base ≈ 0 mm³ (phase de vissage recherchée par `assemble.py`). Le carré de 1 (5 × 5 mm,
-5 mm saillants) entre dans l'empreinte carrée du moyeu de 9 (5,2 × 5,2 mm,
+tige × base ≈ 0 mm³ (phase de vissage recherchée par `assemble.py`). Le carré de 1 (9 × 9 mm, base d'impression plus large,
+5 mm saillants) entre dans l'empreinte carrée du moyeu de 9 (9,2 × 9,2 mm,
 6 mm de profondeur, moyeu 10 × 10 × 10 mm, vis M3 axiale Ø 3,2 mm), sans
 recouvrement. Le contrôle de `assemble.py` vérifie que 3+5 est un seul
 solide fermé de 25 mm de large, passage de tige ouvert et emplacements M3 (±7 mm) pleins.

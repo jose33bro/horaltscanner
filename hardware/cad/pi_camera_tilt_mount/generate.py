@@ -10,6 +10,7 @@ from verify_stl import DEGENERATE_AREA_MM2, analyse, load_stl
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
 from OCP.BRepBuilderAPI import (
     BRepBuilderAPI_MakeEdge,
+    BRepBuilderAPI_MakeFace,
     BRepBuilderAPI_MakePolygon,
     BRepBuilderAPI_MakeWire,
     BRepBuilderAPI_Transform,
@@ -23,6 +24,7 @@ from OCP.BRepPrimAPI import (
     BRepPrimAPI_MakeBox,
     BRepPrimAPI_MakeCone,
     BRepPrimAPI_MakeCylinder,
+    BRepPrimAPI_MakePrism,
     BRepPrimAPI_MakeSphere,
 )
 from OCP.Geom import Geom_CylindricalSurface
@@ -38,6 +40,7 @@ from OCP.gp import (
     gp_Lin2d,
     gp_Pnt,
     gp_Pnt2d,
+    gp_Vec,
     gp_Trsf,
     gp_Vec,
 )
@@ -304,24 +307,28 @@ DOOR_SLOT_CLEARANCE = 0.20  # total, added to the slot thickness
 DOOR_SLOT_MARGIN = 0.40  # total, added to the slot's other dimension
 DOOR_RIB = 0.80  # solid layer between/in front of slots
 DOOR_LENGTH = 10.0  # sliding direction
-# Open aperture of the frame at the fully-open position. Sized so the
-# 102 x 67 deg field of view is not clipped by the frame itself.
-FRAME_BORE_WIDTH = 8.0  # was 18: front edge ~4.3 mm ahead of the lens limits H view to ~86 deg
-FRAME_BORE_HEIGHT = 17.0
-DOOR_X_HEIGHT = FRAME_BORE_HEIGHT + 2.0  # left/right doors, Z extent
+DOOR_X_HEIGHT = 19.0  # left/right doors, Z extent (door STL unchanged)
 DOOR_Z_WIDTH = 20.0  # top/bottom doors, X extent (door STL unchanged)
 DOOR_SLOT_DEPTH = DOOR_THICKNESS + DOOR_SLOT_CLEARANCE
 DOOR_STACK_DEPTH = 2 * DOOR_SLOT_DEPTH + 2 * DOOR_RIB
-# Closing travel: from fully open (door edge at the bore edge) to the axis.
-DOOR_TRAVEL_X = FRAME_BORE_WIDTH / 2
-DOOR_TRAVEL_Z = FRAME_BORE_HEIGHT / 2
+# Barn doors sit DOWNSTREAM of the cone, in front of the flare exit.
+# Fixed masking cone: a straight neck bore limits the
+# horizontal view at its front edge (neck + gap ahead of the lens glass), then a
+# 45 deg flare opens it outward so the cone itself never clips the view and
+# prints without supports (front face on the bed, flare walls <= 45 deg).
+FRAME_BORE_WIDTH = 8.0  # neck width: 2*atan(4/4.3) ~ 86 deg horizontal
+FRAME_BORE_HEIGHT = 17.0  # neck height (vertical view 67 deg needs >= ~6)
+CONE_NECK_DEPTH = 3.80
+CONE_FLARE_DEPTH = 3.00
+CONE_FLARE_HALF_ANGLE_DEG = 45.0
+CONE_WALL_BELOW = 2.0  # block wall under the neck bore
+CONE_LENS_TO_NECK_FRONT = HOOD_LENS_GAP + CONE_NECK_DEPTH  # 4.30
 
 # Turntable framing (user measurements, approximate)
 TURNTABLE_DIAMETER_MM = 200.0
 TURNTABLE_NEAR_EDGE_MM = (125.0, 135.0)   # camera -> nearest turntable edge
 TURNTABLE_FAR_POINT_MM = (320.0, 520.0)   # farthest point, front..rear position
 FOV_MARGIN = 1.10
-DOOR_PLANE_AHEAD_OF_LENS_MM = 3.0         # assumed, not measured
 
 
 def required_full_fov_deg(center_distance_mm):
@@ -331,11 +338,8 @@ def required_full_fov_deg(center_distance_mm):
 
 FOV_NEAR_DEG = required_full_fov_deg(TURNTABLE_NEAR_EDGE_MM[0] + TURNTABLE_DIAMETER_MM / 2)
 FOV_FAR_DEG = required_full_fov_deg(TURNTABLE_FAR_POINT_MM[1] - TURNTABLE_DIAMETER_MM / 2)
-# Door edge offset from the optical axis for each case
-DOOR_EDGE_NEAR_MM = DOOR_PLANE_AHEAD_OF_LENS_MM * math.tan(math.radians(FOV_NEAR_DEG / 2))
-DOOR_EDGE_FAR_MM = DOOR_PLANE_AHEAD_OF_LENS_MM * math.tan(math.radians(FOV_FAR_DEG / 2))
-assert DOOR_TRAVEL_X >= FRAME_BORE_WIDTH / 2 - DOOR_EDGE_FAR_MM
-assert DOOR_TRAVEL_Z >= FRAME_BORE_HEIGHT / 2 - DOOR_EDGE_FAR_MM
+CONE_FULL_ANGLE_DEG = 2 * math.degrees(math.atan(FRAME_BORE_WIDTH / 2 / CONE_LENS_TO_NECK_FRONT))
+assert CONE_FULL_ANGLE_DEG >= FOV_NEAR_DEG  # the cone still frames the turntable
 # Slightly undersized vs. CAM_MOUNT_HOLE_DIAMETER (2.50mm) for a snug push
 # fit directly against the PCB's rigid holes.
 # Pins on the carrier front face (3+5), exactly at the official 21 x 12.5 mm
@@ -1187,38 +1191,67 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     )
 
     stack_y0 = cover_front_y - HOOD_STANDOFF_DEPTH
-    # The bore is centred on the lens window, so the door stack must reach below
-    # the cover far enough to keep a wall under the X-door slot.
-    stack_bottom_z = min(
-        cover_bottom_z,
-        axis_z - (DOOR_X_HEIGHT + DOOR_SLOT_MARGIN) / 2 - CARRIER_REAR_HOOD_WALL,
-    )
+    # The bore is centred on the lens window, so the cone block must reach below
+    # the cover far enough to keep a wall under the bore.
+    stack_bottom_z = min(cover_bottom_z, axis_z - FRAME_BORE_HEIGHT / 2 - CONE_WALL_BELOW)
     stack_height = cover_bottom_z + CAM_HOUSING_HEIGHT - stack_bottom_z
+    cone_depth = CONE_NECK_DEPTH + CONE_FLARE_DEPTH
     stack = make_box(
+        CAM_HOUSING_WIDTH,
+        cone_depth,
+        stack_height,
+        y=stack_y0 - cone_depth / 2,
+        z=stack_bottom_z,
+    )
+    neck_front_y = stack_y0 - CONE_NECK_DEPTH
+    bore = make_box(
+        FRAME_BORE_WIDTH,
+        CONE_NECK_DEPTH + 2,
+        FRAME_BORE_HEIGHT,
+        x=axis_x,
+        y=stack_y0 - CONE_NECK_DEPTH / 2 + 1,
+        z=axis_z - FRAME_BORE_HEIGHT / 2,
+    )
+    # Flare: trapezoid in XY (45 deg) extruded over the bore height, extended
+    # 0.5 mm past the front face for a clean cut.
+    k = math.tan(math.radians(CONE_FLARE_HALF_ANGLE_DEG))
+    ext = CONE_FLARE_DEPTH + DOOR_STACK_DEPTH + 0.5
+    hw0 = FRAME_BORE_WIDTH / 2
+    hw1 = hw0 + k * ext
+    poly = BRepBuilderAPI_MakePolygon()
+    for px, py in (
+        (axis_x - hw0, neck_front_y + 0.2),
+        (axis_x + hw0, neck_front_y + 0.2),
+        (axis_x + hw1, neck_front_y - ext),
+        (axis_x - hw1, neck_front_y - ext),
+    ):
+        poly.Add(gp_Pnt(px, py, axis_z - FRAME_BORE_HEIGHT / 2))
+    poly.Close()
+    flare = BRepPrimAPI_MakePrism(
+        BRepBuilderAPI_MakeFace(poly.Wire()).Face(), gp_Vec(0, 0, FRAME_BORE_HEIGHT)
+    ).Shape()
+    stack = cut(cut(stack, bore), flare)
+    # Barn-door block in front of the cone exit; the 45 deg flare continues
+    # through it so the doors never clip the cone's field.
+    door_y0 = stack_y0 - cone_depth
+    door_block = make_box(
         CAM_HOUSING_WIDTH,
         DOOR_STACK_DEPTH,
         stack_height,
-        y=stack_y0 - DOOR_STACK_DEPTH / 2,
+        y=door_y0 - DOOR_STACK_DEPTH / 2,
         z=stack_bottom_z,
     )
-    bore = make_box(
-        FRAME_BORE_WIDTH,
-        DOOR_STACK_DEPTH + 2,
-        FRAME_BORE_HEIGHT,
-        x=axis_x,
-        y=stack_y0 - DOOR_STACK_DEPTH / 2,
-        z=axis_z - FRAME_BORE_HEIGHT / 2,
-    )
+    door_bore = flare
     # Rear layer: X doors (left/right), slot open through both sides.
     slot_x_doors = make_box(
         CAM_HOUSING_WIDTH + 2,
         DOOR_SLOT_DEPTH,
         DOOR_X_HEIGHT + DOOR_SLOT_MARGIN,
-        y=stack_y0 - DOOR_SLOT_DEPTH / 2,
+        y=door_y0 - DOOR_SLOT_DEPTH / 2,
         z=axis_z - (DOOR_X_HEIGHT + DOOR_SLOT_MARGIN) / 2,
     )
     # Front layer: Z doors (top/bottom), slot open through top and bottom.
-    slot_z_y = stack_y0 - DOOR_SLOT_DEPTH - DOOR_RIB
+    slot_z_y = door_y0 - DOOR_SLOT_DEPTH - DOOR_RIB
     slot_z_doors = make_box(
         DOOR_Z_WIDTH + DOOR_SLOT_MARGIN,
         DOOR_SLOT_DEPTH,
@@ -1227,8 +1260,8 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
         y=slot_z_y - DOOR_SLOT_DEPTH / 2,
         z=stack_bottom_z - 1,
     )
-    stack = cut(cut(cut(stack, bore), slot_x_doors), slot_z_doors)
-    return fuse(cover, standoff, stack)
+    door_block = cut(cut(cut(door_block, door_bore), slot_x_doors), slot_z_doors)
+    return fuse(cover, standoff, stack, door_block)
 
 
 def make_barn_door_x() -> TopoDS_Shape:

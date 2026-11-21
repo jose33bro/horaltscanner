@@ -310,7 +310,8 @@ reelle de l'axe optique n'est pas mesuree). Hauteur totale 10,86 mm non utilisee
 
 **Faisabilité** : la paroi du capot (1,6 mm) est trop fine pour des rainures, et l'objectif dépasse d'environ 8,0 mm de la face avant. Les volets doivent être devant la lentille pour cadrer. Le capot reçoit donc un fourreau creux (profondeur 8,5 mm) puis un cadre à deux couches de fentes (volets gauche/droite derrière, haut/bas devant).
 
-- Constantes dans `generate.py` : `DOOR_THICKNESS` 0,9, `DOOR_SLOT_CLEARANCE` 0,2, `DOOR_TRAVEL_X` 9, `DOOR_TRAVEL_Z` 8,5, `FRAME_BORE_WIDTH/HEIGHT` 18 × 17, `HOOD_STANDOFF_DEPTH` 8,5.
+- Constantes dans `generate.py` : `FRAME_BORE_WIDTH/HEIGHT` 8 × 17 (goulot), `CONE_NECK_DEPTH` 3,8, `CONE_FLARE_DEPTH` 3,0, évasement 45° (continué dans le bloc des volets), `DOOR_THICKNESS` 0,9, `DOOR_SLOT_CLEARANCE` 0,2, `HOOD_STANDOFF_DEPTH` 8,5. Ordre depuis la lentille : fourreau 0,5 → goulot 8 × 17 sur 3,8 (bord avant à 4,3 mm de la lentille : angle ≈ 86-88° horizontal) → cône évasé 45° → volets coulissants (X derrière, Z devant) dans le cône évasé.
+- Capot : bbox 28,24 × 23,46 × 28,10 mm, angle horizontal mesuré par ray-cast sur STL 88,4° (alésage mesuré 7,90 × 16,95) ; imprimé face avant (volets) à plat : les parois du cône évasé sont à 45° donc sans supports.
 - STL séparés, à plat, sans supports : `camera_barn_door_x_x2.stl` (10 × 19 × 0,9, imprimer 2) et `camera_barn_door_z_x2.stl` (20 × 10 × 0,9, imprimer 2).
 - Capot : bbox 28,24 × 16,66 × 28,50 mm (cadre/alésage 8 × 17 (angle horizontal ~86° au lieu de ~129° non limité) centré sur le rond optique, z 14,61 ; la pile de volets descend à z 3,71 pour garder 2,45 mm de paroi sous l'alésage, z max 32,21 inchangé) ; imprimé bout du cadre à plat, pions vers le haut.
 - Non vérifié : impression, friction des volets, ponts courts des fentes, vignettage du cadre sur les coins du champ ~120° (H 102°, V 67°). Pas de vis M3 / trous oblongs (glissement par friction seulement).
@@ -325,7 +326,7 @@ Donnée user : plateau Ø200 mm. **Distance caméra-plateau non mesurée : hypot
 | 200 mm | 28,8° | ~58° |
 | 300 mm | 20,1° | ~40° |
 
-Un volet à L mm devant la lentille coupe à tan(demi-angle) × L du centre. Avec L ≈ 3 mm (hypothèse, plan de volet non mesuré), le bord se place à ~2-3 mm de l'axe pour 36°, soit dans la course (9 mm X, 8,5 mm Z, alésage 8 × 17 (angle horizontal ~86° au lieu de ~129° non limité) mm). La plage actuelle couvre donc ces cas ; à régler visuellement sur l'image réelle. Rien n'a été modifié dans la géométrie.
+Un volet à L mm devant la lentille coupe à tan(demi-angle) × L du centre. Avec L ≈ 3 mm (hypothèse, plan de volet non mesuré), le bord se place à ~2-3 mm de l'axe pour 36°, soit dans la course des volets (alésage évasé). La plage actuelle couvre donc ces cas ; à régler visuellement sur l'image réelle.
 
 ### Mesures user : plateau Ø200 mm mobile (remplace les hypothèses de distance ci-dessus)
 
@@ -339,7 +340,7 @@ Constantes `TURNTABLE_*`, `FOV_MARGIN`, `DOOR_PLANE_AHEAD_OF_LENS_MM` dans `gene
 ## Deux versions de la pièce 4
 
 - `camera_front_cover_v3_clip_no_frame.stl` : fenêtre simple Ø9,4 mm, 25,50 × 4,56 × 24,50 mm, sans volets.
-- `camera_front_cover_v3_clip_with_frame.stl` : avec fourreau + cadre à volets, 28,24 × 16,66 × 28,50 mm (cadre/alésage 8 × 17 (angle horizontal ~86° au lieu de ~129° non limité) centré sur le rond optique, z 14,61 ; la pile de volets descend à z 3,71 pour garder 2,45 mm de paroi sous l'alésage, z max 32,21 inchangé) ; seule version compatible avec `camera_barn_door_x_x2.stl` / `camera_barn_door_z_x2.stl`.
+- `camera_front_cover_v3_clip_with_frame.stl` : fourreau + goulot 8 × 17 + cône évasé 45° + volets, 28,24 × 23,46 × 28,10 mm (angle horizontal 88,4° mesuré) ; seule version compatible avec `camera_barn_door_x_x2.stl` / `camera_barn_door_z_x2.stl`.
 - L'assemblage (`assemble.py`) utilise la version choisie par `COVER_WITH_FRAME` (True par défaut) ; les previews montrent donc la version avec cadre. L'ancien `camera_front_cover_v3_clip.stl` est supprimé.
 
 

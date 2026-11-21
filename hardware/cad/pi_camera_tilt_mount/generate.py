@@ -317,6 +317,7 @@ DOOR_STACK_DEPTH = 2 * DOOR_SLOT_DEPTH + 2 * DOOR_RIB
 # 45 deg flare opens it outward so the cone itself never clips the view and
 # prints without supports (front face on the bed, flare walls <= 45 deg).
 FRAME_BORE_WIDTH = 8.0  # neck width: 2*atan(4/4.3) ~ 86 deg horizontal
+FRAME_BORE_WIDTH_70 = 6.0  # variant: 2*atan(3/4.3) ~ 70 deg horizontal
 FRAME_BORE_HEIGHT = 17.0  # neck height (vertical view 67 deg needs >= ~6)
 CONE_NECK_DEPTH = 3.80
 CONE_FLARE_DEPTH = 3.00
@@ -1041,7 +1042,7 @@ def camera_pins(holes, front_y: float) -> list[TopoDS_Shape]:
     return pins
 
 
-def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
+def make_camera_front_cover(with_frame: bool = True, bore_width: float = FRAME_BORE_WIDTH) -> TopoDS_Shape:
     """Lens-side cache that clips onto the Pi Camera V3 through the same 4
     mounting holes used by the carrier, instead of screws/nuts. Four pins
     push through the PCB's holes and into the carrier's holes (press/
@@ -1205,7 +1206,7 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     )
     neck_front_y = stack_y0 - CONE_NECK_DEPTH
     bore = make_box(
-        FRAME_BORE_WIDTH,
+        bore_width,
         CONE_NECK_DEPTH + 2,
         FRAME_BORE_HEIGHT,
         x=axis_x,
@@ -1216,7 +1217,7 @@ def make_camera_front_cover(with_frame: bool = True) -> TopoDS_Shape:
     # 0.5 mm past the front face for a clean cut.
     k = math.tan(math.radians(CONE_FLARE_HALF_ANGLE_DEG))
     ext = CONE_FLARE_DEPTH + DOOR_STACK_DEPTH + 0.5
-    hw0 = FRAME_BORE_WIDTH / 2
+    hw0 = bore_width / 2
     hw1 = hw0 + k * ext
     poly = BRepBuilderAPI_MakePolygon()
     for px, py in (
@@ -1678,6 +1679,7 @@ if __name__ == "__main__":
     export_model(make_camera_carrier_with_plate(), "camera_carrier_plate_v4_onepiece.stl")
     export_model(make_camera_front_cover(False), "camera_front_cover_v3_clip_no_frame.stl")
     export_model(make_camera_front_cover(True), "camera_front_cover_v3_clip_with_frame.stl")
+    export_model(make_camera_front_cover(True, FRAME_BORE_WIDTH_70), "camera_front_cover_v3_clip_with_frame_70deg.stl")
     export_model(make_barn_door_x(), "camera_barn_door_x_x2.stl")
     export_model(make_barn_door_z(), "camera_barn_door_z_x2.stl")
     export_model(make_ball_screw(), "ball_screw_M5x40_ball6.5.stl")

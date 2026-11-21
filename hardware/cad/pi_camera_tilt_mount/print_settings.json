@@ -98,6 +98,17 @@
       "tolerances": "plaque pleine 5,36 mm + 4 trous borgnes dia 2,25 x 1,4 mm (jeu 0,125 mm/cote) pour les pions dia 2,0 du 3+5; fenetre objectif 9,4 mm; fentes volets 1,1 mm; ponts courts a verifier a l impression",
       "header_orientation": "cadre plat;sans sup"
     },
+    "camera_front_cover_v3_clip_with_frame_70deg.stl": {
+      "layer_height_mm": 0.12,
+      "infill_percent": 40,
+      "infill_pattern": "gyroid",
+      "walls": 4,
+      "speed_mm_s": 40,
+      "supports": "non",
+      "orientation": "variante 70 deg (goulot 6 mm): bout du cadre a volets (avant) a plat sur le plateau, trous de pions vers le haut, sans supports",
+      "tolerances": "identique a la version 88 deg sauf goulot 6 x 17 mm; fentes volets 1,1 mm",
+      "header_orientation": "cadre70 plat;sans sup"
+    },
     "camera_barn_door_x_x2.stl": {
       "layer_height_mm": 0.12,
       "infill_percent": 100,

@@ -306,10 +306,10 @@ DOOR_RIB = 0.80  # solid layer between/in front of slots
 DOOR_LENGTH = 10.0  # sliding direction
 # Open aperture of the frame at the fully-open position. Sized so the
 # 102 x 67 deg field of view is not clipped by the frame itself.
-FRAME_BORE_WIDTH = 18.0
+FRAME_BORE_WIDTH = 8.0  # was 18: front edge ~4.3 mm ahead of the lens limits H view to ~86 deg
 FRAME_BORE_HEIGHT = 17.0
 DOOR_X_HEIGHT = FRAME_BORE_HEIGHT + 2.0  # left/right doors, Z extent
-DOOR_Z_WIDTH = FRAME_BORE_WIDTH + 2.0  # top/bottom doors, X extent
+DOOR_Z_WIDTH = 20.0  # top/bottom doors, X extent (door STL unchanged)
 DOOR_SLOT_DEPTH = DOOR_THICKNESS + DOOR_SLOT_CLEARANCE
 DOOR_STACK_DEPTH = 2 * DOOR_SLOT_DEPTH + 2 * DOOR_RIB
 # Closing travel: from fully open (door edge at the bore edge) to the axis.

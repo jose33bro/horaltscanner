@@ -341,6 +341,7 @@ Constantes `TURNTABLE_*`, `FOV_MARGIN`, `DOOR_PLANE_AHEAD_OF_LENS_MM` dans `gene
 
 - `camera_front_cover_v3_clip_no_frame.stl` : fenêtre simple Ø9,4 mm, 25,50 × 4,56 × 24,50 mm, sans volets.
 - `camera_front_cover_v3_clip_with_frame.stl` : fourreau + goulot 8 × 17 + cône évasé 45° + volets, 28,24 × 23,46 × 28,10 mm (angle horizontal 88,4° mesuré) ; seule version compatible avec `camera_barn_door_x_x2.stl` / `camera_barn_door_z_x2.stl`.
+- `camera_front_cover_v3_clip_with_frame_70deg.stl` : variante goulot 6 × 17 (alésage mesuré 5,90), même cône 45° et mêmes volets, même bbox 28,24 × 23,46 × 28,10 mm (angle horizontal 72,2° mesuré par ray-cast).
 - L'assemblage (`assemble.py`) utilise la version choisie par `COVER_WITH_FRAME` (True par défaut) ; les previews montrent donc la version avec cadre. L'ancien `camera_front_cover_v3_clip.stl` est supprimé.
 
 

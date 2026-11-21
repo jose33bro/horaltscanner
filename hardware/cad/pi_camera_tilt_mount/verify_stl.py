@@ -30,7 +30,7 @@ EXPECTED_EXTENTS = {
     HERE / "stl" / "wheel_crank_50mm_square_m3.stl": (50.00, 50.00, 10.00),
     HERE / "stl" / "camera_carrier_plate_v4_onepiece.stl": (25.50, 10.75, 35.00),
     HERE / "stl" / "camera_front_cover_v3_clip_no_frame.stl": (28.24, 9.58, 24.50),
-    HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.24, 16.66, 28.50),
+    HERE / "stl" / "camera_front_cover_v3_clip_with_frame.stl": (28.24, 23.46, 28.10),
     HERE / "stl" / "camera_barn_door_x_x2.stl": (10.00, 19.00, 0.90),
     HERE / "stl" / "camera_barn_door_z_x2.stl": (20.00, 10.00, 0.90),
     HERE / "stl" / "ball_screw_M5x40_ball6.5.stl": (6.50, 6.50, 42.50),
@@ -300,10 +300,24 @@ def check_frame() -> list[str]:
     while is_open(xhi + 0.05, zc_probe):
         xhi += 0.05
     cz = (zlo + zhi) / 2
-    ok = abs(cz - zc) <= 0.1 and abs(zhi - zlo - 17.0) <= 0.15 and abs(xhi - xlo - 18.0) <= 0.15 and abs((xlo + xhi) / 2) <= 0.1
+    ok = abs(cz - zc) <= 0.1 and abs(zhi - zlo - 17.0) <= 0.15 and abs(xhi - xlo - 8.0) <= 0.15 and abs((xlo + xhi) / 2) <= 0.1
     print(f'{"OK  " if ok else "FAIL"} frame bore {xhi - xlo:.2f} x {zhi - zlo:.2f}, centre x {(xlo + xhi) / 2:.2f} z {cz:.2f} vs lens window z {zc:.2f}')
     if not ok:
         errs.append('frame bore')
+    # Horizontal view from the lens glass centre (11.10 mm behind the door block front: 3.8 doors + 3.0 flare + 3.8 neck + 0.5 gap)
+    y_lens = float(fr.bounds[0][1]) + 11.10
+    lo_deg = 0.0
+    for a in np.arange(0.0, 89.0, 0.1):
+        d = [np.sin(np.radians(a)), -np.cos(np.radians(a)), 0.0]
+        hits, _, _ = fr.ray.intersects_location([[0, y_lens, zc]], [d])
+        if len(hits):
+            break
+        lo_deg = a
+    full = 2 * lo_deg
+    ok = 80.0 <= full <= 92.0
+    print(f'{"OK  " if ok else "FAIL"} horizontal view through frame {full:.1f} deg full (was ~129 deg geometric, sensor 102 deg; target 80-92)')
+    if not ok:
+        errs.append('frame view angle')
     below = zlo - float(fr.bounds[0][2])
     top = float(fr.bounds[1][2])
     ok = below >= 2.0 and abs(top - float(nof.bounds[1][2])) <= 0.01
